@@ -280,12 +280,12 @@ public class RobotsDemo {
 	}
 	
 	public void start() {
-		System.out.println("\nUSE ** W-A-S-D <Return> ** TO MOVE PLAYER");
+		System.out.println("\nUSE ** W-A-S-D <Return> ** TO MOVE PLAYER (other keys keep her still)");
 		System.out.println("GOAL: Player(P) must reach exit(E).");
 		System.out.println("GAMEPLAY: If a robot(r) touches the player she dies.");
-		System.out.println("GAMEPLAY: A wall(*) protects the player.");
+		System.out.println("GAMEPLAY: A wall(*) or the exit(E) protects the player.");
 		System.out.println("GAMEPLAY: Two crashing robots generate a wall(*).");
-		System.out.println("GAMEPLAY: Robots move diagonal but the player can move only");
+		System.out.println("GAMEPLAY: Robots move diagonally but the player can move only");
 		System.out.println("GAMEPLAY: in a vertical or horizontal direction.\n");
 		generatePlayfield();
 		gameloop();

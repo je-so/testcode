@@ -96,6 +96,7 @@ public class RobotsDemo {
 			for (Position wall : walls) {
 				if (wall != null && wall.equals(robots[i])) {
 					robots[i] = null; // robot dies
+					break;
 				}
 			}
 		}

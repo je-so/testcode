@@ -82,8 +82,8 @@ public class RobotsDemo {
 	}
 
 	private static void generatePos(/* out */Position pos) {
-		pos.x = (int) (1 + Math.random() * (MAXX - 1));
-		pos.y = (int) (1 + Math.random() * (MAXY - 1));
+		pos.set((int) (1 + Math.random() * (MAXX - 1)),
+		        (int) (1 + Math.random() * (MAXY - 1)));
 	}
 
 	private void generatePlayfield() {

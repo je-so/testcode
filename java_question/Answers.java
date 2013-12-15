@@ -46,4 +46,13 @@ public class Answers {
 	 * -----------------
 	 * Answer: 3. and 4.
 	 */
+
+	/* ------------------
+	 * overloading_vararg
+	 * ------------------
+	 * Answer: 5.
+	 * Explanation: The compiler can not decide in the context
+	 * of a variable argument list if it should call the version with
+	 * autoboxing or the unboxed version.
+	 */
 }

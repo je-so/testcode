@@ -55,4 +55,13 @@ public class Answers {
 	 * of a variable argument list if it should call the version with
 	 * autoboxing or the unboxed version.
 	 */
+
+	/* -------------------
+	 * overloading_vararg2
+	 * -------------------
+	 * Answer: 6.
+	 * Explanation: The compiler can not decide in the context
+	 * of a variable argument list if it should call the version with
+	 * unboxing or the wrapper type version.
+	 */
 }

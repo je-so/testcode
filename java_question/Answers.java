@@ -40,4 +40,10 @@ public class Answers {
 	 * The compiler has only a print(String... strings) for a String parameter
 	 * and does therefore create an array print(new String[]{ null });
 	 */
+
+	/* -----------------
+	 * overloading_null5
+	 * -----------------
+	 * Answer: 3. and 4.
+	 */
 }

@@ -25,4 +25,19 @@ public class Answers {
 	 * ----------------- 
 	 * Answer: 2. "print(Subclass3_2)"
 	 */	
+
+	/* -----------------
+	 * overloading_null4
+	 * -----------------
+	 * Answer: 3. [1, 2, 3]
+	 *            null
+	 *            [null]
+	 * Explanation:
+	 * 1. print(null)
+	 * print(String... strings); is syntactic sugar for print(String[] strings);
+	 * and the compiler calls print(String[] strings) with strings set to null
+	 * 2. print((String)null);
+	 * The compiler has only a print(String... strings) for a String parameter
+	 * and does therefore create an array print(new String[]{ null });
+	 */
 }

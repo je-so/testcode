@@ -1,20 +1,5 @@
 # Network Architecture
 
-## Practice -> Theory -> Practice
-
-If we have a correct theory but merely prate about it, pigeonhole it and do
-not put it into practice, then that theory, however good, is of no
-significance. Knowledge begins with practice, and theoretical knowledge is
-acquired through practice and must return to practice.
-
-—Mao Zhe Dong
-
-## Role of an Architect
-
-The role of an architect is to use the tools he has to make
-things simple -- anyone can make things more complicated !
-
-
 ## Protocol Machine
 
 ```AsciiDoc

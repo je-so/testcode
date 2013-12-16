@@ -1,5 +1,5 @@
 /* Question:
- * What is the result of print(null); in main() ?
+ * What is the result of print((Subclass3_2)null); in main() ?
  * 1. "print(Base3)"
  * 2. "print(Subclass3_2)"
  * 3. "print(Subclass3_1)"

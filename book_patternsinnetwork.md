@@ -17,7 +17,7 @@ things simple -- anyone can make things more complicated !
 
 ## Protocol Machine
 
-<code>
+```AsciiDoc
           PM (Layer N+1)
 
                 |
@@ -35,17 +35,17 @@ OS  <--> || State Machine ||  <- | PCI | SDU (User Data) | ->   | Remote PM (Lay
                 |
                
           PM (Layer N-1)
-</code>
+```
 
 ## Association, Flow, Connection, Binding
 
-• An association represents the minimal shared state
+* An association represents the minimal shared state
   minimal coupling, often associated with connectionless communication.
-• A flow has more shared state but not tightly coupled
+* A flow has more shared state but not tightly coupled
   (no feedback), as found in some network protocols.
-• A connection has a more tightly coupled shared state
+* A connection has a more tightly coupled shared state
   (with feedback), as with so-called end-to-end transport protocols.
-• A binding has the most tightly coupled shared state,
+* A binding has the most tightly coupled shared state,
   generally characterized by shared memory.
 
 

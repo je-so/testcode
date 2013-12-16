@@ -63,5 +63,6 @@ public class Answers {
 	 * Explanation: The compiler can not decide in the context
 	 * of a variable argument list if it should call the version with
 	 * unboxing or the wrapper type version.
+	 * new float[] { 1.0, 2.0 } does not work, cause 1.0 and 2.0 are of type double.
 	 */
 }

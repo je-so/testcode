@@ -10,15 +10,15 @@
  *    It works if you change line A to
  *    (Float)1f, (Float)2f
  * 4. Compiler prints error.
- *    It works if you change line B to
+ *    It works if you change line A to
  *    (Float)1.0f, (Float)2.0f
  * 5. Compiler prints error.
- *    It works if you change line C either to
+ *    It works if you change line A either to
  *    new Float[] { 1.0, 2.0 }
  *    or to
  *    new float[] { 1.0, 2.0 }
  * 6. Compiler prints error.
- *    It works if you change line C either to
+ *    It works if you change line A either to
  *    new Float[] { 1.0f, 2.0f }
  *    or to
  *    new float[] { 1.0f, 2.0f }

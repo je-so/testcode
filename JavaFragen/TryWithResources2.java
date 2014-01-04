@@ -52,9 +52,9 @@ public class TryWithResources2 {
  * Resource überschreibt die Methode von AutoCloseable korrekt,
  * da das Weglassen einer throws Deklaration erlaubt ist. Da das try-with-Resources
  * in main close von r aufruft, r den Referenztyp »Resource« besitzt und Resource.close
- * keine throws Exception in der Deklaration besitzt, muß Exception in main
+ * keine throws Exception in der Deklaration besitzt, muss Exception in main
  * auch nicht deklariert oder aufgefangen werden (handle or declare).
- * Die Methode main muß auch kein throws RuntimeException deklarieren, das RuntimeException
+ * Die Methode main muss auch kein throws RuntimeException deklarieren, das RuntimeException
  * das Basisklasse aller "unchecked exceptions" ist neben der Klasse Error.
  * Das try mit Ressourcen stellt bei Verlassen des try Blockes immer sicher, daß close 
  * aufgerufen wird. Es sei denn System.exit(0) würde im try Block aufgerufen.  

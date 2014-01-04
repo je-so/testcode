@@ -13,8 +13,7 @@ package JavaFragen;
  */
 
 class StaticInheritance {
-	static int xxx;
-	
+
 	static class Parent {
 		static private int si = 1;
 		

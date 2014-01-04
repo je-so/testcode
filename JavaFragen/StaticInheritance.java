@@ -13,7 +13,7 @@ package JavaFragen;
  */
 
 class StaticInheritance {
-
+	
 	static class Parent {
 		static private int si = 1;
 		
@@ -87,7 +87,7 @@ class StaticInheritance {
  * Warum gibt es keinen Compilerfehler(E)?
  * si ist in Parent private deklariert und Child erbt von Parent. Daher dürfte
  * si von Child aus nicht sichtbar sein. Ist es auch nicht. 
- * Der Zugriff auf Parent.Child.si ist nicht daher möglich. Würde in Child statt si
+ * Der Zugriff auf Parent.Child.si ist daher nicht möglich. Würde in Child statt si
  * Child.si stehen, gäbe es einen Compilerfehler.
  * Aber da Child auch eine static inner class von Parent ist, sieht Child das si von Parent
  * und darf darauf zugreifen. Der Compiler setzt ein implizites Parent.si für ein si

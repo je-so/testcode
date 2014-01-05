@@ -80,7 +80,8 @@ public class InitDemo2 extends InitDemo2Parent {
  * der Superklasse müssen an erster Stelle stehen. Aber nur einer von beiden
  * oder gar keiner. Falls keiner steht, fügt der Compiler einen default 
  * super() Aufruf an erster Stelle ein.
- * Als Argumente für den Konstruktor dürfen nur die Parameter des Konstruktors
- * oder statische Attribute oder Rückgabewerte von statischen Methoden genommen
- * werden.
+ * Als Argumente für den Konstruktor dürfen nur die Parameter des Konstruktors,
+ * statische Attribute oder Rückgabewerte von statischen Methoden der eigenen Klasse 
+ * genommen werden. Die Rückgabewerte von Methodenaufrufe anderer Klassen sind immer
+ * erlaubt.
  */

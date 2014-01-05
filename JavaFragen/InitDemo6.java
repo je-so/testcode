@@ -9,7 +9,7 @@ package JavaFragen;
  */
 
 public class InitDemo6 {
-	
+
 	static class Constants {
 		static final int C1 = 1;
 		static final int C2 = 2;
@@ -59,4 +59,9 @@ public class InitDemo6 {
  * die Klasse Constants geladen und initialisiert werden. 
  * Als nächstes gibt folglich der zweite Initialiserungsblock "init" aus.
  * Zuletzt gibt das zweite print in main den Wert '3' aus.
+ * 
+ * Korollar:
+ * Wenn sich in einem Interface eine compiletime Konstante ändert,
+ * so müssen alle Klassen, die dieses Interface verwenden,
+ * neu übersetzt werden, ansonsten verwenden sie den alten Wert.
  */

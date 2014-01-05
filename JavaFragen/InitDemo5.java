@@ -26,7 +26,7 @@ public class InitDemo5 {
 	}
 	
 	public void init() {
-		i = si + 3; // (5)
+		i = i + 3; // (5)
 	}
 
 	public static void sinit() {
@@ -34,8 +34,8 @@ public class InitDemo5 {
 	}
 	
 	InitDemo5() {
-		i = si + 5; // (7)
-		si = i + 6; // (8)
+		i = i + 5; // (7)
+		si = si + 6; // (8)
 	}
 	
 	int i;

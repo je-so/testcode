@@ -16,8 +16,8 @@ package JavaFragen;
 public class InitDemo5 {
 
 	static {
-		si = 1;	// (1)					
-		System.out.println(si);	// (2)
+		si = 1; // (1)					
+		System.out.println(si); // (2)
 	}
 
 	{

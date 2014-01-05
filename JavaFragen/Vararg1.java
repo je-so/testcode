@@ -64,7 +64,7 @@ public class Vararg1 {
  * print(new Byte((byte)1), new int[] {2, 3});
  * print((byte)1, new int[] {2, 3});
  * 
- * Da hier beidemal keine variable Argumentliste erstellt werden muss,
+ * Da hier beide Male keine variable Argumentliste erstellt werden muss,
  * wählt der Compiler, wie erwartet, Widening des primitiven Typs vor Autoboxing,
  * und es würde "21" ausgegeben werden.
  */

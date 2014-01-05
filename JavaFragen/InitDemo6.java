@@ -51,12 +51,12 @@ public class InitDemo6 {
  * ersetzt alle Verweise auf Constants.C1 durch den Wert der Konstanten,
  * in obigem Fall durch 1.
  * In main() steht daher als erste Anweisung »System.out.print(1);«
- * und daher wird zuerst '1' ausgegeben ohne vorher die Klasse Constants
- * laden zu müssen.
+ * und somit wird '1' ausgegeben noch bevor die Klasse Constants
+ * geladen wird.
  * Der zweite Zugriff - Constants.C3 - ist der Verweis auf eine statische 
- * Variable, aber keine compiletime Konstante, da diese in einem statischen
- * Initialisierungsblock zugewiesen wird. Vor dem Zugriff muss die Klasse 
- * Constants also geladen werden und initialisiert. 
- * Der zweite Initialiserungsblock gibt daher "init" aus.
- * Zuletzt gibt das zweite print in main den Wert '3' aus.  
+ * Variable - keine compiletime Konstante - da diese mittels statischem
+ * Initialisierungsblock einen Wert erhält. Also muss vor dem Zugriff 
+ * die Klasse Constants geladen und initialisiert werden. 
+ * Als nächstes gibt folglich der zweite Initialiserungsblock "init" aus.
+ * Zuletzt gibt das zweite print in main den Wert '3' aus.
  */

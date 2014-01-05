@@ -75,9 +75,10 @@ public class InitDemo2 extends InitDemo2Parent {
 
 /* Antwort: Die Aufrufe this(VALUE); und super(VALUE); als auch
  *          this(getStaticValue()); und super(getStaticValue()); sind korrekt.
+ *          Die Bonusfragen sind jeweils mit false zu beantworten.
  * Erklärung:
  * Die Aufrufe eines verketteten Konstruktors oder des Konstruktors
- * der Superklasse müssen an erster Stelle stehen. Aber nur einer von beiden
+ * der Superklasse müssen an erster Stelle stehen. Aber nur maximal einer von beiden
  * oder gar keiner. Falls keiner steht, fügt der Compiler einen default 
  * super() Aufruf an erster Stelle ein.
  * Als Argumente für den Konstruktor dürfen nur die Parameter des Konstruktors,

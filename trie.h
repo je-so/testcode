@@ -43,7 +43,7 @@
    GNU General Public License for more details.
 
    Author:
-   (C) 2013 Jörg Seebohn
+   (C) 2014 Jörg Seebohn
 
    file: C-kern/api/ds/inmem/trie.h
     Header file <Trie>.

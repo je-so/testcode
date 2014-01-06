@@ -55,11 +55,11 @@
 #define CKERN_DS_INMEM_TRIE_HEADER
 
 // forward
-struct trie_node_t ;
+struct trie_node_t;
 
 /* typedef: struct trie_t
  * Export <trie_t> into global namespace. */
-typedef struct trie_t                     trie_t ;
+typedef struct trie_t trie_t;
 
 
 // section: Functions
@@ -69,15 +69,15 @@ typedef struct trie_t                     trie_t ;
 #ifdef KONFIG_UNITTEST
 /* function: unittest_ds_inmem_trie
  * Test <trie_t> functionality. */
-int unittest_ds_inmem_trie(void) ;
+int unittest_ds_inmem_trie(void);
 #endif
 
 
 /* struct: trie_t
  * TODO: describe type */
 struct trie_t {
-   struct trie_node_t * root ;
-} ;
+   struct trie_node_t * root;
+};
 
 // group: lifetime
 
@@ -91,13 +91,13 @@ struct trie_t {
 
 /* function: init_trie
  * Initializes trie with 0 pointer. */
-int init_trie(/*out*/trie_t * trie) ;
+int init_trie(/*out*/trie_t * trie);
 
 /* function: free_trie
  * Frees all nodes and their associated memory.
  * If you need to free any objects which are referenced by the stored user pointers
  * you have to iterate over the stored pointers and free them before calling <free_trie>. */
-int free_trie(trie_t * trie) ;
+int free_trie(trie_t * trie);
 
 // group: foreach-support
 
@@ -109,35 +109,35 @@ int free_trie(trie_t * trie) ;
  * TODO: describe
  * During trie traversal two nodes are merged into one if this saves space. Therefore trie is not declared as const.
  * */
-void ** at_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen]) ;
+void ** at_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen]);
 
 // group: update
 
 /* function: insert_trie
  * TODO: describe */
-int insert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue) ;
+int insert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue);
 
 /* function: tryinsert_trie
  * TODO: describe */
-int tryinsert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue) ;
+int tryinsert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue);
 
 /* function: remove_trie
  * TODO: describe */
-int remove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue) ;
+int remove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue);
 
 /* function: tryremove_trie
  * TODO: describe */
-int tryremove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue) ;
+int tryremove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue);
 
 // group: private
 
 /* function: insert2_trie
  * TODO: describe */
-int insert2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue, bool islog) ;
+int insert2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue, bool islog);
 
 /* function: remove2_trie
  * TODO: describe */
-int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue, bool islog) ;
+int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue, bool islog);
 
 
 // section: inline implementation

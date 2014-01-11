@@ -1,71 +1,55 @@
 package JavaFragen;
 
-/* Das folgende Programm gibt z.B. aus
- * String.valueOf((Object)null): null
- * String.valueOf((char[])null): null
- * System.out.println((Object)null): null
- * System.out.println((String)null): null
- * System.out.println((char[])null): null
- * wobei null der Rückgabewert der Methode String.valueOf bzw. der Ausgabewert 
- * der Methode System.out.println ist.
- * 
- * Das Programm kann aber auch  
- * String.valueOf((Object)null): NullPointerException
- * String.valueOf((char[])null): NullPointerException
- * System.out.println((Object)null): NullPointerException
- * System.out.println((String)null): NullPointerException
- * System.out.println((char[])null): NullPointerException
- * ausgeben, wenn bei einer Methode eine NullPointerException
- * geworfen wird.
- * 
- * Bestimmen Sie für jeden Methodenaufruf, 
+/* Das folgende Programm gibt 6 mal "null" oder "NullPointerException" aus.
+ * Bestimmen Sie für jeden Methodenaufruf,
  * ob das Programm null oder NullPointerException ausgegeben wird.
  * 
- * A) String.valueOf((Object)null): ?
- * B) String.valueOf((char[])null): ?
- * C) System.out.println((Object)null): ?
- * D) System.out.println((String)null): ?
- * E) System.out.println((char[])null): ?
+ * A) Zeile 1: "null" oder "NullPointerException"?
+ * B) Zeile 2: "null" oder "NullPointerException"?
+ * C) Zeile 3: "null" oder "NullPointerException"?
+ * D) Zeile 4: "null" oder "NullPointerException"?
+ * E) Zeile 5: "null" oder "NullPointerException"?
+ * F) Zeile 6: "null" oder "NullPointerException"?
  * */
 
 public class NullPointer1 {
 
 	public static void main(String... args) {
-		Object   o = null;
-		String   s = null;
-		char[]  a = null;
+		Object   object = null;
+		String   string = null;
+		char[]  array = null;
 
-		for (int i = 0; i < 2; ++i) {
-			String type = "";
-			String result = "";
+		for (int i = 0; i < 6; ++i) {
 			try {
 				switch (i) {
-				case 0: type = "Object" ; result = String.valueOf(o); break;
-				case 1: type = "char[]" ; result = String.valueOf(a); break;
-				}
-			} catch (NullPointerException ex) {
-				result = "NullPointerException";
-			}
-			System.out.print("String.valueOf((" + type + ")null): ");
-			System.out.println(result);
-		}
-
-		for (int i = 0; i < 3; ++i) {
-			try {
-				System.out.print("System.out.println(");
-				switch (i) {
-				case 0: System.out.print("(Object)null): "); System.out.println(o); break;
-				case 1: System.out.print("(String)null): "); System.out.println(s); break;
-				case 2: System.out.print("(char[])null): "); System.out.println(a); break;
+				case 0: 
+					System.out.println(String.valueOf(object)); 
+					break;
+				case 1: 
+					System.out.println(String.valueOf(string)); 
+					break;
+				case 2: 
+					System.out.println(String.valueOf(array)); 
+					break;
+				case 3: 
+					System.out.println(object); 
+					break;
+				case 4: 
+					System.out.println(string); 
+					break;
+				case 5: 
+					System.out.println(array); 
+					break;
 				}
 			} catch (NullPointerException ex) {
 				System.out.println("NullPointerException");
 			}
 		}
-		
 	}
-	
 }
+
+
+
 
 
 
@@ -83,11 +67,12 @@ public class NullPointer1 {
 
 /* Antwort: 
  * 
- * A) String.valueOf((Object)null): null
- * B) String.valueOf((char[])null): NullPointerException
- * C) System.out.println((Object)null): null
- * D) System.out.println((String)null): null
- * E) System.out.println((char[])null): NullPointerException
+ * A) null
+ * B) null
+ * B) NullPointerException
+ * C) null
+ * D) null
+ * E) NullPointerException
  * 
  * Erklärung: Keine, lerne die inkonsistente Welt von Java kennen! 
  * 

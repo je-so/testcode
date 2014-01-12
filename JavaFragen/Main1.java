@@ -11,7 +11,7 @@ package JavaFragen;
  */
 
 
-public class Main1 {
+class Main1 {
 
 	int x = 1;
 	

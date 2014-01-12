@@ -50,8 +50,8 @@ public class NullPointer7 {
 /* Antwort: Es gibt einen Compilerfehler in Zeile A.
  * 
  * Erklärung:
- * Beide Typen der Argumente beider print Methoden sind einmal String[]
- * und String. Beide Typen sind von Object abgeleitet, stehen aber nicht
+ * Die Typen der Argumente beider print Methoden sind einmal String[]
+ * und String. Sie sind von Object abgeleitet, stehen aber nicht
  * in einer Hierarchielinie. Der Aufruf ist somit mehrdeutig.
  * 
  * Mittels des Aufrufs print((String)null) würde "String" ausgegeben

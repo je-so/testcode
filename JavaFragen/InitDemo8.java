@@ -1,7 +1,7 @@
 package JavaFragen;
 
 /* Welcher Code kann in Zeile A eingegeben werden, damit
- * die Klasse compiliert? Wähle zwei mögliche aus Codestücke aus.
+ * die Klasse compiliert? Wähle zwei mögliche Codestücke aus.
  * 
  * A) Nichts, da die Klasse sowieso fehlerfrei compilert.
  * B) i = 3;

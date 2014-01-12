@@ -15,7 +15,7 @@ class Main1 {
 
 	int x = 1;
 	
-	static void main(String...args) {
+	static void main(String[] args) {
 		System.out.println(new Main1().x);
 	}
 }

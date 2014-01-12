@@ -24,7 +24,7 @@ public class InitDemo7 extends InitDemo7Parent {
 	public final int i;
 
 	public InitDemo7() {
-		// System.out.print(i);
+		System.out.print(i);
 		i = 3;
 	}
 

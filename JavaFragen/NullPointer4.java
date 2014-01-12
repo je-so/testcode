@@ -62,4 +62,10 @@ public class NullPointer4 {
  * welcher Ableitungshierarchie er folgen soll -- Object nach String 
  * bzw. Object nach Number, um die am weitest abgeleitete Klasse für
  * die überladene Methode test und dem Argument null zu finden.
+ * 
+ * Der Compilerfehler kann beseitigt werden, indem anstatt test(null);
+ * 		test((String)null);
+ * oder
+ * 		test((Number)null);
+ * geschrieben wird.
  */

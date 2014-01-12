@@ -1,7 +1,7 @@
 package JavaFragen;
 
 /* Welche Aussage ist richtig?
- * A) Compilerfehler, da enums keine Interface implementieren dürfen.
+ * A) Compilerfehler, da enums kein Interface implementieren dürfen.
  * B) Compilerfehler, da enums zwar Interfaces implementieren dürfen,
  *    die Syntax aber falsch ist, mit der für jede Konstante eine
  *    eigene Implementierung angegeben wird.

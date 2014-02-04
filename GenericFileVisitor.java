@@ -23,7 +23,7 @@ public class GenericFileVisitor {
 	}
 
 	/*
-	 * Definiert Vergleichstyp, wird in SimpleFilter verwendet.
+	 * Definiert Vergleichstyp, wird in CompareFilter verwendet.
 	 */
 	public enum Compare {
 		EQUAL, LOWER, HIGHER
@@ -31,12 +31,12 @@ public class GenericFileVisitor {
 
 	/*
 	 * Definiert compare Methoden, die verschiedene Datentypen miteinander vergleichen.
-	 * Die Vergleichsart wird durch den Parameter Compare cmp in SimpleFilter festgelegt.
+	 * Die Vergleichsart wird durch den Parameter Compare cmp in CompareFilter festgelegt.
 	 */
-	public static abstract class SimpleFilter implements Filter {
+	public static abstract class CompareFilter implements Filter {
 		private Compare cmp;
 		
-		protected SimpleFilter(Compare cmp) {
+		protected CompareFilter(Compare cmp) {
 			this.cmp = cmp;
 		}
 		
@@ -56,9 +56,9 @@ public class GenericFileVisitor {
 	
 	/*
 	 * MatchSize filtert nach Größe der Dateien.
-	 * Benutzt SimpleFilter.compare(long,long) für den Vergleich.
+	 * Benutzt CompareFilter.compare(long,long) für den Vergleich.
 	 */
-	public static class MatchSize extends SimpleFilter {
+	public static class MatchSize extends CompareFilter {
 		private long size;
 		
 		public MatchSize(Compare cmp, long size) {
@@ -127,7 +127,7 @@ public class GenericFileVisitor {
 	 * mit Files.walkFileTree verwendet werden.
 	 * 
 	 * Dateien, welche vom Filter Argument filter akzeptiert werden,
-	 * werden in die Liste list angehängt.
+	 * werden an die Liste list angehängt.
 	 * 
 	 * Ist Parameter filter null, dann werden einfach alle Dateien
 	 * zur Liste list hinzugefügt.

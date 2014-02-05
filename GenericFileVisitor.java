@@ -208,20 +208,30 @@ public class GenericFileVisitor {
 				if (pos == filter.length() || filter.charAt(pos) != '(') {
 					throw new ParseException(filter, pos);
 				}
-				
-				while (	pos < filter.length() 
-						&& (filter.charAt(pos) != ')'
-							|| filter.charAt(pos-1) == '\\')) {
-					if (filter.charAt(pos) == '(' && filter.charAt(pos-1) != '\\') {
-						parseRegexGroup();
+
+				++pos; // matches '('
+
+				for (boolean skipChar = false; pos < filter.length(); ++pos) {
+					if (skipChar) {
+						skipChar = false;
+						continue;
 					}
+					char c = filter.charAt(pos);
+					if (c == '\\')
+						skipChar = true;
+					else if (c == '(') {
+						parseRegexGroup();
+						--pos;
+					}
+					else if (c == ')')
+						break;
 				}
 
-				if (filter.length() == pos || filter.charAt(pos) != ')') {
+				if (filter.length() == pos) {
 					throw new ParseException(filter, pos);
 				}
 				
-				++pos;
+				++pos; // matches ')'
 			}
 			
 			/*
@@ -229,13 +239,12 @@ public class GenericFileVisitor {
 			 * Parst  '(' <regex-string> ')' indem parseRegexGroup aufgerufen wird.
 			 * Die Startposition und die aktuelle Position pos bestimmen den String
 			 * des regulären Ausdrucks.
-			 * Es wird ein NameFilter zurückgeliefert. 
+			 * Es wird der reguläre Ausdruck als String zurückgeliefert. 
 			 */
-			private Filter parseRegex() throws ParseException {
+			private String parseRegex() throws ParseException {
 				int startpos = pos;
 				parseRegexGroup();
-				System.out.println("REGEX: " + filter.substring(startpos+1, pos-1) + ";;;");
-				return new NameFilter(filter.substring(startpos+1, pos-1));
+				return filter.substring(startpos+1, pos-1);
 			}
 
 			private Filter parseSize() throws ParseException {
@@ -269,13 +278,14 @@ public class GenericFileVisitor {
 					if (filter.length() == pos || filter.charAt(pos) != ')') {
 						throw new ParseException(filter, pos);
 					}
+					++pos; // matches ')'
 					break;
 				case 'n':
 					if (!filter.substring(pos).startsWith("name=")) {
 						throw new ParseException(filter, pos);
 					}
 					pos += 5;
-					filterobj = parseRegex();
+					filterobj = new NameFilter(parseRegex());
 					break;
 				case 's':
 					if (!filter.substring(pos).startsWith("size")) {
@@ -283,6 +293,7 @@ public class GenericFileVisitor {
 					}
 					pos += 4;
 					filterobj = parseSize();
+					break;
 				default:
 					throw new ParseException(filter, pos);
 				}
@@ -291,7 +302,7 @@ public class GenericFileVisitor {
 
 			private Filter parseFilter() throws ParseException {
 				Filter filterobj = parseAtom();
-				while (filter.length() != pos) {
+				LOOP: while (filter.length() != pos) {
 					switch (filter.charAt(pos)) {
 					case '|':
 						if (!filter.substring(pos).startsWith("||")) {
@@ -308,7 +319,7 @@ public class GenericFileVisitor {
 						filterobj = new AndFilter(filterobj, parseAtom());
 						break;
 					default:
-						throw new ParseException(filter, pos);
+						break LOOP;
 					}
 				}
 				return filterobj;	
@@ -360,34 +371,43 @@ public class GenericFileVisitor {
 	 * Test Driver.
 	 * 
 	 */
-	public static void main(String[] args) throws IOException{
+	public static void main(String[] args) throws IOException, ParseException {
 		Filter filter;
 		List<Path> list;
 		
 		// liefert alle .java Dateien
-		filter = createNameFilter(".*\\.java$");
+		filter = createNameFilter(".*\\.java");
 		
-		// liefert alle .java Dateien im nio Verzeichnis
-//		filter = createNameFilter(".*\\\\nio\\\\[^\\\\]+\\.java$");
+		// liefert alle .java Dateien im strings Verzeichnis
+//		filter = createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java");
 		
-		// liefert alle .java Dateien im nio Verzeichnis , die größer als 2000 Bytes sind.
+		// liefert alle .java Dateien im strings Verzeichnis , die größer als 2000 Bytes sind.
 //		filter = createANDFilter(
-//					createNameFilter(".*\\\\nio\\\\[^\\\\]+\\.java$"),
+//					createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java"),
 //					createSizeFilter(Compare.HIGHER, 2000));
 		
-		// liefert alle .java Dateien im nio Verzeichnis , die größer als 2000 Bytes sind.
+		// liefert alle .java Dateien im strings Verzeichnis , die größer als 2000 Bytes sind.
 		// und alle .txt Dateien
 		filter = createORFilter(
 					createANDFilter(
-						createNameFilter(".*/nio/[^/]+\\.java$"),
-						createSizeFilter(Compare.HIGHER, 2000)),
-					createNameFilter(".*\\.class$"));
+						createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java"),
+						createSizeFilter(Compare.HIGHER, 3000)),
+					createANDFilter(
+							createNameFilter(".*\\.txt$"),
+							createSizeFilter(Compare.HIGHER, 200)));
 		
 		list = selectFiles(Paths.get(""), filter);
 		
 		for (Path p : list) {
 			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
 		}
+		
+		list = selectFiles(Paths.get(""), "size>200&&name=(.*\\.txt)||(size>3000&&name=(.*\\\\strings\\\\[^\\\\]+\\.java))");
+		// list = selectFiles(Paths.get(""), "name=(.*\\\\strings\\\\[^\\\\]+\\.java)");
+		for (Path p : list) {
+			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
+		}
+		
 	}
 
 }

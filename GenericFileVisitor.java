@@ -1,5 +1,6 @@
 package nio;
 
+import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.io.IOException;
@@ -33,7 +34,7 @@ public class GenericFileVisitor {
 	 * Definiert compare Methoden, die verschiedene Datentypen miteinander vergleichen.
 	 * Die Vergleichsart wird durch den Parameter Compare cmp in CompareFilter festgelegt.
 	 */
-	public static abstract class CompareFilter implements Filter {
+	private static abstract class CompareFilter implements Filter {
 		private Compare cmp;
 		
 		protected CompareFilter(Compare cmp) {
@@ -55,13 +56,13 @@ public class GenericFileVisitor {
 	}
 	
 	/*
-	 * MatchSize filtert nach Größe der Dateien.
+	 * SizeFilter filtert nach Größe der Dateien.
 	 * Benutzt CompareFilter.compare(long,long) für den Vergleich.
 	 */
-	public static class MatchSize extends CompareFilter {
+	private static class SizeFilter extends CompareFilter {
 		private long size;
 		
-		public MatchSize(Compare cmp, long size) {
+		public SizeFilter(Compare cmp, long size) {
 			super(cmp);
 			this.size = size;
 		}
@@ -72,14 +73,14 @@ public class GenericFileVisitor {
 	}
 
 	/*
-	 * MatchNAme filtert nach Name der Dateien.
+	 * NameFilter filtert nach Name der Dateien.
 	 * Der Name der Datei wird mittels des regulären Ausdrucks 
-	 * pattern gematchet.
+	 * pattern gematcht.
 	 */
-	public static class MatchName implements Filter {
+	private static class NameFilter implements Filter {
 		private java.util.regex.Pattern pattern;
 		
-		public MatchName(String pattern) {
+		public NameFilter(String pattern) {
 			this.pattern = java.util.regex.Pattern.compile(pattern);
 		}
 
@@ -91,7 +92,7 @@ public class GenericFileVisitor {
 	/*
 	 * AndFilter verbindet zwei andere Filter mittels und (&&) 
 	 */
-	public static class AndFilter implements Filter {
+	private static class AndFilter implements Filter {
 		Filter left; 
 		Filter right;
 		
@@ -108,7 +109,7 @@ public class GenericFileVisitor {
 	/*
 	 * OrFilter verbindet zwei andere Filter mittels oder (||) 
 	 */
-	public static class OrFilter implements Filter {
+	private static class OrFilter implements Filter {
 		Filter left; 
 		Filter right;
 		
@@ -185,6 +186,175 @@ public class GenericFileVisitor {
 		return list;
 	}
 
+	public static List<Path> selectFiles(Path dir, final String filter) throws IOException, ParseException {
+		class Parser {
+			int pos = 0 ;
+			
+			Filter parse() throws ParseException {
+				Filter filterobj = parseFilter();
+				/*
+				 * Wurde der gesamte String geparst?
+				 */
+				if (pos != filter.length()) {
+					throw new ParseException(filter, pos);
+				}
+				return filterobj;
+			}
+
+			/*
+			 * Parst  '(' <regex-string> ')' und bewegt pos weiter
+			 */
+			private void parseRegexGroup() throws ParseException {
+				if (pos == filter.length() || filter.charAt(pos) != '(') {
+					throw new ParseException(filter, pos);
+				}
+				
+				while (	pos < filter.length() 
+						&& (filter.charAt(pos) != ')'
+							|| filter.charAt(pos-1) == '\\')) {
+					if (filter.charAt(pos) == '(' && filter.charAt(pos-1) != '\\') {
+						parseRegexGroup();
+					}
+				}
+
+				if (filter.length() == pos || filter.charAt(pos) != ')') {
+					throw new ParseException(filter, pos);
+				}
+				
+				++pos;
+			}
+			
+			/*
+			 * Merkt sich die aktuelle Position pos als Startposition.
+			 * Parst  '(' <regex-string> ')' indem parseRegexGroup aufgerufen wird.
+			 * Die Startposition und die aktuelle Position pos bestimmen den String
+			 * des regulären Ausdrucks.
+			 * Es wird ein NameFilter zurückgeliefert. 
+			 */
+			private Filter parseRegex() throws ParseException {
+				int startpos = pos;
+				parseRegexGroup();
+				System.out.println("REGEX: " + filter.substring(startpos+1, pos-1) + ";;;");
+				return new NameFilter(filter.substring(startpos+1, pos-1));
+			}
+
+			private Filter parseSize() throws ParseException {
+				Compare cmp;
+				char c = pos < filter.length() ? filter.charAt(pos++) : 0;
+				switch (c) {
+				case '=': cmp = Compare.EQUAL; break;
+				case '<': cmp = Compare.LOWER; break;
+				case '>': cmp = Compare.HIGHER; break;
+				default: throw new ParseException(filter, pos);
+				}
+				int startpos = pos;
+				while (pos != filter.length() && Character.isDigit(filter.charAt(pos))) {
+					++pos;
+				}
+				if (pos == startpos) {
+					throw new ParseException(filter, pos);
+				}
+				return new SizeFilter(cmp, Long.parseLong(filter.substring(startpos, pos)));
+			}
+			
+			private Filter parseAtom() throws ParseException {
+				Filter filterobj;
+				if (filter.length() == pos) {
+						throw new ParseException(filter, pos);
+				}
+				switch (filter.charAt(pos)) {
+				case '(':
+					++pos;
+					filterobj = parseFilter();
+					if (filter.length() == pos || filter.charAt(pos) != ')') {
+						throw new ParseException(filter, pos);
+					}
+					break;
+				case 'n':
+					if (!filter.substring(pos).startsWith("name=")) {
+						throw new ParseException(filter, pos);
+					}
+					pos += 5;
+					filterobj = parseRegex();
+					break;
+				case 's':
+					if (!filter.substring(pos).startsWith("size")) {
+						throw new ParseException(filter, pos);
+					}
+					pos += 4;
+					filterobj = parseSize();
+				default:
+					throw new ParseException(filter, pos);
+				}
+				return filterobj;	
+			}
+
+			private Filter parseFilter() throws ParseException {
+				Filter filterobj = parseAtom();
+				while (filter.length() != pos) {
+					switch (filter.charAt(pos)) {
+					case '|':
+						if (!filter.substring(pos).startsWith("||")) {
+							throw new ParseException(filter, pos);
+						}
+						pos += 2;
+						filterobj = new OrFilter(filterobj, parseAtom());
+						break;
+					case '&':
+						if (!filter.substring(pos).startsWith("&&")) {
+							throw new ParseException(filter, pos);
+						}
+						pos += 2;
+						filterobj = new AndFilter(filterobj, parseAtom());
+						break;
+					default:
+						throw new ParseException(filter, pos);
+					}
+				}
+				return filterobj;	
+			}
+			
+		};
+
+		Filter filterobj = new Parser().parse();
+		
+		return selectFiles(dir, filterobj);
+	}
+
+	/*
+	 * Erzeugt Filter, der nur Dateien akzeptiert, deren absoluter Pfad 
+	 * mit dem regülaren Muster pattern übereinstimmt.
+	 */
+	public static Filter createNameFilter(String pattern) {
+		return new NameFilter(pattern);
+	}
+	
+	/*
+	 * Erzeugt Filter, der nur Dateien akzeptiert, deren Göße in Bytes 
+	 * mit dem Wert size in einer Beziehung stehen.
+	 * createSizeFilter(Compare.HIGHER, 100) erzeugt einen Filter, der
+	 * nur Dateien passieren läßt, deren Größe 101 Bytes oder mehr beträgt.
+	 */
+	public static Filter createSizeFilter(Compare cmp, long size) {
+		return new SizeFilter(cmp, size);
+	}
+	
+	/*
+	 * Erzeugt Filter, der nur Dateien akzeptiert, die sowohl 
+	 * die Filter left und right passieren. 
+	 */
+	public static Filter createANDFilter(Filter left, Filter right) {
+		return new AndFilter(left, right);
+	}
+	
+	/*
+	 * Erzeugt Filter, der nur Dateien akzeptiert, die mindestens 
+	 * einen Filter, entweder left oder right, oder beide passieren. 
+	 */
+	public static Filter createORFilter(Filter left, Filter right) {
+		return new OrFilter(left, right);
+	}
+	
 	/*
 	 * 
 	 * Test Driver.
@@ -195,23 +365,23 @@ public class GenericFileVisitor {
 		List<Path> list;
 		
 		// liefert alle .java Dateien
-		filter = new MatchName(".*\\.java$");
+		filter = createNameFilter(".*\\.java$");
 		
-		// liefert alle .java Dateien im strings Verzeichnis
-//		filter = new MatchName(".*\\\\strings\\\\[^\\\\]+\\.java$");
+		// liefert alle .java Dateien im nio Verzeichnis
+//		filter = createNameFilter(".*\\\\nio\\\\[^\\\\]+\\.java$");
 		
-		// liefert alle .java Dateien im strings Verzeichnis , die größer als 2000 Bytes sind.
-//		filter = new AndFilter(
-//					new MatchName(".*\\\\strings\\\\[^\\\\]+\\.java$"),
-//					new MatchSize(Compare.HIGHER, 2000));
+		// liefert alle .java Dateien im nio Verzeichnis , die größer als 2000 Bytes sind.
+//		filter = createANDFilter(
+//					createNameFilter(".*\\\\nio\\\\[^\\\\]+\\.java$"),
+//					createSizeFilter(Compare.HIGHER, 2000));
 		
-		// liefert alle .java Dateien im strings Verzeichnis , die größer als 2000 Bytes sind.
+		// liefert alle .java Dateien im nio Verzeichnis , die größer als 2000 Bytes sind.
 		// und alle .txt Dateien
-//		filter = new OrFilter(
-//					new AndFilter(
-//						new MatchName(".*\\\\strings\\\\[^\\\\]+\\.java$"),
-//						new MatchSize(Compare.HIGHER, 2000)),
-//					new MatchName(".*\\.txt$"));
+		filter = createORFilter(
+					createANDFilter(
+						createNameFilter(".*/nio/[^/]+\\.java$"),
+						createSizeFilter(Compare.HIGHER, 2000)),
+					createNameFilter(".*\\.class$"));
 		
 		list = selectFiles(Paths.get(""), filter);
 		

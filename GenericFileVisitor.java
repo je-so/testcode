@@ -52,7 +52,7 @@ public class GenericFileVisitor {
 			}
 			return false;
 		}
-		
+
 	}
 	
 	/*
@@ -376,7 +376,10 @@ public class GenericFileVisitor {
 		List<Path> list;
 		
 		// liefert alle .java Dateien
-		filter = createNameFilter(".*\\.java");
+//		filter = createNameFilter(".*\\.txt");
+		filter = createANDFilter(
+					createNameFilter(".*\\.txt"),
+					createSizeFilter(Compare.HIGHER, 200));
 		
 		// liefert alle .java Dateien im strings Verzeichnis
 //		filter = createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java");
@@ -388,26 +391,25 @@ public class GenericFileVisitor {
 		
 		// liefert alle .java Dateien im strings Verzeichnis , die größer als 2000 Bytes sind.
 		// und alle .txt Dateien
-		filter = createORFilter(
-					createANDFilter(
-						createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java"),
-						createSizeFilter(Compare.HIGHER, 3000)),
-					createANDFilter(
-							createNameFilter(".*\\.txt$"),
-							createSizeFilter(Compare.HIGHER, 200)));
+//		filter = createORFilter(
+//					createANDFilter(
+//						createNameFilter(".*\\\\strings\\\\[^\\\\]+\\.java"),
+//						createSizeFilter(Compare.HIGHER, 3000)),
+//					createANDFilter(
+//							createNameFilter(".*\\.txt$"),
+//							createSizeFilter(Compare.HIGHER, 200)));
 		
-		list = selectFiles(Paths.get(""), filter);
-		
-		for (Path p : list) {
-			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
-		}
+//		list = selectFiles(Paths.get(""), filter);
+//		
+//		for (Path p : list) {
+//			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
+//		}
 		
 		list = selectFiles(Paths.get(""), "size>200&&name=(.*\\.txt)||(size>3000&&name=(.*\\\\strings\\\\[^\\\\]+\\.java))");
-		// list = selectFiles(Paths.get(""), "name=(.*\\\\strings\\\\[^\\\\]+\\.java)");
 		for (Path p : list) {
 			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
 		}
-		
+
 	}
 
 }

@@ -242,6 +242,9 @@ public class GenericFileVisitor {
 			 * Es wird der reguläre Ausdruck als String zurückgeliefert. 
 			 */
 			private String parseRegex() throws ParseException {
+				while (pos != filter.length() && ' ' == filter.charAt(pos)) {
+					++pos; // skip space
+				}
 				int startpos = pos;
 				parseRegexGroup();
 				return filter.substring(startpos+1, pos-1);
@@ -249,12 +252,18 @@ public class GenericFileVisitor {
 
 			private Filter parseSize() throws ParseException {
 				Compare cmp;
-				char c = pos < filter.length() ? filter.charAt(pos++) : 0;
-				switch (c) {
-				case '=': cmp = Compare.EQUAL; break;
-				case '<': cmp = Compare.LOWER; break;
-				case '>': cmp = Compare.HIGHER; break;
-				default: throw new ParseException(filter, pos);
+				LOOP: for (;;) {
+					char c = pos < filter.length() ? filter.charAt(pos++) : 0;
+					switch (c) {
+					case '=': cmp = Compare.EQUAL; break LOOP;
+					case '<': cmp = Compare.LOWER; break LOOP;
+					case '>': cmp = Compare.HIGHER; break LOOP;
+					case ' ': continue; // skip space
+					default: throw new ParseException(filter, pos-1);
+					}
+				}
+				while (pos != filter.length() && ' ' == filter.charAt(pos)) {
+					++pos; // skip space
 				}
 				int startpos = pos;
 				while (pos != filter.length() && Character.isDigit(filter.charAt(pos))) {
@@ -271,31 +280,43 @@ public class GenericFileVisitor {
 				if (filter.length() == pos) {
 						throw new ParseException(filter, pos);
 				}
-				switch (filter.charAt(pos)) {
-				case '(':
-					++pos;
-					filterobj = parseFilter();
-					if (filter.length() == pos || filter.charAt(pos) != ')') {
+				LOOP: for(;;) {
+					switch (filter.charAt(pos)) {
+					case '(':
+						++pos;
+						filterobj = parseFilter();
+						if (filter.length() == pos || filter.charAt(pos) != ')') {
+							throw new ParseException(filter, pos);
+						}
+						++pos; // matches ')'
+						break LOOP;
+					case 'n':
+						if (!filter.substring(pos).startsWith("name")) {
+							throw new ParseException(filter, pos);
+						}
+						pos += 4;
+						while (pos != filter.length() && ' ' == filter.charAt(pos)) {
+							++pos; // skip space
+						}
+						if (pos == filter.length() || filter.charAt(pos) != '=') {
+							throw new ParseException(filter, pos);
+						}
+						++pos;
+						filterobj = new NameFilter(parseRegex());
+						break LOOP;
+					case 's':
+						if (!filter.substring(pos).startsWith("size")) {
+							throw new ParseException(filter, pos);
+						}
+						pos += 4;
+						filterobj = parseSize();
+						break LOOP;
+					case ' ':
+						++pos; // skip space
+						continue;
+					default:
 						throw new ParseException(filter, pos);
 					}
-					++pos; // matches ')'
-					break;
-				case 'n':
-					if (!filter.substring(pos).startsWith("name=")) {
-						throw new ParseException(filter, pos);
-					}
-					pos += 5;
-					filterobj = new NameFilter(parseRegex());
-					break;
-				case 's':
-					if (!filter.substring(pos).startsWith("size")) {
-						throw new ParseException(filter, pos);
-					}
-					pos += 4;
-					filterobj = parseSize();
-					break;
-				default:
-					throw new ParseException(filter, pos);
 				}
 				return filterobj;	
 			}
@@ -317,6 +338,9 @@ public class GenericFileVisitor {
 						}
 						pos += 2;
 						filterobj = new AndFilter(filterobj, parseAtom());
+						break;
+					case ' ':
+						++pos;
 						break;
 					default:
 						break LOOP;
@@ -371,7 +395,7 @@ public class GenericFileVisitor {
 	 * Test Driver.
 	 * 
 	 */
-	public static void main(String[] args) throws IOException, ParseException {
+	public static void main(String[] args) throws IOException {
 		Filter filter;
 		List<Path> list;
 		
@@ -404,12 +428,21 @@ public class GenericFileVisitor {
 //		for (Path p : list) {
 //			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
 //		}
-		
-		list = selectFiles(Paths.get(""), "size>200&&name=(.*\\.txt)||(size>3000&&name=(.*\\\\strings\\\\[^\\\\]+\\.java))");
-		for (Path p : list) {
-			System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
-		}
 
+		try {
+			list = selectFiles(Paths.get(""), "size > 200 && name = (.*\\.txt) || (size > 3000 && name = (.*\\\\strings\\\\[^\\\\]+\\.java))");
+			for (Path p : list) {
+				System.out.println(p.toAbsolutePath() + " (size=" + Files.size(p) + " bytes)");
+			}
+		} catch (ParseException ex) {
+			ex.printStackTrace();
+			System.out.println("erroffset = " + ex.getErrorOffset());
+			System.out.println(ex.getMessage());
+			for (int i = ex.getErrorOffset(); i > 0; --i) 
+				System.out.print(' ');
+			System.out.print('*');
+		}
+		
 	}
 
 }

@@ -72,10 +72,10 @@ public class WorkerThreadDemo {
 		}
 	}
 
-	static TaskQueue queue = new TaskQueue();
 
 	public static void main(String[] args) throws InterruptedException {
 		Thread[] workers = new Thread[3];
+		final TaskQueue queue = new TaskQueue();
 
 		for (int i = 0; i < workers.length; ++i) {
 			workers[i] = new Thread() {

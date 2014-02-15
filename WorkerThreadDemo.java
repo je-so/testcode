@@ -93,9 +93,9 @@ public class WorkerThreadDemo {
 			workers[i].start();
 		}
 
-		Random rnd = new Random();
-
 		Thread.sleep(500);
+
+		Random rnd = new Random();
 		for (int task = 0; task < 20; ++task) {
 			System.out.println(Thread.currentThread().getName() + ": Erzeuge neue Task " + task);
 			queue.addTask(task);

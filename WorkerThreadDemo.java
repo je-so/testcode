@@ -54,7 +54,7 @@ public class WorkerThreadDemo {
 			}
 		}
 
-		public synchronized int size() throws InterruptedException {
+		public int size() throws InterruptedException {
 			monitor.lock.lockInterruptibly();
 			try {
 				return tasks.size();

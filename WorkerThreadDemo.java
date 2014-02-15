@@ -26,7 +26,7 @@ public class WorkerThreadDemo {
 		/*
 		 * Ein Auftrag wird als simpler int repräsentiert.
 		 */
-		private Deque<Integer> tasks = new ArrayDeque<>();
+		private Queue<Integer> tasks = new ArrayDeque<>();
 		
 		public int removeTask() throws InterruptedException {
 			monitor.lock.lockInterruptibly();

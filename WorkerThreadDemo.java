@@ -6,7 +6,13 @@ import java.util.concurrent.locks.*;
 public class WorkerThreadDemo {
 
 	static class TaskQueue {
-		static class Monitor {
+
+		/*
+		 * Die Queue verwaltet maximal 10 Aufträge.
+		 */
+		private static final int MAXSIZE = 10;
+
+		private static class Monitor {
 			Lock lock = new ReentrantLock();
 			Condition notFull = lock.newCondition();
 			Condition notEmpty = lock.newCondition();
@@ -19,10 +25,8 @@ public class WorkerThreadDemo {
 
 		/*
 		 * Ein Auftrag wird als simpler int repräsentiert.
-		 * Die Queue verwaltet maximal 10 Aufträge.
 		 */
 		private Deque<Integer> tasks = new ArrayDeque<>();
-		private static final int MAXSIZE = 10;
 		
 		public int removeTask() throws InterruptedException {
 			monitor.lock.lockInterruptibly();

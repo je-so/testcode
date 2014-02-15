@@ -36,9 +36,9 @@ public class WorkerThreadDemo {
 					monitor.notEmpty.await();
 					System.out.println(Thread.currentThread().getName() + ": Warten zu Ende");
 				}
-				monitor.notFull.signal();
 				return tasks.remove();
 			} finally {
+				monitor.notFull.signal();
 				monitor.lock.unlock();
 			}
 		}
@@ -51,9 +51,9 @@ public class WorkerThreadDemo {
 					monitor.notFull.await();
 					System.out.println(Thread.currentThread().getName() + ": Warten zu Ende");
 				}
-				monitor.notEmpty.signal();
 				tasks.add(task);
 			} finally {
+				monitor.notEmpty.signal();
 				monitor.lock.unlock();
 			}
 		}

@@ -56,7 +56,7 @@ public class WorkerThreadDemo {
 		 * Liefert einen Task zurück (>= 0) oder -1, falls
 		 * die Queue leer ist.
 		 */
-		public synchronized int sync_remove() {
+		private synchronized int sync_remove() {
 			if (nr_of_task == 0) {
 				return -1;
 			}

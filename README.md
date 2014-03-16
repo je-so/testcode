@@ -1,8 +1,7 @@
 Testcode
 ========
 
-The testcode repository contains java demos
-and questions to master the java language.
+This repository contains unrelated stuff I worked on.
 
 License
 -------

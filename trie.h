@@ -3,32 +3,33 @@
    Implements a trie, a compact prefix tree.
    The trie stores binary strings with characters of type uint8_t.
    The nodes in the tree do not store the keys themselves but the
-   key is dervied from the position of the node in the tree.
-   Every node in the subtree of a node shares the same prefix key.
+   key is derived from the position of the node in the tree hierarchy.
+   Every node in a subtree shares the same prefix key as the root node
+   of the subtree.
 
    The trie is compact in that it allows to label an edge between two nodes with more than one character.
    Therefore a chain of nodes with only one child (n1-"x"->n2-"y"->n3-"z"->n4) can be compressed
    into one node (n1-"xyz"->n2).
 
-   A trie node is of flexible size and is reallocated in case of insertions or deletions.
+   A trie node has a dynamic size and is reallocated in case of insertions or deletions.
    Therefore the trie does not store keys with associated user nodes but only keys
    with associated pointers which can point to user defined values.
 
-   >       n1
-   >    a/    \b    \c
-   >   n2      n3    n8
-   >  c/ \d   x/ \y
-   >  n4  n5  n6  n7
+   >            n1
+   >    "a"/    |"b"   \"c"
+   >      n2    n3      n4
+   >  "c"/ \"d"     "x"/ \"y"
+   >    n5  n6        n7  n8
    >
    > Keys of nodes:
    > n1: ""
    > n2: "a"
    > n3: "b"
-   > n4: "ac"
-   > n5: "ad"
-   > n6: "bx"
-   > n7: "by"
-   > n8: "c"
+   > n4: "c"
+   > n5: "ac"
+   > n6: "ad"
+   > n7: "cx"
+   > n8: "cy"
 
    about: Copyright
    This program is free software.
@@ -55,7 +56,7 @@
 #define CKERN_DS_INMEM_TRIE_HEADER
 
 // forward
-struct trie_node_t;
+struct trie_nodedata_t;
 
 /* typedef: struct trie_t
  * Export <trie_t> into global namespace. */
@@ -74,20 +75,42 @@ int unittest_ds_inmem_trie(void);
 
 
 /* struct: trie_t
- * TODO: describe type */
+ * Manages an index which associates  abinary key with a user defined pointer.
+ * The index is implemented as a trie.
+ * The data structure contains a single pointer to the root node.
+ *
+ * Searching a value:
+ * A node has at least two possible childs. The value of the first
+ * bit of the key selects the left (0) or the right child.
+ * The next bit of the key selects the left or right child of the
+ * child node and so on until the last bit of the key has bin processed.
+ * If the found child node contains a stored user value it is returned.
+ *
+ * Level Compression (LC):
+ * A single node consumes more than nrbit > 1 bits and
+ * has exactly pow(2,nrbits) possible child nodes.
+ *
+ * Path Compression (PC):
+ * A node which has only 1 valid child stores a
+ * the bit of the key as prefix and removes the child.
+ * This is repeated until a node has at least two childs.
+ *
+ * */
 struct trie_t {
-   struct trie_node_t * root;
+   struct trie_nodedata_t * root;
 };
 
 // group: lifetime
 
 /* define: trie_INIT
  * Static initializer. */
-#define trie_INIT                         { 0 }
+#define trie_INIT \
+         { 0 }
 
-/* define: trie_INIT_FREEABLE
+/* define: trie_FREE
  * Static initializer. */
-#define trie_INIT_FREEABLE                { 0 }
+#define trie_FREE \
+         { 0 }
 
 /* function: init_trie
  * Initializes trie with 0 pointer. */

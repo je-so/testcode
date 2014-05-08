@@ -25,6 +25,8 @@
 */
 
 #include "C-kern/konfig.h"
+// TODO: insert next line and see if all functions are in use
+// #undef KONFIG_UNITTEST // TODO: remove line
 #include "C-kern/api/ds/inmem/trie.h"
 #include "C-kern/api/err.h"
 #include "C-kern/api/math/int/power2.h"
@@ -171,9 +173,9 @@ static inline header_t encodekeylen_header(header_t header, const uint8_t keylen
    return addflags_header( delflags_header(header, header_KEYLENMASK), keylen);
 }
 
-static inline header_t encodesizeflags_header(header_t header, const header_t sizeflags)
+static inline header_t encodesizeflag_header(header_t header, const header_t sizeflag)
 {
-   return addflags_header(delflags_header(header, header_SIZEMASK), (header_t) (sizeflags << header_SIZESHIFT));
+   return addflags_header(delflags_header(header, header_SIZEMASK), (header_t) (sizeflag << header_SIZESHIFT));
 }
 
 
@@ -415,6 +417,26 @@ struct trie_node_t {
          (  (MAXSIZE-offsetof(trie_nodedata_t, keylen)-sizeof(void*)) \
             / (sizeof(void*)+sizeof(uint8_t)))
 
+// group: query-header
+
+static inline int issubnode_trienode(const trie_node_t * node)
+{
+   return issubnode_header(node->data->header);
+}
+
+static inline int isuservalue_trienode(const trie_node_t * node)
+{
+   return isuservalue_header(node->data->header);
+}
+
+/* function: decodesize_trienode
+ * Returns the size in bytes of a node decoded from its <header_t>.
+ * */
+static inline uint_fast16_t decodesize_trienode(const trie_node_t * node)
+{
+   return (2*sizeof(void*)) << sizeflags_header(node->data->header);
+}
+
 // group: query-fields
 
 static inline trie_nodedata_t * data_trienode(const trie_node_t * node)
@@ -456,7 +478,7 @@ static inline uint_fast16_t off6_free_trienode(const trie_node_t * node)
 {
    return (uint_fast16_t) (
             off5_child_trienode(node)
-            + ( (node->data->header & header_SUBNODE)
+            + ( issubnode_trienode(node)
                 ? sizeof(void*)
                 : (uint_fast16_t)node->data->nrchild * sizeof(void*))
          );
@@ -465,26 +487,6 @@ static inline uint_fast16_t off6_free_trienode(const trie_node_t * node)
 static inline uint8_t nrchild_trienode(const trie_node_t * node)
 {
    return node->data->nrchild;
-}
-
-// group: query-header
-
-static inline int issubnode_trienode(const trie_node_t * node)
-{
-   return issubnode_header(node->data->header);
-}
-
-static inline int isuservalue_trienode(const trie_node_t * node)
-{
-   return isuservalue_header(node->data->header);
-}
-
-/* function: decodesize_trienode
- * Returns the size in bytes of a node decoded from its <header_t>.
- * */
-static inline uint_fast16_t decodesize_trienode(const trie_node_t * node)
-{
-   return (2*sizeof(void*)) << sizeflags_header(node->data->header);
 }
 
 // group: query-helper
@@ -525,14 +527,16 @@ static inline uint8_t keylen_trienode(const trie_node_t * node)
  *
  * Precondition:
  * The return value is only valid if <issubnode_trienode> returns true. */
-static inline void ** subnode_trienode(trie_node_t * node)
+static inline trie_subnode_t * subnode_trienode(trie_node_t * node)
 {
-   return (void**) (memaddr_trienode(node) + off5_child_trienode(node));
+   return *(void**) (memaddr_trienode(node) + off5_child_trienode(node));
 }
 
-static uint_fast16_t usedsize_bytealigned_trienode(const trie_node_t * node)
+/* function: usedsize_trienode
+ * Returns number of bytes used in node. */
+static uint_fast16_t usedsize_trienode(const trie_node_t * node)
 {
-// TODO: test
+   // TODO: remove function
    return (uint_fast16_t) (
             off6_free_trienode(node) - off4_uservalue_trienode(node)  /*size ptr*/
             + off3_digit_trienode(node)                               /*size byte array without digit array*/
@@ -541,17 +545,10 @@ static uint_fast16_t usedsize_bytealigned_trienode(const trie_node_t * node)
          );
 }
 
-static uint_fast16_t usedsize_ptraligned_trienode(const trie_node_t * node)
-{
-// TODO: test
-   return off6_free_trienode(node);
-}
-
 /* function: sizeuservalue_trienode
  * Returns 0 or sizeof(void*). */
 static inline unsigned sizeuservalue_trienode(const trie_node_t * node)
 {
-// TODO: test
    unsigned size = off5_child_trienode(node) - off4_uservalue_trienode(node);
    return size;
 }
@@ -638,7 +635,7 @@ static trie_subnode_t * delsubnode_trienode(trie_node_t * node)
 {
 // TODO: test
    uint8_t *        memaddr = memaddr_trienode(node);
-   trie_subnode_t * subnode = *subnode_trienode(node);
+   trie_subnode_t * subnode = subnode_trienode(node);
 
    // make room for digit / child arrays
    delheaderflag_trienode(node, header_SUBNODE);
@@ -754,67 +751,7 @@ static inline int expandnode_trienode(
    if (err) return err;
 
    // set trie_nodedata_t.header
-   (*data)->header = encodesizeflags_header(nodeheader, sizeflags);
-
-   return 0;
-}
-
-/* function: adaptnode_trienode
- * Change fields and expand the node size if needed.
- * The keylength is changed to new_keylen and
- * the number of childs is changed to new_nrchild.
- *
- * The caller must ensure that the new data fits into a node of size <trie_node_t.MAXSIZE>.
- *
- * All offsets are recalculated and a new <trie_nodedata_t> is allocated
- * if the node size has to be expanded to hold all new information.
- * If all additional information can be stored within the old <trie_nodedata_t>
- * the field <trie_node_t.data> from out parameter expanded_node is copied from node.
- *
- * Responsibility of the Caller:
- * A caller should delete <trie_node_t.data> from node and change the parents child
- * pointer to the new value stored in expanded_node if the size has been expanded!
- * The fields <trie_nodedata_t.header> and <trie_nodedata_t.nrchild> of expanded_node
- * are adapted. Be aware that a new keylen is not encoded in expanded_node
- * you have to call <encodekeylen_trienode> after you moved any data.
- * In case of allocation all other content in <trie_nodedata_t> is undefined.
- *
- * Returns ENOMEM if memory allocation fails.
- *
- * In case of error all fields except data in expanded_node were changed.
- *
- * Unchecked Precondition:
- * - TODO:
- * */
-static int adaptnode_trienode(
-   /*out*/trie_node_t*  expanded_node,
-   const trie_node_t *  node,
-   uint8_t              new_nrchild,
-   uint8_t              new_keylen)
-{
-   int err;
-   trie_nodedata_t * data;
-   unsigned          oldsize = decodesize_trienode(node);
-
-   // calculate offsets and new size
-   unsigned newsize = computeoffsets_trienode( expanded_node,
-                        issubnode_trienode(node),
-                        sizeuservalue_trienode(node),
-                        new_nrchild, new_keylen );
-
-   // need resize ?
-
-   if (newsize <= oldsize) {
-      data = data_trienode(node);
-
-   } else {
-      err = expandnode_trienode(&data, node->data->header, oldsize, newsize);
-      if (err) return err;
-   }
-
-   // set out param (offsets are already set)
-   data->nrchild = (uint8_t)new_nrchild;
-   expanded_node->data = data;
+   (*data)->header = encodesizeflag_header(nodeheader, sizeflags);
 
    return 0;
 }
@@ -856,31 +793,31 @@ static int tryadduservalue_trienode(trie_node_t * node, void * uservalue)
       return EINVAL;
    }
 
-   uint8_t * memaddr = memaddr_trienode(node);
-   unsigned  oldsize = decodesize_trienode(node);
+   uint8_t * destaddr = memaddr_trienode(node);
+   unsigned  oldsize  = decodesize_trienode(node);
 
    if (oldsize < newoff6) {
       trie_nodedata_t * data;
       err = expandnode_trienode(&data, node->data->header, oldsize, newoff6);
       if (err) return err;
 
-      uint8_t * oldaddr = memaddr;
-      memaddr = memaddr_trienodedata(data);
-      memcpy( memaddr + sizeof(data->header), oldaddr + sizeof(data->header),
+      uint8_t * srcaddr = destaddr;
+      destaddr = memaddr_trienodedata(data);
+      memcpy( destaddr + sizeof(data->header), srcaddr + sizeof(data->header),
               off4_uservalue_trienode(node) - sizeof(data->header));
-      memcpy( memaddr + sizeof(void*) + off4_uservalue_trienode(node), oldaddr + off4_uservalue_trienode(node),
+      memcpy( destaddr + sizeof(void*) + off4_uservalue_trienode(node), srcaddr + off4_uservalue_trienode(node),
               off6 - off4_uservalue_trienode(node));
 
       (void) delete_trienodedata(&node->data, oldsize);
       node->data = data;
 
    } else {
-      memmove( memaddr + sizeof(void*) + off4_uservalue_trienode(node), memaddr + off4_uservalue_trienode(node),
+      memmove( destaddr + sizeof(void*) + off4_uservalue_trienode(node), destaddr + off4_uservalue_trienode(node),
                off6 - off4_uservalue_trienode(node));
    }
 
    addheaderflag_trienode(node, header_USERVALUE);
-   *(void**) (memaddr + off4_uservalue_trienode(node)) = uservalue;
+   *(void**) (destaddr + off4_uservalue_trienode(node)) = uservalue;
 
    node->off5_child = (uint_fast16_t) (off4_uservalue_trienode(node) + sizeof(void*));
 
@@ -938,40 +875,50 @@ static int tryaddkeyprefix_trienode(trie_node_t * node, uint8_t prefixkeylen, co
    unsigned newkeylen = (uint_fast16_t)node_keylen + prefixkeylen;
 
    // could node of MAXSIZE hold it ?
-   if (  255 < newkeylen
-         || MAXSIZE < usedsize_bytealigned_trienode(node) + prefixkeylen) {
-      return EINVAL;
+   if (255 < newkeylen) return EINVAL;
+
+   trie_node_t changed_node;
+   unsigned newsize = computeoffsets_trienode( &changed_node,
+                        issubnode_trienode(node),
+                        sizeuservalue_trienode(node),
+                        nrchild_trienode(node), (uint8_t)newkeylen );
+
+   if (newsize > MAXSIZE) return EINVAL;
+
+   unsigned  oldsize  = decodesize_trienode(node);
+   uint8_t * srcaddr  = memaddr_trienode(node);
+   uint8_t * destaddr = srcaddr;
+
+   trie_nodedata_t * data = 0;
+   if (oldsize < newsize) {
+      err = expandnode_trienode(&data, node->data->header, oldsize, newsize);
+      if (err) return err;
+      destaddr = memaddr_trienodedata(data);
    }
-
-   // TODO: replace adaptnode_trienode with compute + call to expandnode !!
-
-   trie_node_t expanded_node;
-   err = adaptnode_trienode(&expanded_node, node, nrchild_trienode(node), (uint8_t)newkeylen);
-   if (err) return err;
-
-   uint8_t * memaddr = memaddr_trienode(node);
-   uint8_t * expmemaddr = memaddr_trienode(&expanded_node);
 
    // copy content
    if (0) (void) off6_free_trienode(node); // after childs there is no other field !
-   memmove( expmemaddr + off4_uservalue_trienode(&expanded_node), memaddr + off4_uservalue_trienode(node),
-            off6_free_trienode(&expanded_node) - off4_uservalue_trienode(&expanded_node));
+   memmove( destaddr + off4_uservalue_trienode(&changed_node), srcaddr + off4_uservalue_trienode(node),
+            off6_free_trienode(&changed_node) - off4_uservalue_trienode(&changed_node));
    if (!issubnode_trienode(node)) {
-      memmove( expmemaddr + off3_digit_trienode(&expanded_node), memaddr + off3_digit_trienode(node),
+      memmove( destaddr + off3_digit_trienode(&changed_node), srcaddr + off3_digit_trienode(node),
                nrchild_trienode(node));
    }
-   memcpy(  expmemaddr + off2_key_trienode(&expanded_node), key,
-            prefixkeylen);
-   memmove( expmemaddr + off2_key_trienode(&expanded_node) + prefixkeylen, memaddr + off2_key_trienode(node),
+   memmove( destaddr + off2_key_trienode(&changed_node) + prefixkeylen, srcaddr + off2_key_trienode(node),
             node_keylen);
-   encodekeylen_trienode(&expanded_node, (uint8_t)newkeylen);
+   memcpy(  destaddr + off2_key_trienode(&changed_node), key,
+            prefixkeylen);
 
    // was node size expanded ?
-   if (node->data != expanded_node.data) {
-      (void) delete_trienodedata(&node->data, decodesize_trienode(node));
+   if (data) {
+      data->nrchild = nrchild_trienode(node);
+      (void) delete_trienodedata(&node->data, oldsize);
+      node->data    = data;
    }
 
-   *node = expanded_node;
+   encodekeylen_trienode(node, (uint8_t)newkeylen);
+
+   copyoffsets_trienode(node, &changed_node);
 
    return 0;
 }
@@ -994,7 +941,7 @@ static int tryaddchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchil
    int err;
 
    if (issubnode_trienode(node)) {
-      trie_subnode_t * subnode = *subnode_trienode(node);
+      trie_subnode_t * subnode = subnode_trienode(node);
       setchild_triesubnode(subnode, digit, child);
 
    } else {
@@ -1039,6 +986,7 @@ static int tryaddchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchil
                srcaddr  + off3_digit_trienode(node) + childidx,
                (size_t)nrchild_trienode(node) - childidx);
       destaddr[off3_digit_trienode(&changed_node) + childidx] = digit;
+
       // off3_digit_trienode(&changed_node) == off3_digit_trienode(node) ==> no copy in case of !data
       if (data) {
          // whole node except header before childidx
@@ -1048,6 +996,8 @@ static int tryaddchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchil
          (void) delete_trienodedata(&node->data, oldsize);
          node->data = data;
       }
+
+      copyoffsets_trienode(node, &changed_node);
    }
 
    ++ node->data->nrchild;
@@ -1070,7 +1020,7 @@ static void delchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchild-
 {
 // TODO: test
    if (issubnode_trienode(node)) {
-      trie_subnode_t * subnode = *subnode_trienode(node);
+      trie_subnode_t * subnode = subnode_trienode(node);
       clearchild_triesubnode(subnode, digit);
 
    } else {
@@ -1098,6 +1048,8 @@ static void delchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchild-
                newsize - off5_child_trienode(&changed_node) - deloffset);
       // child array is last field
       if (0) off6_free_trienode(node);
+
+      copyoffsets_trienode(node, &changed_node);
    }
 
    -- node->data->nrchild;
@@ -1109,9 +1061,19 @@ static void delchild_trienode(trie_node_t * node, uint8_t childidx/*0 - nrchild-
 static int free_trienode(trie_node_t * node)
 {
    int err;
+   int err2;
 
    if (node->data) {
-      err = delete_trienodedata(&node->data, decodesize_trienode(node));
+      err = 0;
+
+      if (issubnode_trienode(node)) {
+         trie_subnode_t * subnode = subnode_trienode(node);
+         err = delete_triesubnode(&subnode);
+      }
+
+      err2 = delete_trienodedata(&node->data, decodesize_trienode(node));
+      if (err2) err = err2;
+
       if (err) goto ONABORT;
    }
 
@@ -1132,6 +1094,13 @@ ONABORT:
  * nrchild is bigger than <MAXNROFCHILD_WITHUSERVALUE> or <MAXNROFCHILD_NOUSERVALUE>
  * which depends on reserveUserValue being true or false.
  *
+ * Parameter nrchild:
+ * The parameter nrchild can encode only 255 child pointers.
+ * A subnode supports up to 256 child pointers so you have to increment
+ * by one after return.
+ * In case of a subnode the value of <trie_nodedata_t.nrchild> is one less
+ * then the provided value in parameter nrchild.
+ *
  * */
 static int init_trienode(
    /*out*/trie_node_t* node,
@@ -1141,9 +1110,8 @@ static int init_trienode(
    uint8_t        keylen
    )
 {
-// TODO: test
    int err;
-   size_t            size = reserveUserValue ? sizeof(void*) : 0;
+   size_t            size = reserveUserValue ? sizeof(void*) + off1_keylen_trienode() : off1_keylen_trienode();
    trie_subnode_t *  subnode = 0;
 
    if (nrchild > (reserveUserValue ? MAXNROFCHILD_WITHUSERVALUE : MAXNROFCHILD_NOUSERVALUE)) {
@@ -1153,7 +1121,7 @@ static int init_trienode(
       -- nrchild; // subnode encodes one less
 
    } else {
-      size += childsize_trienode(0, nrchild);
+      size += nrchild/*size digit array*/ + childsize_trienode(0, nrchild);
    }
 
    size += needkeylenbyte_header(keylen);
@@ -1170,7 +1138,7 @@ static int init_trienode(
       keylen = (uint8_t) (keylen - needkeylenbyte_header(keylen));
       size += needkeylenbyte_header(keylen);
       size += keylen;
-      header = header_SIZEMAX;
+      header = header_SIZEMAX<<header_SIZESHIFT;
       nodesize = MAXSIZE;
 
    } else if (size > MAXSIZE / 8) {
@@ -1179,6 +1147,7 @@ static int init_trienode(
       for (header = header_SIZEMAX-2; nodesize < size; ++header) {
          nodesize *= 2;
       }
+      header = (header_t) (header << header_SIZESHIFT);
 
    } else {
       // shrink nodesize
@@ -1186,6 +1155,7 @@ static int init_trienode(
       for (header = header_SIZEMAX-3; nodesize/2 >= size && header > header_SIZE0; --header) {
          nodesize /= 2;
       }
+      header = (header_t) (header << header_SIZESHIFT);
    }
 
    trie_nodedata_t * data;
@@ -1193,6 +1163,7 @@ static int init_trienode(
    if (err) goto ONABORT;
 
    header = addflags_header(header, reserveUserValue ? header_USERVALUE : 0);
+   header = addflags_header(header, subnode ? header_SUBNODE : 0);
 
    unsigned offset = off1_keylen_trienode();
 
@@ -1237,7 +1208,6 @@ ONABORT:
  * */
 static int initdecode_trienode(/*out*/trie_node_t * node, /*in*/trie_nodedata_t * data)
 {
-// TODO: test
    uint8_t keylen;
    header_t header = data->header;
 
@@ -1274,144 +1244,6 @@ ONABORT:
 
 
 #if 0
-
-/* function: delete_trienode
- * Frees memory of node and all of its child nodes.
- * The tree is traversed in depth first order.
- * During traversal a special delete header is written to the node. */
-static int delete_trienode(trie_nodedata_t ** node)
-{
-   int err = 0;
-   int err2;
-
-   typedef struct delheader_t delheader_t;
-   struct delheader_t {
-      uint8_t  header;
-      uint8_t  nodesize;     // nodesize * PTRALIGN    == nodesize in bytes
-      uint8_t  childoffset;  // childoffset * PTRALIGN == offset in bytes into child array / 1 .. 255 in case of subnode
-      void *   parent;       // points to parent or subnode (in case of subnode parent pointer is stored in subnode->child[0]->child[0])
-   };
-
-   static_assert( offsetof(delheader_t, header) == offsetof(trie_nodedata_t, header)
-                  && sizeof(((delheader_t*)0)->header) == sizeof(((trie_nodedata_t*)0)->header), "header is compatible");
-   static_assert(offsetof(delheader_t, parent) <= PTRALIGN, "parent overwrites first child if uservalue is not present");
-   static_assert(sizeof(delheader_t) <= SIZE1NODE, "minmum nodesize can hold delheader_t");
-   static_assert(SIZEMAXNODE / sizeof(void*) < 255, "childoffset and nodesize fit into 8 bit");
-
-   delheader_t * delheader = 0;
-   trie_node_t   delnode   = { .data = *node };
-
-   while (delnode.data) {
-      // 1: decode delnode !!
-      // write delheader_t to node and set delheader to it
-      // if first child set delnode to first child => repeat 1
-
-      // 2: if delheader is 0 break this loop
-      // move next child of delheader into delnode => repeat 1
-      // If no next child delete node (if it contains pointer to subnodes delete all subnodes first)
-      // set delheader to delheader->parent (before deletion !) => repeat 2
-
-      // step 1:
-      do {
-         void *   firstchild  = 0;
-         uint8_t  childoffset = 0;
-         err2 = initdecode_trienodeoffsets(&delnode.offsets, delnode.data);
-         if (err2) {       // ! ignore corrupted delnode !
-            err = err2;
-         } else {
-            void *  parent  = delheader;
-            if (ischild_header(delnode.offsets.header)) {
-               // delheader_t->parent could overlap with child[0]
-               firstchild  = child_trienode(&delnode)[0];
-               childoffset = (uint8_t) (1 + (delnode.offsets.child / sizeof(trie_node_t*)));
-            } else if (issubnode_header(delnode.offsets.header)) {
-               // delheader_t->parent could overlap with subnode
-               trie_subnode_t * subnode = subnode_trienodeoffsets(&delnode.offsets, delnode.data)[0];
-               if (subnode) {
-                  for (unsigned i = 0; i < lengthof(subnode->child); ++i) {
-                     if (subnode->child[i]) {
-                        trie_subnode2_t * subnode2 = subnode->child[i];
-                        for (unsigned i2 = 0; i2 < lengthof(subnode2->child); ++i2) {
-                           if (subnode2->child[i2]) {
-                              firstchild = subnode2->child[i2];
-                              subnode2->child[i2] = 0;
-                              subnode2->child[0]  = (trie_nodedata_t*) delheader;   // real parent
-                              subnode->child[i] = subnode->child[0];
-                              subnode->child[0] = subnode2;
-                              parent = subnode;                  // parent points to subnode
-                              goto FOUND_CHILD_IN_SUBNODE;
-                           }
-                        }
-                     }
-                  }
-                  // delete subnode cause of no childs ==> subnode == 0
-                  err2 = delete_triesubnode(&subnode);
-                  if (err2) err = err2;
-               }
-               // change header cause subnode == 0
-               delnode.data->header = clear_header(delnode.data->header, header_SUBNODE);
-
-               FOUND_CHILD_IN_SUBNODE:;
-               //    (subnode != 0 && firschild != 0)
-               //    || (subnode == 0 && firstchild == 0 && !issubnode_header(delnode->header))
-            }
-            delheader = (delheader_t*) delnode.data;
-            delheader->nodesize    = (uint8_t) (delnode.offsets.nodesize / sizeof(trie_node_t*));
-            delheader->childoffset = childoffset;
-            delheader->parent      = parent;
-         }
-         delnode.data = firstchild;
-      } while (delnode.data);
-
-      // step 2:
-      delheader_t * delparent;
-      for (; delheader; delheader = delparent) {
-         if (ischildorsubnode_header(delheader->header)) {
-            // visit childs first
-            if (issubnode_header(delheader->header)) {
-               trie_subnode_t * subnode = delheader->parent;
-               while (delheader->childoffset != 255) {
-                  trie_subnode2_t * subnode2;
-                  ++ delheader->childoffset; // first value is 1
-                  subnode2 = child_triesubnode(subnode, delheader->childoffset)[0];
-                  if (subnode2) {
-                     delnode.data = child_triesubnode2(subnode2, delheader->childoffset)[0];
-                     if (delnode.data) break;
-                  } else {
-                     delheader->childoffset |= (lengthof(subnode2->child)-1);
-                  }
-               }
-
-            } else if (delheader->nodesize > delheader->childoffset) {
-               delnode.data = ((trie_nodedata_t**)((uint8_t*)delheader + delheader->childoffset * sizeof(trie_node_t*)))[0];
-               ++ delheader->childoffset;
-            }
-            if (delnode.data) break; // another child (delnode != 0) ? => handle it first
-         }
-         // ////
-         // delete node delheader !
-         delparent = delheader->parent;
-         if (issubnode_header(delheader->header)) {
-            trie_subnode_t * subnode = delheader->parent;
-            delparent = (delheader_t*) subnode->child[0]->child[0];
-            err2 = delete_triesubnode(&subnode);
-            if (err2) err = err2;
-         }
-         err2 = deletenode_trienode((trie_node_t**)&delheader);
-         if (err2) err = err2;
-      }
-   }
-
-   // set inout param
-   node = 0;
-
-   if (err) goto ONABORT;
-
-   return 0;
-ONABORT:
-   TRACEABORTFREE_ERRLOG(err);
-   return err;
-}
 
 /* function: new_trienode
  * Allocate new <trie_node_t> with optional prefix, optional usernode and optional childs.
@@ -1900,7 +1732,7 @@ int free_trie(trie_t * trie)
             }
 
          } else {
-            trie_subnode_t * subnode = *subnode_trienode(&delnode);
+            trie_subnode_t * subnode = subnode_trienode(&delnode);
             for (unsigned i = 0; i < lengthof(subnode->child); ++i) {
                if (subnode->child[i]) {
                   data->nrchild = (uint8_t)i; // last index into subnode->childs
@@ -1942,7 +1774,7 @@ int free_trie(trie_t * trie)
             parent = childs_trienode(&delnode)[0];
 
          } else {
-            trie_subnode_t * subnode = *subnode_trienode(&delnode);
+            trie_subnode_t * subnode = subnode_trienode(&delnode);
             for (unsigned i = parent->nrchild+1u; i < lengthof(subnode->child); ++i) {
                if (subnode->child[i]) {
                   data->nrchild = (uint8_t)i; // last index into subnode->childs
@@ -3984,12 +3816,12 @@ static int test_header(void)
       TEST(h == encodekeylen_header((header_t)~header_KEYLENMASK, i));
    }
 
-   // TEST encodesizeflags_header
+   // TEST encodesizeflag_header
    for (uint8_t i = header_SIZE0; i <= (header_SIZEMASK>>header_SIZESHIFT); ++i) {
       header_t h = (header_t) (i << header_SIZESHIFT);
-      TEST(h == encodesizeflags_header(0, i));
+      TEST(h == encodesizeflag_header(0, i));
       h = (header_t) (h | ~header_SIZEMASK);
-      TEST(h == encodesizeflags_header((header_t)~header_SIZEMASK, i));
+      TEST(h == encodesizeflag_header((header_t)~header_SIZEMASK, i));
    }
 
    return 0;
@@ -4161,6 +3993,40 @@ static int test_node_query(void)
                   && MAXNROFCHILD_WITHUSERVALUE >= MAXNROFCHILD_NOUSERVALUE-1,
                   "MAXNROFCHILD_WITHUSERVALUE is the same or one less than MAXNROFCHILD_NOUSERVALUE");
 
+   // == group: query-header ==
+
+   // TEST issubnode_trienode
+   data->header = header_SUBNODE;
+   TEST(0 != issubnode_trienode(&node));
+   data->header = (header_t) ~ header_SUBNODE;
+   TEST(0 == issubnode_trienode(&node));
+   data->header = 0;
+   TEST(0 == issubnode_trienode(&node));
+
+   // TEST isuservalue_trienode
+   data->header = header_USERVALUE;
+   TEST(0 != isuservalue_trienode(&node));
+   data->header = (header_t) ~ header_USERVALUE;
+   TEST(0 == isuservalue_trienode(&node));
+   data->header = 0;
+   TEST(0 == isuservalue_trienode(&node));
+
+   // TEST decodesize_trienode
+   node.data->header = header_SIZE0 << header_SIZESHIFT;
+   TEST( 2*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZE1 << header_SIZESHIFT;
+   TEST( 4*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZE2 << header_SIZESHIFT;
+   TEST( 8*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZE3 << header_SIZESHIFT;
+   TEST(16*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZE4 << header_SIZESHIFT;
+   TEST(32*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZE5 << header_SIZESHIFT;
+   TEST(64*sizeof(void*) == decodesize_trienode(&node));
+   node.data->header = header_SIZEMAX << header_SIZESHIFT;
+   TEST(64*sizeof(void*) == decodesize_trienode(&node));
+
    // == group: query-fields ==
 
    // TEST data_trienode
@@ -4226,41 +4092,7 @@ static int test_node_query(void)
       TEST(nrchild == nrchild_trienode(&node));
    }
 
-   // == group: query-header ==
-
-   // TEST issubnode_trienode
-   data->header = header_SUBNODE;
-   TEST(0 != issubnode_trienode(&node));
-   data->header = (header_t) ~ header_SUBNODE;
-   TEST(0 == issubnode_trienode(&node));
-   data->header = 0;
-   TEST(0 == issubnode_trienode(&node));
-
-   // TEST isuservalue_trienode
-   data->header = header_USERVALUE;
-   TEST(0 != isuservalue_trienode(&node));
-   data->header = (header_t) ~ header_USERVALUE;
-   TEST(0 == isuservalue_trienode(&node));
-   data->header = 0;
-   TEST(0 == isuservalue_trienode(&node));
-
-   // TEST decodesize_trienode
-   node.data->header = header_SIZE0 << header_SIZESHIFT;
-   TEST( 2*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZE1 << header_SIZESHIFT;
-   TEST( 4*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZE2 << header_SIZESHIFT;
-   TEST( 8*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZE3 << header_SIZESHIFT;
-   TEST(16*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZE4 << header_SIZESHIFT;
-   TEST(32*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZE5 << header_SIZESHIFT;
-   TEST(64*sizeof(void*) == decodesize_trienode(&node));
-   node.data->header = header_SIZEMAX << header_SIZESHIFT;
-   TEST(64*sizeof(void*) == decodesize_trienode(&node));
-
-   // == query-helper ==
+   // == group: query-helper ==
 
    // TEST alignoffset_trienode
    TEST(0 == alignoffset_trienode(0));
@@ -4316,66 +4148,291 @@ static int test_node_query(void)
    TEST(0 == keylen_trienode(&node));
 
    // TEST subnode_trienode
-   for (uint_fast16_t i = 1024; i <= 1024; --i) {
-      node.off5_child = i;
-      node.data = 0;
-      TEST((void**)i == subnode_trienode(&node));
-      node.data = data;
-      TEST((void**)(i+(uint8_t*)data) == subnode_trienode(&node));
+   for (uint_fast16_t i = 0; i < MAXSIZE/sizeof(void*); ++i) {
+      node.off5_child = i * sizeof(void*);
+      ((void**)data)[i] = 0;
+      TEST(0 == subnode_trienode(&node));
+      ((void**)data)[i] = (void*)buffer;
+      TEST((trie_subnode_t*)buffer == subnode_trienode(&node));
    }
+   node.off5_child = 0;
 
-   // TEST usedsize_bytealigned_trienode
-
-   // TEST usedsize_ptraligned_trienode
+   // TEST usedsize_trienode
+   for (unsigned i = 1024; i <= 1024; --i) {
+      node.off3_digit     = (uint_fast16_t) i;
+      node.off4_uservalue = (uint_fast16_t) (node.off3_digit + 256 + 4*i);
+      node.off5_child     = (uint_fast16_t) (node.off4_uservalue + (i % 2 ? sizeof(void*) : 0));
+      for (unsigned nrchild = 255; nrchild <= 255; --nrchild) {
+         size_t size = i + (i % 2 ? sizeof(void*) : 0);
+         data->nrchild = (uint8_t) nrchild;
+         data->header  = header_SUBNODE;
+         TEST(size + sizeof(void*) == usedsize_trienode(&node));
+         data->header  = 0;
+         TEST(size + nrchild * (1+sizeof(void*)) == usedsize_trienode(&node));
+      }
+   }
+   node.off3_digit     = 0;
+   node.off4_uservalue = 0;
+   node.off5_child     = 0;
 
    // TEST sizeuservalue_trienode
+   for (uint_fast16_t i = 256; i <= 256; --i) {
+      node.off4_uservalue = i;
+      node.off5_child     = 2*i;
+      TEST(i == sizeuservalue_trienode(&node));
+   }
 
    return 0;
 ONABORT:
    return EINVAL;
 }
 
+static void get_node_size(unsigned size, /*out*/unsigned * nodesize, /*out*/header_t * sizeflag)
+{
+   if (size <= MAXSIZE/32) {
+      *nodesize = MAXSIZE/32;
+      *sizeflag = header_SIZE0;
+   } else if (size <= MAXSIZE/16) {
+      *nodesize = MAXSIZE/16;
+      *sizeflag = header_SIZE1;
+   } else if (size <= MAXSIZE/8) {
+      *nodesize = MAXSIZE/8;
+      *sizeflag = header_SIZE2;
+   } else if (size <= MAXSIZE/4) {
+      *nodesize = MAXSIZE/4;
+      *sizeflag = header_SIZE3;
+   } else if (size <= MAXSIZE/2) {
+      *nodesize = MAXSIZE/2;
+      *sizeflag = header_SIZE4;
+   } else {
+      *nodesize = MAXSIZE;
+      *sizeflag = header_SIZE5;
+   }
+}
+
 static int test_node_lifetime(void)
 {
+   trie_node_t       node;
+   trie_node_t       node2;
+   trie_nodedata_t * data = 0;
+   size_t            size_allocated = SIZEALLOCATED_MM();
+
+   memset(&node, 0, sizeof(node));
+   memset(&node2, 0, sizeof(node2));
 
    // == group: lifetime ==
 
-   // TEST decodekeylen_trienode: len encoded in header
-   for (unsigned i = 0; i <= 6; ++i) {
-      static_assert( header_KEYLEN0 == 0 && header_KEYLEN1 == 1 && header_KEYLEN2 == 2 && header_KEYLEN3 == 3
-                     && header_KEYLEN4 == 4 && header_KEYLEN5 == 5 && header_KEYLEN6 == 6
-                     && header_KEYLENBYTE == 7 && header_KEYLENMASK == 7,
-                     "only values 0-6 used without byte" );
-      // data->header = (header_t) i;
-      // TEST(i == decodekeylen_trienode(&node));
+   for (uint8_t isuservalue = 0, maxchild = MAXNROFCHILD_NOUSERVALUE+1; isuservalue <= 1; ++isuservalue, maxchild = MAXNROFCHILD_WITHUSERVALUE+1) {
+      const unsigned usersize = isuservalue ? sizeof(void*) : 0;
+
+      for (uint8_t nrchild = 0; nrchild < maxchild; ++nrchild) {
+
+         const unsigned childsize = nrchild * sizeof(void*);
+
+         for (unsigned keylen = 0; keylen <= 255; ++keylen) {
+
+            header_t header = isuservalue ? header_USERVALUE : 0;
+            unsigned keysize = keylen;
+            unsigned lenbyte = (keylen >= header_KEYLENBYTE);
+            unsigned size = usersize + childsize + keysize + lenbyte + nrchild
+                          + off1_keylen_trienode();
+
+            if (size > MAXSIZE) {
+               size -= keysize + lenbyte;
+               TEST(size <= MAXSIZE);
+               keysize = MAXSIZE - size;
+               keysize -= (keysize >= header_KEYLENBYTE);
+               lenbyte = (keysize >= header_KEYLENBYTE);
+               size += keysize + lenbyte;
+            }
+
+            header = (header_t) (lenbyte ? encodekeylenbyte_header(header) : encodekeylen_header(header, (uint8_t)keysize));
+
+            header_t sizeflag;
+            unsigned nodesize;
+
+            get_node_size(size, &nodesize, &sizeflag);
+            header = encodesizeflag_header(header, sizeflag);
+
+            // TEST init_trienode: child array
+            TEST(0 == init_trienode(&node, isuservalue!=0, nrchild, (uint8_t)keylen));
+            TEST(size_allocated + nodesize == SIZEALLOCATED_MM());
+            TEST(0 != node.data);
+            TEST(header  == node.data->header);
+            TEST(nrchild == node.data->nrchild);
+            TEST(keysize == keylen_trienode(&node));
+            unsigned off = off1_keylen_trienode() + lenbyte;
+            TEST(off == node.off2_key);
+            off += keysize;
+            TEST(off == node.off3_digit);
+            off += nrchild;
+            if (off % PTRALIGN) off += PTRALIGN - (off % PTRALIGN);
+            TEST(off == node.off4_uservalue);
+            off += usersize;
+            TEST(off == node.off5_child);
+            off += childsize;
+            TEST(off == off6_free_trienode(&node));
+
+            // TEST initdecode_trienode
+            TEST(0 == initdecode_trienode(&node2, node.data));
+            TEST(0 == memcmp(&node2, &node, sizeof(node)));
+            TEST(header  == node2.data->header);
+            TEST(nrchild == node2.data->nrchild);
+            TEST(keysize == keylen_trienode(&node2));
+
+            // TEST free_trienode: child array
+            TEST(0 == free_trienode(&node));
+            TEST(0 == node.data);
+            TEST(size_allocated == SIZEALLOCATED_MM());
+            TEST(0 == free_trienode(&node));
+            TEST(0 == node.data);
+         }
+      }
+
+      for (uint8_t nrchild = maxchild; nrchild >= maxchild; ++nrchild) {
+
+         for (int keylen = 0; keylen <= 255; ++keylen) {
+
+            header_t header = (header_t) (isuservalue ? header_USERVALUE|header_SUBNODE : header_SUBNODE);
+            unsigned keysize = keylen;
+            unsigned lenbyte = (keylen >= header_KEYLENBYTE);
+            unsigned size = usersize + sizeof(void*)/*subnode*/ + keysize + lenbyte
+                          + off1_keylen_trienode();
+
+            if (size > MAXSIZE) {
+               size -= keysize + lenbyte;
+               TEST(size <= MAXSIZE);
+               keysize = MAXSIZE - size;
+               keysize -= (keysize >= header_KEYLENBYTE);
+               lenbyte = (keysize >= header_KEYLENBYTE);
+               size += keysize + lenbyte;
+            }
+
+            header = (header_t) (lenbyte ? encodekeylenbyte_header(header) : encodekeylen_header(header, (uint8_t)keysize));
+
+            header_t sizeflag;
+            unsigned nodesize;
+
+            get_node_size(size, &nodesize, &sizeflag);
+            header = encodesizeflag_header(header, sizeflag);
+
+            // TEST init_trienode: subnode
+            TEST(0 == init_trienode(&node, isuservalue!=0, nrchild, (uint8_t)keylen));
+            TEST(size_allocated + nodesize + sizeof(trie_subnode_t) == SIZEALLOCATED_MM());
+            TEST(0 != node.data);
+            TEST(header  == node.data->header);
+            TEST(nrchild-1 == node.data->nrchild);
+            TEST(keysize == keylen_trienode(&node));
+            unsigned off = off1_keylen_trienode() + lenbyte;
+            TEST(off == node.off2_key);
+            off += keysize;
+            TEST(off == node.off3_digit);
+            if (off % PTRALIGN) off += PTRALIGN - (off % PTRALIGN);
+            TEST(off == node.off4_uservalue);
+            off += usersize;
+            TEST(off == node.off5_child);
+            off += sizeof(void*);
+            TEST(off == off6_free_trienode(&node));
+
+            // TEST initdecode_trienode
+            TEST(0 == initdecode_trienode(&node2, node.data));
+            TEST(0 == memcmp(&node2, &node, sizeof(node)));
+            TEST(header  == node2.data->header);
+            TEST(nrchild-1 == node2.data->nrchild);
+            TEST(keysize == keylen_trienode(&node2));
+
+            // TEST free_trienode: subnode
+            TEST(0 == free_trienode(&node));
+            TEST(0 == node.data);
+            TEST(size_allocated == SIZEALLOCATED_MM());
+            TEST(0 == free_trienode(&node));
+            TEST(0 == node.data);
+         }
+      }
    }
 
-   // TEST decodekeylen_trienode: len encoded in byte
-   // data->header = (header_t) header_KEYLENBYTE;
-   // TEST(0 == decodekeylen_trienode(&node));
-   for (uint8_t i = 1; i; ++i) {
-      // data->keylen = i;
-      // TEST(i == decodekeylen_trienode(&node));
+   // TEST init_trienode: ERROR
+   init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+   // no subnode
+   TEST(ENOMEM == init_trienode(&node, 0, 1, 1));
+   TEST(0 == node.data);
+   // with subnode
+   for (unsigned i = 1; i <= 2; ++i) {
+      init_testerrortimer(&s_trie_errtimer, i, ENOMEM);
+      TEST(ENOMEM == init_trienode(&node, 1, MAXNROFCHILD_WITHUSERVALUE+1, 100));
+      TEST(0 == node.data);
    }
+
+   // TEST initdecode_trienode: ERROR
+   TEST(0 == init_trienode(&node, 0, MAXNROFCHILD_NOUSERVALUE, 1));
+   // content is bigger than nodesize
+   node.data->header -= 1 << header_SIZESHIFT;
+   TEST(EINVAL == initdecode_trienode(&node2, node.data));
+   TEST(0 == node2.data);
+   // nodesize is bigger than MAXSIZE
+   node.data->header += 2 << header_SIZESHIFT;
+   TEST(EINVAL == initdecode_trienode(&node2, node.data));
+   TEST(0 == node2.data);
+   node.data->header -= 1 << header_SIZESHIFT;
+   TEST(0 == free_trienode(&node));
+
+   // TEST free_trienode: ERROR
+   // no subnode
+   TEST(0 == init_trienode(&node, 0, 1, 1));
+   init_testerrortimer(&s_trie_errtimer, 1, EPERM);
+   TEST(EPERM == free_trienode(&node));
+   TEST(0 == node.data);
+   TEST(size_allocated == SIZEALLOCATED_MM());
+   // with subnode
+   for (unsigned i = 1; i <= 2; ++i) {
+      TEST(0 == init_trienode(&node, 0, MAXNROFCHILD_NOUSERVALUE+1, 0));
+      init_testerrortimer(&s_trie_errtimer, i, EPERM);
+      TEST(EPERM == free_trienode(&node));
+      TEST(0 == node.data);
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
+
+   // TEST free_trienode: wrong size (EINVAL)
+   TEST(0 == new_trienodedata(&data, MAXSIZE));
+   TEST(size_allocated + MAXSIZE == SIZEALLOCATED_MM());
+   node.data    = data;
+   data->header = encodesizeflag_header(0, header_SIZE0);
+   // test memory manager checks correct size of free memory block and does nothing!
+   TEST(EINVAL == free_trienode(&node));
+   TEST(0 == node.data);
+   // nothing freed
+   TEST(size_allocated + MAXSIZE == SIZEALLOCATED_MM());
+   node.data    = data;
+   data->header = encodesizeflag_header(0, header_SIZEMAX);
+   data = 0;
+   TEST(0 == free_trienode(&node));
+   TEST(0 == node.data);
+   TEST(size_allocated == SIZEALLOCATED_MM());
 
    return 0;
 ONABORT:
+   free_trienode(&node);
+   delete_trienodedata(&data, MAXSIZE);
    return EINVAL;
 }
 
 static int test_node_change(void)
 {
-   void            * buffer[2 + (MAXSIZE / sizeof(void*))] = { 0 };
-   trie_nodedata_t * data = (trie_nodedata_t*) &buffer[1];
-   trie_node_t       node;
+   trie_node_t node = { .data = 0 };
 
    // == group: change-helper ==
 
+   // TEST addheaderflag_trienode
+
+   // TEST delheaderflag_trienode(trie_node_t * node, uint8_t flag)
+
+   // TEST encodekeylen_trienode(trie_node_t * node, const uint8_t keylen)
+
    // TEST addsubnode_trienode
-   // TODO: test addsubnode_trienode
 
    return 0;
 ONABORT:
+   free_trienode(&node);
    return EINVAL;
 }
 

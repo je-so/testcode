@@ -70,14 +70,14 @@ typedef uint8_t header_t;
  *
  * header_KEYLENMASK  - Mask to determine the value of the following KEY configurations.
  * header_KEYLEN0     - No key[] member available
- * header_KEYLEN1     - trie_nodedata_t.key[0]    == binary key digit
- * header_KEYLEN2     - trie_nodedata_t.key[0..1] == binary key digits
- * header_KEYLEN3     - trie_nodedata_t.key[0..2] == binary key digits
- * header_KEYLEN4     - trie_nodedata_t.key[0..3] == binary key digits
- * header_KEYLEN5     - trie_nodedata_t.key[0..4] == binary key digits
- * header_KEYLEN6     - trie_nodedata_t.key[0..5] == binary key digits
- * header_KEYLENBYTE  - trie_nodedata_t.keylen    == contains key length
- *                      trie_nodedata_t.key[0..keylen-1] == binary key digits
+ * header_KEYLEN1     - trie_node_t.key[0]    == binary key digit
+ * header_KEYLEN2     - trie_node_t.key[0..1] == binary key digits
+ * header_KEYLEN3     - trie_node_t.key[0..2] == binary key digits
+ * header_KEYLEN4     - trie_node_t.key[0..3] == binary key digits
+ * header_KEYLEN5     - trie_node_t.key[0..4] == binary key digits
+ * header_KEYLEN6     - trie_node_t.key[0..5] == binary key digits
+ * header_KEYLENBYTE  - trie_node_t.keylen    == contains key length
+ *                      trie_node_t.key[0..keylen-1] == binary key digits
  * header_USERVALUE   - If set indicates that uservalue member is available.
  * header_CHILD       - Child and digit array available. digit[x] contains next digit and child[x] points to next <trie_node_t>.
  * header_SUBNODE     - Subnode pointer is avialable and digit[0] counts the number of valid pointers to trie_node_t not null.
@@ -179,13 +179,13 @@ static inline header_t encodesizeflag_header(header_t header, const header_t siz
 
 
 /* struct: trie_subnode_t
- * Points to 256 childs of type <trie_nodedata_t>.
+ * Points to 256 childs of type <trie_node_t>.
  * If child[i] is 0 it means there is no child
  * for 8-bit binary digit i at a certain offset in the search key. */
 struct trie_subnode_t {
    // group: struct fields
    /* variable: child
-    * An array of 256 pointer to <trie_nodedata_t>.
+    * An array of 256 pointer to <trie_node_t>.
     * If there is no child at a given key digit the pointer is set to 0. */
    trie_node_t * child[256];
 };
@@ -273,7 +273,7 @@ static inline void clearchild_triesubnode(trie_subnode_t * subnode, uint8_t digi
 struct trie_node_t {
    // group: struct fields
    /* variable: header
-    * Flags which describes content of <trie_nodedata_t>. See <header_t>. */
+    * Flags which describes content of <trie_node_t>. See <header_t>. */
    header_t    header;
    /* variable: nrchild
     * Nr of childs stored in optional child[] array or <trie_subnode_t>.
@@ -291,14 +291,14 @@ struct trie_node_t {
     * Start of ptr-aligned data.
     * Contains an optional user value. */
    void     *  uservalue;  // optional (fixed size)
-   // void  *  child_or_subnode[];     // child:   optional (variable size) points to trie_nodedata_t
+   // void  *  child_or_subnode[];     // child:   optional (variable size) points to trie_node_t
                                        // subnode: optional (size 1) points to trie_subnode_t
 };
 
 // group: constants
 
 /* define: PTRALIGN
- * Alignment of <trie_nodedata_t.uservalue>. The first byte in trie_node_t
+ * Alignment of <trie_node_t.uservalue>. The first byte in trie_node_t
  * which encodes the availability of the optional members is followed by
  * byte aligned data which is in turn followed by pointer aligned data.
  * This value is the alignment necessary for a pointer on this architecture.
@@ -306,25 +306,25 @@ struct trie_node_t {
 #define PTRALIGN  (offsetof(trie_node_t, uservalue))
 
 /* define: MAXSIZE
- * The maximum size in bytes used by a <trie_nodedata_t>. */
+ * The maximum size in bytes used by a <trie_node_t>. */
 #define MAXSIZE   (64*sizeof(void*))
 
 /* define: MAXNROFCHILD_NOUSERVALUE
- * The maximum nr of child pointer in child array of <trie_nodedata_t>.
+ * The maximum nr of child pointer in child array of <trie_node_t>.
  * The value is calculated with the assumption that no key and no user value are stored in the node.
  * If a node needs to hold more child pointers it has to switch to a <trie_subnode_t>.
- * This value must be less than 256 else <trie_nodedata_t.nrchild> would overflow.
+ * This value must be less than 256 else <trie_node_t.nrchild> would overflow.
  * */
 #define MAXNROFCHILD_NOUSERVALUE \
          (  (MAXSIZE-offsetof(trie_node_t, keylen)) \
             / (sizeof(void*)+sizeof(uint8_t)))
 
 /* define: MAXNROFCHILD_WITHUSERVALUE
- * The maximum nr of child pointer in child array of <trie_nodedata_t>.
+ * The maximum nr of child pointer in child array of <trie_node_t>.
  * The value is calculated with the assumption that no key is stored in the node
  * but an additional user value.
  * If a node needs to hold more child pointers it has to switch to a <trie_subnode_t>.
- * This value must be less than 256 else <trie_nodedata_t.nrchild> would overflow.
+ * This value must be less than 256 else <trie_node_t.nrchild> would overflow.
  * */
 #define MAXNROFCHILD_WITHUSERVALUE \
          (  (MAXSIZE-offsetof(trie_node_t, keylen)-sizeof(void*)) \
@@ -521,7 +521,7 @@ static inline int freememory_trienode(trie_node_t * memaddr, unsigned memsize)
 
 /* function: expandnode_trienode
  * Allocates a new node of at least size newnode.
- * Only <trie_nodedata_t.header> of data is initialized to the correct value.
+ * Only <trie_node_t.header> of data is initialized to the correct value.
  * All other fields of data must be set by the caller.
  *
  * Unchecked Precondition:
@@ -547,7 +547,7 @@ static inline int expandnode_trienode(
    err = allocmemory_trienode(data, expandedsize);
    if (err) return err;
 
-   // set trie_nodedata_t.header
+   // only size flag is adapted
    (*data)->header = encodesizeflag_header(nodeheader, sizeflags);
 
    return 0;
@@ -974,9 +974,9 @@ ONABORT:
 }
 
 /* function: new_trienode
- * Initializes node and reserves space in a newly allocated <trie_nodedata_t>.
- * The content of the data node (user value, child pointers (+ digits) and key bytes)
- * are undefined after return.
+ * Initializes node and reserves space in a newly allocated <trie_node_t>.
+ * The content of the node data (user value, child pointers (+ digits) and key bytes)
+ * is undefined after return.
  *
  * The reserved keylen will be shrunk if a node of size <MAXSIZE> can not hold the
  * whole key. Therefore check the length of the reserved key after return.
@@ -989,7 +989,7 @@ ONABORT:
  * The parameter nrchild can encode only 255 child pointers.
  * A subnode supports up to 256 child pointers so you have to increment
  * by one after return.
- * In case of a subnode the value of <trie_nodedata_t.nrchild> is one less
+ * In case of a subnode the value of <trie_node_t.nrchild> is one less
  * then the provided value in parameter nrchild.
  *
  * Unchecked Precondition:
@@ -1138,7 +1138,7 @@ ONABORT:
  * o child == 0 || digit != prefix_trienode(splitnode, splitnodeoffsets)[splitlen]
  * o splitlen < prefixlen
  * */
-static int newsplit_trienode(/*out*/trie_node_t * node, trie_node_t * splitnode, uint8_t splitlen, void * uservalue, uint8_t digit, trie_nodedata_t * child)
+static int newsplit_trienode(/*out*/trie_node_t * node, trie_node_t * splitnode, uint8_t splitlen, void * uservalue, uint8_t digit, trie_node_t * child)
 {
    int err;
    uint8_t prefixlen = lenprefix_trienodeoffsets(&splitnode->offsets);
@@ -1187,7 +1187,7 @@ static int newsplit_trienode(/*out*/trie_node_t * node, trie_node_t * splitnode,
 
    // normal split (cause merge with single child not possible)
    uint8_t          * prefix = prefix_trienode(splitnode);
-   trie_nodedata_t  * child2[2];
+   trie_node_t  * child2[2];
    uint8_t            digit2[2];
    uint8_t            childindex;
    if (!child || prefix[splitlen] < digit) {
@@ -1225,15 +1225,15 @@ typedef struct trie_findresult_t   trie_findresult_t;
 struct trie_findresult_t {
    trie_nodeoffsets_t offsets;
    // parent of node; 0 ==> node is root node
-   trie_nodedata_t *  parent;
+   trie_node_t *  parent;
    // points to entry in child[] array (=> *child != 0) || points to entry in trie_subnode2_t (*child could be 0 => node == 0)
-   trie_nodedata_t ** parent_child;
+   trie_node_t ** parent_child;
    // node == 0 ==> trie_t.root == 0; node != 0 ==> trie_t.root != 0
-   trie_nodedata_t *  node;
+   trie_node_t *  node;
    // points to node who contains child which starts prefix chain (chain of nodes with prefix + 1 child pointer; last node has no child pointer)
-   trie_nodedata_t *  chain_parent;
-   // points to entry in trie_nodedata_t->child[] or into trie_subnode2_t->child[] of chain_parent
-   trie_nodedata_t ** chain_child;
+   trie_node_t *  chain_parent;
+   // points to entry in trie_node_t->child[] or into trie_subnode2_t->child[] of chain_parent
+   trie_node_t ** chain_child;
    // number of bytes of key prefix which could be matched
    // (is_split == false ==> prefixlen of node contained; is_split == true ==> prefixlen of node not contained)
    uint16_t       matchkeylen;

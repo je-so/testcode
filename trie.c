@@ -1505,17 +1505,6 @@ ONABORT: ;
    return err;
 }
 
-static inline int insert_split_trienode(
-   trie_node_t ** node,
-   uint8_t        node_keylen,
-   unsigned       off2_key,
-   unsigned       keylen,
-   const uint8_t  key[keylen],
-   void        *  uservalue)
-{
-   return 0;
-}
-
 /* function: insert2_trie
  * Implements <insert_trie> and <tryinsert_trie>.
  *
@@ -1563,20 +1552,57 @@ int insert2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void
       for (;;) {  // follow node path from root to matching child
          uint8_t  node_keylen = keylen_trienode(node);
          unsigned off2_key    = off2_key_trienode(needkeylenbyte_header(node_keylen));
+         unsigned off3_digit  = off3_digit_trienode(off2_key, node_keylen);
 
          // match key fully or split node in case of partial match
          if (  node_keylen > (keylen - matched_keylen)
                || 0 != memcmp(key+matched_keylen, memaddr_trienode(node) + off2_key, node_keylen)) {
             // partial match ==> split node
-            err = insert_split_trienode(parentchild, node_keylen, off2_key, keylen - matched_keylen, key+matched_keylen, uservalue);
+            unsigned split_keylen;
+            unsigned keylen2 = node_keylen > (keylen - matched_keylen)
+                             ? (keylen - matched_keylen) : node_keylen;
+            const uint8_t * lkey = key+matched_keylen;
+            const uint8_t * rkey = memaddr_trienode(node) + off2_key;
+            for (split_keylen = 0; split_keylen < keylen2; ++split_keylen) {
+               if (lkey[split_keylen] != rkey[split_keylen]) break;
+            }
+            matched_keylen += split_keylen;
+            unsigned child_off5_child;
+            if (matched_keylen < keylen) {
+               ++ matched_keylen;
+               err = build_nodechain_trienode(&child, (uint16_t) (keylen - matched_keylen), key + matched_keylen, uservalue);
+               if (err) goto ONABORT;
+               bool childidx = (lkey[split_keylen] > rkey[split_keylen]);
+               uint8_t       digits[2];
+               trie_node_t * childs[2];
+               digits[childidx]  = lkey[split_keylen];
+               digits[!childidx] = rkey[split_keylen];
+               childs[childidx]  = child;
+               childs[!childidx] = node;
+               // TODO: test ENOMEM => child is not changed !!
+               err = new_trienode(&child, 0, 2, (uint8_t)split_keylen, 0, digits, childs, rkey);
+               if (err) goto ONABORT;
+               child_off5_child = off5_child_trienode( off4_uservalue_trienode(
+                                       off3_digit_trienode(off2_key_trienode(needkeylenbyte_header((uint8_t)split_keylen)), split_keylen),
+                                       digitsize_trienode(0, 2)), sizeuservalue_trienode(0));
+               child_off5_child += (childidx ? sizeof(trie_node_t*) : 0);
+            } else {
+               err = new_trienode(&child, 1, 1, (uint8_t)split_keylen, uservalue, rkey+split_keylen, &node, rkey);
+               if (err) goto ONABORT;
+               child_off5_child = off5_child_trienode( off4_uservalue_trienode(
+                                       off3_digit_trienode(off2_key_trienode(needkeylenbyte_header((uint8_t)split_keylen)), split_keylen),
+                                       digitsize_trienode(0, 1)), sizeuservalue_trienode(1));
+            }
+            // TODO: test ENOMEM => trie is not changed !!
+            err = delkeyprefix_trienode(childs_trienode(child, child_off5_child), off2_key, off3_digit, (uint8_t)(split_keylen+1), 0);
             if (err) goto ONABORT;
+            *parentchild = child;
             return 0; // DONE
          }
 
          matched_keylen += node_keylen;
 
-         int      issubnode  = issubnode_trienode(node);
-         unsigned off3_digit = off3_digit_trienode(off2_key, node_keylen);
+         int      issubnode = issubnode_trienode(node);
          unsigned off4_uservalue = off4_uservalue_trienode(off3_digit, digitsize_trienode(issubnode, nrchild_trienode(node)));
 
          if (matched_keylen == keylen) {
@@ -3721,7 +3747,7 @@ static int test_insert(void)
          init_nodeoffsets(&off, trie.root);
          get_node_size(off1_keylen_trienode()+digitsize_trienode(0,(uint8_t)(nrchild+1))
                        +childsize_trienode(0,(uint8_t)(nrchild+1)), &nodesize, &sizeflags);
-         unsigned root_sizeflags;
+         header_t root_sizeflags;
          unsigned root_nodesize;
          get_node_size(off.off3_digit+childsize_trienode(0,1), &root_nodesize, &root_sizeflags);
 
@@ -3764,6 +3790,8 @@ static int test_insert(void)
       nodesize  = nodesize_trienode(trie.root) + sizeof(trie_subnode_t);
       oldheader = trie.root->header;
 
+      // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+
       // TEST insert_trie: add child to subnode (depth 1)
       TEST(SIZEALLOCATED_MM() == size_allocated + nodesize);
       TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+13)));
@@ -3788,6 +3816,8 @@ static int test_insert(void)
 
    // * 4. Split a key stored in node and add new child and node to
    // *    newly created splitnode.
+
+      // TEST insert_trie: ENOMEM add child to splitted node (depth 1)
 
       // TEST insert_trie: add child to splitted node (depth 1)
 

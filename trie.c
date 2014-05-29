@@ -1525,7 +1525,6 @@ static inline int build_splitnode_trienode(
    trie_node_t *  child[/*1 or 2*/],
    const uint8_t  key[keylen])
 {
-// TODO: test
    int err;
 
 #define NODE_MAXKEYLEN  (COMPUTEKEYLEN(128) - sizeof(trie_node_t*) - 2*sizeof(uint8_t))
@@ -1536,7 +1535,7 @@ static inline int build_splitnode_trienode(
       trie_node_t * splitchild;
       err = new_trienode(&splitchild, isuservalue, isuservalue ? 1 : 2, (uint8_t)node_keylen, uservalue, digit, child, key + parent_keylen);
       if (err) return err;
-      err = new_trienode(splitnode, 0, 1, (uint8_t)(parent_keylen-1), 0, key + parent_keylen-1, splitnode, key);
+      err = new_trienode(splitnode, 0, 1, (uint8_t)(parent_keylen-1), 0, key + parent_keylen-1, &splitchild, key);
       if (err) {
          (void) delete_trienode(&splitchild);
          return err;
@@ -3540,18 +3539,61 @@ static int test_inserthelper(void)
    TEST(SIZEALLOCATED_MM() == size_allocated);
    TEST(0 == trie.root);
 
-   // TEST build_splitnode_trienode: only child
-   // TODO: TEST build_splitnode_trienode
+   // TEST build_splitnode_trienode: no parent
+   for (int isuservalue = 0; isuservalue <= 1; ++isuservalue) {
+      for (unsigned keylen = 0; keylen <= (COMPUTEKEYLEN(128)-sizeof(trie_node_t*)-2); ++keylen) {
+         trie_node_t ** childs = 0;
+         get_node_size(calc_off6_size(keylen, 0, isuservalue?1:2, isuservalue), &nodesize, &sizeflags);
+         if (isuservalue) sizeflags = (header_t) (sizeflags | header_USERVALUE);
+         TEST(0 == build_splitnode_trienode(&node, &childs, isuservalue, (uint8_t)keylen, (void*)0x33445566, digit+keylen, child+keylen, key.addr));
+         TEST(SIZEALLOCATED_MM() == size_allocated + nodesize);
+         TEST(0 == compare_content(node, (header_t)(sizeflags|(node->header&header_KEYLENMASK)),
+                                   keylen, key.addr, (void*)0x33445566, isuservalue?1:2,
+                                   digit+keylen, child+keylen));
+         TEST(childs == childs_trienode(node, childoff5_trienode(node)));
+         TEST(0 == delete_trienode(&node));
+      }
+   }
 
-   // TEST build_splitnode_trienode: parent + child
-   // TODO: TEST build_splitnode_trienode
+   // TEST build_splitnode_trienode: with parent
+   for (int isuservalue = 0; isuservalue <= 1; ++isuservalue) {
+      for (unsigned keylen = (COMPUTEKEYLEN(128)-sizeof(trie_node_t*)-2)+1; keylen <= MAXKEYLEN; ++keylen) {
+         trie_node_t ** childs = 0;
+         unsigned parent_keylen = keylen < COMPUTEKEYLEN(128) ? keylen : COMPUTEKEYLEN(128);
+         unsigned node_keylen   = keylen - parent_keylen;
+         header_t parentsizeflags;
+         get_node_size(128, &nodesize, &parentsizeflags);
+         get_node_size(calc_off6_size(node_keylen, 0, isuservalue?1:2, isuservalue), &nodesize, &sizeflags);
+         if (isuservalue) sizeflags = (header_t) (sizeflags | header_USERVALUE);
+         TEST(0 == build_splitnode_trienode(&trie.root, &childs, isuservalue, (uint8_t)keylen, (void*)0x33445566, digit+keylen/2, child+keylen/2, key.addr));
+         TEST(SIZEALLOCATED_MM() == size_allocated + nodesize + 128/*parent*/);
+         node = childs_trienode(trie.root, childoff5_trienode(trie.root))[0];
+         TEST(0 == compare_content(trie.root, (header_t)(parentsizeflags|(trie.root->header&header_KEYLENMASK)),
+                                   parent_keylen-1, key.addr, 0, 1,
+                                   key.addr+parent_keylen-1, &node));
+         TEST(0 == compare_content(node, (header_t)(sizeflags|(node->header&header_KEYLENMASK)),
+                                   node_keylen, key.addr+parent_keylen, (void*)0x33445566, isuservalue?1:2,
+                                   digit+keylen/2, child+keylen/2));
+         TEST(childs == childs_trienode(node, childoff5_trienode(node)));
+         TEST(0 == delete_trienode(&trie.root));
+         TEST(0 == delete_trienode(&node));
+      }
+   }
 
-   // TEST build_splitnode_trienode: ENOMEM (only child)
-   // TODO: TEST build_splitnode_trienode
+   // TEST build_splitnode_trienode: ENOMEM (no parent)
+   trie_node_t * dummy = (trie_node_t*)0x1234;
+   init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+   TEST(ENOMEM == build_splitnode_trienode(&node, 0, true, 1, (void*)0, digit, child, key.addr));
+   TEST(SIZEALLOCATED_MM() == size_allocated);
+   TEST(dummy == (trie_node_t*)0x1234);
 
-   // TEST build_splitnode_trienode: ENOMEM (parent + child)
-   // TODO: TEST build_splitnode_trienode
-
+   // TEST build_splitnode_trienode: ENOMEM (with parent)
+   for (unsigned i = 1; i <= 2; ++i) {
+      init_testerrortimer(&s_trie_errtimer, i, ENOMEM);
+      TEST(ENOMEM == build_splitnode_trienode(&node, 0, true, COMPUTEKEYLEN(128), (void*)0, digit, child, key.addr));
+      TEST(SIZEALLOCATED_MM() == size_allocated);
+      TEST(dummy == (trie_node_t*)0x1234);
+   }
 
    // unprepare
    TEST(0 == FREE_MM(&key));
@@ -3977,7 +4019,7 @@ ONABORT:
 
 int unittest_ds_inmem_trie()
 {
-   #if 0 // TODO: remove line
+   // #if 0 // TODO: remove line
    // header_t
    if (test_header())         goto ONABORT;
    // trie_subnode_t
@@ -3989,7 +4031,7 @@ int unittest_ds_inmem_trie()
    // trie_t
    if (test_initfree())       goto ONABORT;
    if (test_inserthelper())   goto ONABORT;
-   #endif // TODO: remove line
+   // #endif // TODO: remove line
    if (test_insert())         goto ONABORT;
 
    // TODO: if (test_insertremove())   goto ONABORT;

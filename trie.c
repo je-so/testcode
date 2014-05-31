@@ -711,7 +711,7 @@ static inline int expandnode_trienode(
  * Unchecked Precondition:
  * - The node contains no subnode
  * - The node contains at least one child
- * - reservebytes == sizeof(void*) || reservebytes == sizeof(void*)+1
+ * - (*trienode)->nrchild * (1+sizeof(trie_node_t*)) - sizeof(void*) >= reservebytes
  * */
 static int addsubnode_trienode(trie_node_t ** trienode, unsigned off3_digit, uint16_t reservebytes)
 {
@@ -902,7 +902,7 @@ static int tryadduservalue_trienode(trie_node_t ** trienode, unsigned off4_userv
  *
  * Unchecked Precondition:
  * - keylen_trienode(node) >= prefixkeylen
- * - reservebytes == sizeof(void*) || reservebytes == sizeof(void*)+1
+ * - prefixkeylen >= reservebytes
  * */
 static int delkeyprefix_trienode(trie_node_t ** trienode, unsigned off2_key, unsigned off3_digit, uint8_t prefixkeylen, uint16_t reservebytes)
 {
@@ -3570,6 +3570,44 @@ ONABORT:
    return EINVAL;
 }
 
+static int build_depthx_trie(/*out*/trie_t * trie, /*out*/trie_node_t *** parentchild, /*out*/unsigned * keylen, unsigned index, unsigned depth, uint8_t key[10*depth])
+{
+   trie_node_t * parent;
+
+   unsigned keylen2 = 1 + 5 * (random() % 4u);
+
+   if (depth) {
+      TEST(0 == build_depthx_trie(trie, parentchild, keylen, index+1, depth-1, key+keylen2+1));
+      TEST(0 == new_trienode(&parent, false, 1, (uint8_t)keylen2, 0, key+keylen2, &trie->root, key));
+
+   } else {
+      uint8_t digit = (uint8_t) (key[keylen2] + 1);
+      TEST(0 == new_trienode(&parent, false, 1, (uint8_t)keylen2, 0, &digit, (trie_node_t*[]){0}, key));
+   }
+
+   if (0 != (index&1)) {
+      nodeoffsets_t off;
+      init_nodeoffsets(&off, parent);
+      TEST(0 == addsubnode_trienode(&parent, off.off3_digit, 0));
+   }
+
+   if (!depth) *keylen = 0;
+   if (depth == 1) {
+      if (issubnode_trienode(parent)) {
+         *parentchild = childaddr_triesubnode(subnode_trienode(parent, childoff5_trienode(parent)), key[keylen2]);
+      } else {
+         *parentchild = childs_trienode(parent, childoff5_trienode(parent));
+      }
+   }
+
+   *keylen += keylen2+(depth!=0);
+   trie->root = parent;
+
+   return 0;
+ONABORT:
+   return EINVAL;
+}
+
 /* function: test_insert
  * Test insert functionality of <trie_t>.
  *
@@ -3615,6 +3653,7 @@ static int test_insert(void)
    uint8_t     *  logbuffer;
    size_t         logsize1;
    size_t         logsize2;
+   nodeoffsets_t  off;
 
    // prepare
    TEST(0 == ALLOC_MM(UINT16_MAX, &key));
@@ -4011,16 +4050,116 @@ static int test_insert(void)
    // * 5. Now test, that insert finds the correct node and applies all transformations
    // *    of depth 1 correctly to the found node.
 
-         // TEST insert_trie: add uservalue (expand node if necessary) (depth X)
-         // TEST insert_trie: add uservalue / restructure into subnode (depth X)
-         // TEST insert_trie: add uservalue / restructure extract key (depth X)
+   // TEST insert_trie: add uservalue (depth X)
+   for (unsigned depth = 2; depth <= 8; ++depth) {
+      unsigned keylen;
+      trie_node_t ** parentchild;
+      TEST(0 == build_depthx_trie(&trie, &parentchild, &keylen, 0, depth, key.addr));
+      TEST(0 == insert_trie(&trie, (uint16_t)keylen, key.addr, (void*)0x56789abc));
+      TEST(0 != isuservalue_trienode(*parentchild));
+      init_nodeoffsets(&off, *parentchild);
+      TEST((void*)0x56789abc == uservalue_trienode(*parentchild, off.off4_uservalue));
 
-         // TEST insert_trie: add child to child array (expand if necessary) (depth X)
-         // TEST insert_trie: add child to child array / restructure into subnode (depth X)
-         // TEST insert_trie: add child to child array / restructure extract key (depth X)
+      // TEST tryinsert_trie: EEXIST
+      TEST(EEXIST == tryinsert_trie(&trie, (uint16_t)keylen, key.addr, 0));
+      GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+      TEST(logsize1 == logsize2); // no log
 
-         // TEST insert_trie: add uservalue to splitted node (depth X)
-         // TEST insert_trie: add child to splitted node (depth X)
+      TEST(0 == free_trie(&trie));
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
+
+   // TEST insert_trie: add child to child array or subnode (depth X)
+   for (unsigned depth = 2; depth <= 8; ++depth) {
+      unsigned keylen;
+      trie_node_t ** parentchild;
+      trie_node_t  * child;
+      TEST(0 == build_depthx_trie(&trie, &parentchild, &keylen, 0, depth, key.addr));
+      TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key.addr, (void*)0x56789abc));
+      TEST(0 == isuservalue_trienode(*parentchild));
+      init_nodeoffsets(&off, *parentchild);
+      if (issubnode_trienode(*parentchild)) {
+         TEST(1 == nrchild_trienode(*parentchild));
+         trie_subnode_t * subnode = subnode_trienode(*parentchild, off.off5_child);
+         child = child_triesubnode(subnode, key.addr[keylen]);
+      } else {
+         TEST(2 == nrchild_trienode(*parentchild));
+         if (key.addr[keylen] == digits_trienode(*parentchild, off.off3_digit)[0]) {
+            child = childs_trienode(*parentchild, off.off5_child)[0];
+         } else {
+            TEST(key.addr[keylen] == digits_trienode(*parentchild, off.off3_digit)[1]);
+            child = childs_trienode(*parentchild, off.off5_child)[1];
+         }
+      }
+      init_nodeoffsets(&off, child);
+      TEST(0 != isuservalue_trienode(child));
+      TEST((void*)0x56789abc == uservalue_trienode(child, off.off4_uservalue));
+
+      // TEST tryinsert_trie: EEXIST
+      TEST(EEXIST == tryinsert_trie(&trie, (uint16_t)(keylen+1), key.addr, 0));
+      GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+      TEST(logsize1 == logsize2); // no log
+
+      TEST(0 == free_trie(&trie));
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
+
+   // TEST insert_trie: add uservalue to splitted node (depth X)
+   for (unsigned depth = 2; depth <= 8; ++depth) {
+      unsigned keylen;
+      trie_node_t ** parentchild;
+      TEST(0 == build_depthx_trie(&trie, &parentchild, &keylen, 0, depth, key.addr));
+      unsigned node_keylen = keylen_trienode(*parentchild);
+      TEST(0 == insert_trie(&trie, (uint16_t)(keylen-node_keylen), key.addr, (void*)0x56789abc));
+      TEST(0 != isuservalue_trienode(*parentchild));
+      init_nodeoffsets(&off, *parentchild);
+      TEST(1 == nrchild_trienode(*parentchild));
+      TEST((void*)0x56789abc == uservalue_trienode(*parentchild, off.off4_uservalue));
+      trie_node_t * child = childs_trienode(*parentchild, off.off5_child)[0];
+      TEST(key.addr[keylen-node_keylen] == digits_trienode(*parentchild, off.off3_digit)[0]);
+      init_nodeoffsets(&off, child);
+      TEST(0 == isuservalue_trienode(child));
+      TEST(node_keylen == keylen_trienode(child)+1);
+
+      // TEST tryinsert_trie: EEXIST
+      TEST(EEXIST == tryinsert_trie(&trie, (uint16_t)(keylen-node_keylen), key.addr, 0));
+      GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+      TEST(logsize1 == logsize2); // no log
+
+      TEST(0 == free_trie(&trie));
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
+
+   // TEST insert_trie: add child to splitted node (depth X)
+   for (unsigned depth = 2; depth <= 8; ++depth) {
+      unsigned keylen;
+      trie_node_t ** parentchild;
+      TEST(0 == build_depthx_trie(&trie, &parentchild, &keylen, 0, depth, key.addr));
+      unsigned node_keylen = keylen_trienode(*parentchild);
+      ++ key.addr[keylen-node_keylen];
+      TEST(0 == insert_trie(&trie, (uint16_t)(keylen-node_keylen+1), key.addr, (void*)0x56789abc));
+      TEST(0 == isuservalue_trienode(*parentchild));
+      init_nodeoffsets(&off, *parentchild);
+      TEST(2 == nrchild_trienode(*parentchild));
+      trie_node_t * child = childs_trienode(*parentchild, off.off5_child)[1];
+      if (key.addr[keylen-node_keylen] == digits_trienode(*parentchild, off.off3_digit)[0]) {
+         child = childs_trienode(*parentchild, off.off5_child)[0];
+      } else {
+         TEST(key.addr[keylen-node_keylen] == digits_trienode(*parentchild, off.off3_digit)[1]);
+      }
+      init_nodeoffsets(&off, child);
+      TEST(0 != isuservalue_trienode(child));
+      TEST((void*)0x56789abc == uservalue_trienode(child, off.off4_uservalue));
+
+      // TEST tryinsert_trie: EEXIST
+      TEST(EEXIST == tryinsert_trie(&trie, (uint16_t)(keylen-node_keylen+1), key.addr, 0));
+      GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+      TEST(logsize1 == logsize2); // no log
+      -- key.addr[keylen-node_keylen];
+
+      TEST(0 == free_trie(&trie));
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
 
    // unprepare
    TEST(0 == FREE_MM(&key));
@@ -4029,6 +4168,22 @@ static int test_insert(void)
 ONABORT:
    free_trie(&trie);
    FREE_MM(&key);
+   return EINVAL;
+}
+
+static int test_remove(void)
+{
+   trie_t trie = trie_INIT;
+
+   // prepare
+
+   TEST(1);
+
+   // unprepare
+
+   return 0;
+ONABORT:
+   free_trie(&trie);
    return EINVAL;
 }
 
@@ -4048,6 +4203,7 @@ int unittest_ds_inmem_trie()
    if (test_inserthelper())   goto ONABORT;
    // #endif // TODO: remove line
    if (test_insert())         goto ONABORT;
+   if (test_remove())         goto ONABORT;
 
    // TODO: if (test_insertremove())   goto ONABORT;
    // TODO: if (test_query())          goto ONABORT;

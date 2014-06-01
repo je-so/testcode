@@ -56,7 +56,7 @@
 #define CKERN_DS_INMEM_TRIE_HEADER
 
 // forward
-struct trie_nodedata_t;
+struct trie_node_t;
 
 /* typedef: struct trie_t
  * Export <trie_t> into global namespace. */
@@ -97,7 +97,7 @@ int unittest_ds_inmem_trie(void);
  *
  * */
 struct trie_t {
-   struct trie_nodedata_t * root;
+   struct trie_node_t * root;
 };
 
 // group: lifetime
@@ -106,6 +106,11 @@ struct trie_t {
  * Static initializer. */
 #define trie_INIT \
          { 0 }
+
+/* define: trie_INIT2
+ * Static initializer. */
+#define trie_INIT2(root) \
+         { root }
 
 /* define: trie_FREE
  * Static initializer. */
@@ -137,30 +142,45 @@ void ** at_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen]);
 // group: update
 
 /* function: insert_trie
- * TODO: describe */
-int insert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue);
+ * Insert a new (key, value) pair in the trie.
+ * A copy of the key is stored in the trie so it can be freed after return.
+ * The value pointer is stored in a node. If it points to an object
+ * the object must exist as long the pair is not removed.
+ *
+ * Calls <insert2_trie> for its implementation with parameter islog set to true.
+ *
+ * Returns:
+ * 0 - Insert was successful.
+ * EEXIST - A value was already inserted with the given key.
+ * ENOMEM - Out of memory. */
+int insert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * value);
 
 /* function: tryinsert_trie
- * TODO: describe */
-int tryinsert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue);
+ * Same as <insert_trie> except error EEXIST is not logged.
+ * Calls <insert2_trie> for its implementation with parameter islog set to false. */
+int tryinsert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * value);
 
 /* function: remove_trie
- * TODO: describe */
-int remove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue);
+ * Remove a (key, value) pair from the trie.
+ * Calls <remove2_trie> for its implementation with parameter islog set to true.
+ * */
+int remove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** value);
 
 /* function: tryremove_trie
  * TODO: describe */
-int tryremove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue);
+int tryremove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** value);
 
-// group: private
+// group: private-update
 
 /* function: insert2_trie
- * TODO: describe */
-int insert2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * uservalue, bool islog);
+ * Implements <insert_trie> and <tryinsert_trie>.
+ * Parameter islog switches between the two. */
+int insert2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], void * value, bool islog);
 
 /* function: remove2_trie
- * TODO: describe */
-int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** uservalue, bool islog);
+ * Implements <remove_trie> and <tryremove_trie>.
+ * Parameter islog switches between the two. */
+int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** value, bool islog);
 
 
 // section: inline implementation
@@ -172,23 +192,23 @@ int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*ou
 
 /* define: insert_trie
  * Implements <trie_t.insert_trie>. */
-#define insert_trie(trie, keylen, key, uservalue) \
-         (insert2_trie((trie), (keylen), (key), (uservalue), true))
+#define insert_trie(trie, keylen, key, value) \
+         (insert2_trie((trie), (keylen), (key), (value), true))
 
 /* define: remove_trie
  * Implements <trie_t.remove_trie>. */
-#define remove_trie(trie, keylen, key, uservalue) \
-         (remove2_trie((trie), (keylen), (key), (uservalue), true))
+#define remove_trie(trie, keylen, key, value) \
+         (remove2_trie((trie), (keylen), (key), (value), true))
 
 /* define: tryinsert_trie
  * Implements <trie_t.tryinsert_trie>. */
-#define tryinsert_trie(trie, keylen, key, uservalue) \
-         (insert2_trie((trie), (keylen), (key), (uservalue), false))
+#define tryinsert_trie(trie, keylen, key, value) \
+         (insert2_trie((trie), (keylen), (key), (value), false))
 
 /* define: tryremove_trie
  * Implements <trie_t.tryremove_trie>. */
-#define tryremove_trie(trie, keylen, key, uservalue) \
-         (remove2_trie((trie), (keylen), (key), (uservalue), false))
+#define tryremove_trie(trie, keylen, key, value) \
+         (remove2_trie((trie), (keylen), (key), (value), false))
 
 
 #endif

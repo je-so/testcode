@@ -1811,7 +1811,7 @@ int remove2_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*ou
                      (void) trydelsubnode_trienode(chainroot_parentchild, chainroot_off3);
                   }
                } else {
-                  delchild_trienode(chainroot_parentchild, chainroot_off3, chainroot_off4, chainroot_childidx);
+                  (void) delchild_trienode(chainroot_parentchild, chainroot_off3, chainroot_off4, chainroot_childidx);
                }
             }
          }
@@ -3875,19 +3875,31 @@ static int test_insert(void)
    // == depth 1 ==
 
    GETBUFFER_ERRLOG(&logbuffer, &logsize1);
-   for (unsigned keylen = 0; keylen <= 2*sizeof(void*); ++keylen) {
+   for (unsigned keylen = 0, isENOMEM = 0; keylen <= 2*sizeof(void*); ++keylen) {
       for (unsigned nrchild = 1; nrchild <= MAXNROFCHILD+1; ++nrchild) {
          if (nrchild == 4) nrchild = MAXNROFCHILD+1;
          TEST(0 == new_trienode(&trie.root, (uint8_t)keylen, (uint8_t)nrchild, key.addr, digit, child, 0));
          get_node_size(calc_used_size(keylen, nrchild, true), &nodesize, &sizeflags);
          oldheader = trie.root->header;
+         header_t expectheader = addflags_header(delflags_header(oldheader, header_SIZEMASK),(header_t)(sizeflags|header_VALUE));
 
-         // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+         // TEST insert_trie: ENOMEM add value (expand node if necessary) (depth 1)
+         if (expectheader != oldheader && isENOMEM == 0) {
+            isENOMEM = 1;
+            size_t oldsize = SIZEALLOCATED_MM();
+            init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+            TEST(ENOMEM == insert_trie(&trie, (uint16_t)keylen, key.addr, (void*)8));
+            TEST(SIZEALLOCATED_MM() == oldsize);
+            TEST(0 == compare_content( trie.root, oldheader,
+                                       keylen, (uint8_t)nrchild, key.addr, digit, child, 0));
+            GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+            TEST(logsize1 < logsize2); // log
+            logsize1 = logsize2;
+         }
 
          // TEST insert_trie: add value (expand node if necessary) (depth 1)
          TEST(0 == insert_trie(&trie, (uint16_t)keylen, key.addr, (void*)0x12345));
          TEST(SIZEALLOCATED_MM() == size_allocated + nodesize + (nrchild > MAXNROFCHILD?sizeof(trie_subnode_t):0));
-         header_t expectheader = addflags_header(delflags_header(oldheader, header_SIZEMASK),(header_t)(sizeflags|header_VALUE));
          TEST(0 == compare_content( trie.root, expectheader,
                                     keylen, nrchild, key.addr, digit, child, (void*)0x12345));
 
@@ -3908,7 +3920,19 @@ static int test_insert(void)
       get_node_size(calc_used_size(keylen[i], MAXNROFCHILD+1, true), &nodesize, &sizeflags);
       sizeflags = (header_t) (sizeflags|(trie.root->header&header_KEYLENMASK));
 
-      // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+      // TEST insert_trie: ENOMEM add value / restructure into subnode (depth 1)
+      if (i == 0) {
+         size_t oldsize = SIZEALLOCATED_MM();
+         oldheader = trie.root->header;
+         init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+         TEST(ENOMEM == insert_trie(&trie, keylen[i], key.addr, (void*)8));
+         TEST(SIZEALLOCATED_MM() == oldsize);
+         TEST(0 == compare_content( trie.root, oldheader,
+                                    keylen[i], nrchild[i], key.addr, digit, child, 0));
+         GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+         TEST(logsize1 < logsize2); // log
+         logsize1 = logsize2;
+      }
 
       // TEST insert_trie: add value / restructure into subnode (depth 1)
       TEST(0 == insert_trie(&trie, keylen[i], key.addr, (void*)(keylen[i]+1)));
@@ -3932,7 +3956,19 @@ static int test_insert(void)
       get_node_size(calc_used_size(0, nrchild[i], true), &nodesize, &sizeflags);
       sizeflags = (header_t) (sizeflags|(nrchild[i] > MAXNROFCHILD?header_SUBNODE:0));
 
-      // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+      // TEST insert_trie: ENOMEM add value / restructure extract key (depth 1)
+      if (i == 0) {
+         size_t oldsize = SIZEALLOCATED_MM();
+         oldheader = trie.root->header;
+         init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+         TEST(ENOMEM == insert_trie(&trie, keylen[i], key.addr, (void*)8));
+         TEST(SIZEALLOCATED_MM() == oldsize);
+         TEST(0 == compare_content( trie.root, oldheader,
+                                    keylen[i], nrchild[i], key.addr, digit, child, 0));
+         GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+         TEST(logsize1 < logsize2); // log
+         logsize1 = logsize2;
+      }
 
       // TEST insert_trie: add value / restructure extract key (depth 1)
       TEST(0 == insert_trie(&trie, keylen[i], key.addr, (void*)(keylen[i]+1)));
@@ -3948,7 +3984,7 @@ static int test_insert(void)
    }
 
    GETBUFFER_ERRLOG(&logbuffer, &logsize1);
-   for (unsigned nrchild = 0; nrchild < MAXNROFCHILD; nrchild += (nrchild>4?5:1)) {
+   for (unsigned nrchild = 0, isENOMEM = 0; nrchild < MAXNROFCHILD; nrchild += (nrchild>4?5:1)) {
       for (unsigned keylen = 0; keylen <= 2*sizeof(void*); keylen += 3) {
          unsigned childidx[3] = { 0, nrchild/2, nrchild };
          for (unsigned i = 0; i < 3; ++i) {
@@ -3963,13 +3999,27 @@ static int test_insert(void)
             TEST(keylen == keylen_trienode(trie.root));
             get_node_size(calc_used_size(keylen, nrchild+1, false), &nodesize, &sizeflags);
             oldheader = trie.root->header;
+            header_t expectheader = addflags_header(delflags_header(oldheader, header_SIZEMASK), sizeflags);
 
-            // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+            // TEST insert_trie: ENOMEM add child to child array (expand if necessary) (depth 1)
+            if (expectheader != oldheader && isENOMEM == 0) {
+               isENOMEM = 1;
+               for (unsigned e = 1; e <= 2; ++e) {
+                  size_t oldsize = SIZEALLOCATED_MM();
+                  init_testerrortimer(&s_trie_errtimer, e, ENOMEM);
+                  TEST(ENOMEM == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)8));
+                  TEST(SIZEALLOCATED_MM() == oldsize);
+                  TEST(0 == compare_content( trie.root, oldheader,
+                                             keylen, (uint8_t)nrchild, key.addr, digit2, child2, 0));
+                  GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+                  TEST(logsize1 < logsize2); // log
+                  logsize1 = logsize2;
+               }
+            }
 
             // TEST insert_trie: add child to child array (expand if necessary) (depth 1)
             TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+3)));
             TEST(SIZEALLOCATED_MM() == size_allocated + nodesize + MINSIZE);
-            header_t expectheader = addflags_header(delflags_header(oldheader, header_SIZEMASK),sizeflags);
             memcpy(child2, child, (nrchild+1)*sizeof(child[0]));
             trie_node_t * node = childs_trienode(trie.root, childoff4_trienode(trie.root))[childidx[i]];
             child2[childidx[i]] = node;
@@ -4006,7 +4056,21 @@ static int test_insert(void)
          get_node_size(calc_used_size(keylen, MAXNROFCHILD+1, false), &nodesize, &sizeflags);
          oldheader = trie.root->header;
 
-         // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+         // TEST insert_trie: ENOMEM add child to child array / restructure into subnode (depth 1)
+         if (keylen == sizeof(void*) && i == 2) {
+            for (unsigned e = 1; e <= 2; ++e) {
+               size_t oldsize = SIZEALLOCATED_MM();
+               oldheader = trie.root->header;
+               init_testerrortimer(&s_trie_errtimer, e, ENOMEM);
+               TEST(ENOMEM == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)8));
+               TEST(SIZEALLOCATED_MM() == oldsize);
+               TEST(0 == compare_content( trie.root, oldheader,
+                                          keylen, (uint8_t)nrchild, key.addr, digit2, child2, 0));
+               GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+               TEST(logsize1 < logsize2); // log
+               logsize1 = logsize2;
+            }
+         }
 
          // TEST insert_trie: add child to child array / restructure into subnode (depth 1)
          TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+3)));
@@ -4049,7 +4113,21 @@ static int test_insert(void)
          unsigned root_nodesize;
          get_node_size(calc_used_size(keylen-1, 1, false), &root_nodesize, &root_sizeflags);
 
-         // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+         // TEST insert_trie: ENOMEM add child to child array / restructure extract key (depth 1)
+         if (keylen == 5*sizeof(void*) && i == 1) {
+            for (unsigned e = 1; e <= 2; ++e) {
+               size_t oldsize = SIZEALLOCATED_MM();
+               oldheader = trie.root->header;
+               init_testerrortimer(&s_trie_errtimer, e, ENOMEM);
+               TEST(ENOMEM == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+13)));
+               TEST(SIZEALLOCATED_MM() == oldsize);
+               TEST(0 == compare_content( trie.root, oldheader,
+                                          keylen, (uint8_t)nrchild, key.addr, digit2, child2, 0));
+               GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+               TEST(logsize1 < logsize2); // log
+               logsize1 = logsize2;
+            }
+         }
 
          // TEST insert_trie: add child to child array / restructure extract key (depth 1)
          TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+13)));
@@ -4090,7 +4168,17 @@ static int test_insert(void)
       nodesize  = nodesize_trienode(trie.root) + sizeof(trie_subnode_t);
       oldheader = trie.root->header;
 
-      // TODO: add ENOMEM test to this and all other depth 1 tests above this one
+      // TEST insert_trie: ENOMEM add child to subnode (depth 1)
+      if (childidx == 2) {
+         init_testerrortimer(&s_trie_errtimer, 1, ENOMEM);
+         TEST(ENOMEM == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)2));
+         TEST(SIZEALLOCATED_MM() == size_allocated + nodesize);
+         TEST(0 == compare_content( trie.root, oldheader,
+                                    keylen, nrchild, key.addr, digit2, child2, 0));
+         GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+         TEST(logsize1 < logsize2); // log
+         logsize1 = logsize2;
+      }
 
       // TEST insert_trie: add child to subnode (depth 1)
       TEST(0 == insert_trie(&trie, (uint16_t)(keylen+1), key2, (void*)(keylen+13)));
@@ -4360,7 +4448,7 @@ static int test_insert(void)
 
    return 0;
 ONABORT:
-   free_trie(&trie);
+   delete_trienode(&trie.root);
    FREE_MM(&key);
    return EINVAL;
 }
@@ -4385,7 +4473,6 @@ ONABORT:
  * == depth X: follow node chain ==
  * 3. Now test, that remove finds the correct node and applies all transformations
  *    of depth 1 correctly to the found node.
- * // TODO:
  * == Error Codes ==
  * 4. Test error codes of remove (no change of trie).
  * 5. Test logging and non logging of ESRCH of remove and tryremove
@@ -4520,13 +4607,22 @@ static int test_remove(void)
                                          keylen, nrchild-1, key.addr, expect_digits, expect_childs, (void*)(keylen + childidx)));
                TEST(0 == delete_trienode(&trie.root));
                TEST(SIZEALLOCATED_MM() == size_allocated);
-
-               // TODO: check ENOMEM
-
             }
          }
       }
    }
+
+   // TEST remove_trie: ENOMEM child array and resize ==> no resize
+   get_node_size(calc_used_size(1, 1, true), &nodesize, &sizeflags);
+   TEST(calc_used_size(1, 0, true) <= nodesize/2);
+   TEST(0 == build_nodechain_trienode(&childs[0], 1, key.addr+2, (void*)0x33));
+   TEST(0 == new_trienode(&trie.root, 1, 1, key.addr, key.addr+1, childs, &value));
+   init_testerrortimer(&s_trie_errtimer, 2, ENOMEM);
+   TEST(0 == remove_trie(&trie, 3, key.addr, &value));
+   TEST(0 == isenabled_testerrortimer(&s_trie_errtimer));
+   TEST(value == (void*)0x33);
+   TEST(nodesize == nodesize_trienode(trie.root)); // no resize
+   TEST(0 == delete_trienode(&trie.root));
 
    // TEST remove_trie: subnode + possible conversion into child array
    GETBUFFER_ERRLOG(&logbuffer, &logsize1);
@@ -4544,7 +4640,6 @@ static int test_remove(void)
             key.addr[keylen] = (uint8_t) childidx;
             TEST(0 == remove_trie(&trie, (uint16_t)(keylen+1+5*childidx), key.addr, &value));
             TEST(value == (void*)childidx);
-            TEST(0 != issubnode_trienode(trie.root));
             TEST(0 == subnode->child[childidx]);
             TEST(0 == compare_content(trie.root, oldheader,
                                       keylen, childidx, key.addr, digits, childs, (void*)(5*keylen + 1)));
@@ -4554,18 +4649,26 @@ static int test_remove(void)
             GETBUFFER_ERRLOG(&logbuffer, &logsize2);
             TEST(logsize1 == logsize2); // no log written in case of ESRCH
          }
+         // conversion with ENOMEM ==> no conversion into child
+         TEST(0 == build_nodechain_trienode(&subnode->child[MAXNROFCHILD-3], 2, key.addr+keylen+1, (void*)0x44881));
+         key.addr[keylen] = MAXNROFCHILD-3;
+         init_testerrortimer(&s_trie_errtimer, 2, ENOMEM);
+         TEST(0 == remove_trie(&trie, (uint16_t)(keylen+1+2), key.addr, &value));
+         TEST(value == (void*)0x44881);
+         TEST(0 == compare_content(trie.root, oldheader,
+                                   keylen, MAXNROFCHILD-3, key.addr, digits, childs, (void*)(5*keylen + 1)));
+         ++trie.root->nrchild;
+
          // conversion
          TEST(0 == build_nodechain_trienode(&subnode->child[MAXNROFCHILD-3], 2*MAXNROFCHILD+12, key.addr+keylen+1, (void*)0x44321));
          key.addr[keylen] = MAXNROFCHILD-3;
          TEST(0 == remove_trie(&trie, (uint16_t)(keylen+1+2*MAXNROFCHILD+12), key.addr, &value));
-         key.addr[keylen] = old;
          TEST(value == (void*)0x44321);
          TEST(0 == issubnode_trienode(trie.root));
          TEST(0 == compare_content(trie.root, (header_t) ((header_SIZEMAX<<header_SIZESHIFT)|(oldheader&(header_KEYLENMASK|header_VALUE))),
                                    keylen, MAXNROFCHILD-3, key.addr, digits, childs, (void*)(5*keylen + 1)));
 
-         // TODO: check ENOMEM
-
+         key.addr[keylen] = old;
          TEST(0 == delete_trienode(&trie.root));
          TEST(SIZEALLOCATED_MM() == size_allocated);
       }
@@ -4678,12 +4781,45 @@ static int test_remove(void)
 
    // TEST remove_trie: child array with possible resize (depth X)
    // TEST remove_trie: subnode with possible conversion into child array (depth X)
+   for (unsigned depth = 2; depth <= 8; ++depth) {
+      trie_node_t * old;
+      bool     isresize = false;
+      unsigned keylen;
+      trie_node_t ** parentchild;
+      TEST(0 == build_depthx_trie(&trie, &parentchild, &keylen, 0, depth, key.addr));
+      init_nodeoffsets(&off, *parentchild);
+      if (issubnode_trienode(*parentchild)) {
+         trie_subnode_t * subnode = subnode_trienode(*parentchild, off.off4_child);
+         TEST(0 == build_nodechain_trienode(childaddr_triesubnode(subnode, key.addr[keylen]), 12, key.addr+keylen+1, (void*)depth));
+         setchild_triesubnode(subnode, (uint8_t)(key.addr[keylen]+1), (void*)1); // not empty: ensures correct conversion
+         ++ (*parentchild)->nrchild;
+      } else {
+         // build_depthx_trie adds one child with digit (key.addr[keylen]+1)
+         uint8_t idx = key.addr[keylen] > digits_trienode(*parentchild, off.off3_digit)[0];
+         old = *parentchild;
+         TEST(0 == tryaddchild_trienode(parentchild, off.off3_digit, off.off4_child, idx, key.addr[keylen], childs[0]));
+         isresize = (old != *parentchild);
+         init_nodeoffsets(&off, *parentchild); // possible resize
+         TEST(0 == build_nodechain_trienode(childs_trienode(*parentchild, off.off4_child)+idx, 12, key.addr+keylen+1, (void*)depth));
+      }
 
+      old = *parentchild;
+      TEST(0 == remove_trie(&trie, (uint16_t)(keylen+13), key.addr, &value));
+      TEST(value == (void*)depth);
+      TEST(1 == nrchild_trienode(*parentchild));
+      TEST(0 == issubnode_trienode(*parentchild));
+      TEST(!isresize || old != *parentchild);
+      init_nodeoffsets(&off, *parentchild);
+      childs_trienode(*parentchild, off.off4_child)[0] = 0; // no segmentation fault in delete
 
-   // TODO:
+      TEST(0 == free_trie(&trie));
+      TEST(size_allocated == SIZEALLOCATED_MM());
+   }
 
-
-   // TODO: check ENOMEM
+   // TEST remove_trie: ESRCH
+   TEST(ESRCH == remove_trie(&trie, 10, key.addr, &value));
+   GETBUFFER_ERRLOG(&logbuffer, &logsize2);
+   TEST(logsize1 < logsize2); // log written !
 
    // unprepare
    TEST(0 == FREE_MM(&key));
@@ -4697,7 +4833,9 @@ ONABORT:
 
 int unittest_ds_inmem_trie()
 {
-   #if 0 // TODO: remove line
+   int i = 0;
+   printf("%d\n", 10/i);
+   // #if 0 // TODO: remove line
    // header_t
    if (test_header())         goto ONABORT;
    // trie_subnode_t
@@ -4709,8 +4847,8 @@ int unittest_ds_inmem_trie()
    // trie_t
    if (test_initfree())       goto ONABORT;
    if (test_inserthelper())   goto ONABORT;
+   // #endif // TODO: remove line
    if (test_insert())         goto ONABORT;
-   #endif // TODO: remove line
    if (test_remove())         goto ONABORT;
 
    // TODO: if (test_query())          goto ONABORT;

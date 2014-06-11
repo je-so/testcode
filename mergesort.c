@@ -46,9 +46,15 @@ static test_errortimer_t   s_mergesort_errtimer = test_errortimer_FREE;
 
 // group: constants
 
-/* define: MINLEN
- * TODO: */
-#define MINLEN 32
+/* define: MIN_BLK_LEN
+ * The minimum nr of elements moved as one block in merge. */
+#define MIN_BLK_LEN 7
+
+/* define: MIN_SLICE_LEN
+ * The minum number of elements (length) of a sorted sub-array.
+ * Every presorted slice is described in <mergesort_sortedslice_t>.
+ * All such slices are stored on a stack. */
+#define MIN_SLICE_LEN 32
 
 #define mergesort_IMPL_ISPOINTER   1
 
@@ -78,8 +84,8 @@ static test_errortimer_t   s_mergesort_errtimer = test_errortimer_FREE;
 #define rsearch_greatequal NAME(rsearch_greatequal)
 #define search_greater     NAME(search_greater)
 #define rsearch_greater    NAME(rsearch_greater)
-#define merge_adjacent_subarrays  NAME(merge_adjacent_subarrays)
-#define rmerge_adjacent_subarrays NAME(rmerge_adjacent_subarrays)
+#define merge_adjacent_slices     NAME(merge_adjacent_slices)
+#define rmerge_adjacent_slices    NAME(rmerge_adjacent_slices)
 #define merge_topofstack          NAME(merge_topofstack)
 #define establish_stack_invariant NAME(establish_stack_invariant)
 #define merge_all          NAME(merge_all)
@@ -90,7 +96,7 @@ static test_errortimer_t   s_mergesort_errtimer = test_errortimer_FREE;
 // group: memory-helper
 
 /* function: alloctemp_mergesort
- * Reallocates <mergesort_t.temp> so it can store templen pointers.
+ * Reallocates <mergesort_t.temp> so it can store tempsize bytes.
  * The array is always reallocated. */
 static int alloctemp_mergesort(mergesort_t * sort, size_t tempsize)
 {
@@ -170,7 +176,7 @@ ONABORT:
 
 // group: query
 
-/* function: compute_minlen
+/* function: compute_minslicelen
  * Compute a good value for the minimum sub-array length;
  * presorted sub-arrays shorter than this are extended via <insertsort>.
  *
@@ -180,7 +186,7 @@ ONABORT:
  * strictly less than, an exact power of 2.
  *
  */
-static uint8_t compute_minlen(size_t n)
+static uint8_t compute_minslicelen(size_t n)
 {
    // becomes 1 if any 1 bits are shifted off
    unsigned r = 0;
@@ -229,9 +235,9 @@ static int setsortstate(
  * - n >= 1
  * - Values in array a are sorted in ascending order.
  * */
-static inline size_t search_greatequal(mergesort_t * sort, void * key, size_t n, ELEMTYPE a[n])
+static inline size_t search_greatequal(mergesort_t * sort, void * key, size_t n, uint8_t * a/*[n*ELEMSIZE]*/)
 {
-   if (sort->compare(sort->cmpstate, ADDR a[0], key) >= 0) return 0;
+   if (sort->compare(sort->cmpstate, ELEM(a), key) >= 0) return 0;
 
    // a[0] < key
 
@@ -239,16 +245,20 @@ static inline size_t search_greatequal(mergesort_t * sort, void * key, size_t n,
    // a[lastidx] < key <= a[idx]
    // lastindex < idx
 
-   size_t lastidx = 0;
+   size_t lastidx;
    size_t idx = 1;
+   size_t off = ELEMSIZE;
+   size_t n_2 = n >> 1;
 
-   while (idx < n) {
-      if (sort->compare(sort->cmpstate, ADDR a[idx * INDEXMULT], key) >= 0) goto DoBinarySearch;
-      lastidx = idx;
-      // TODO: remove comment
-      // idx = (idx << 1) + 1; // double index (idx reaches SIZE_MAX)
-      idx = (idx << 1); // TODO: remove line (only for test)
+   while (idx <= n_2) {
+      if (sort->compare(sort->cmpstate, ELEM(a + off), key) >= 0) {
+         lastidx = idx >> 1;
+         goto DoBinarySearch;
+      }
+      idx = (idx << 1);
+      off = (off << 1);
    }
+   lastidx = idx >> 1;
    idx = n;
 
 DoBinarySearch:
@@ -258,12 +268,11 @@ DoBinarySearch:
    // a[lastidx-1] < key
 
    while (lastidx < idx) {
-      // size_t mid = (lastidx + idx) >> 1; is wrong
       // (lastidx + idx) could overflow size_t type !
       size_t mid = lastidx + ((idx - lastidx) >> 1);
-      if (sort->compare(sort->cmpstate, ADDR a[mid * INDEXMULT], key) >= 0)
+      if (sort->compare(sort->cmpstate, ELEM(a + mid * ELEMSIZE), key) >= 0)
          idx = mid;        // key <= a[idx]
-       else
+      else
          lastidx = mid+1;  // a[lastidx-1] < key
    }
 
@@ -278,9 +287,12 @@ DoBinarySearch:
  * - n >= 1
  * - Values in array a are sorted in ascending order.
  * */
-static inline size_t rsearch_greatequal(mergesort_t * sort, void * key, size_t n, ELEMTYPE a[n])
+static inline size_t rsearch_greatequal(mergesort_t * sort, void * key, size_t n, uint8_t * a/*[n*ELEMSIZE]*/)
 {
-   if (sort->compare(sort->cmpstate, ADDR a[(n-1)*INDEXMULT], key) < 0) return 0;
+   uint8_t * enda = a + n * ELEMSIZE;
+   size_t    off  = ELEMSIZE;
+
+   if (sort->compare(sort->cmpstate, ELEM(enda - off), key) < 0) return 0;
 
    // key <= a[n-1]
 
@@ -288,16 +300,19 @@ static inline size_t rsearch_greatequal(mergesort_t * sort, void * key, size_t n
    // a[n-idx] < key <= a[n-lastindex]
    // lastindex < idx
 
-   size_t lastidx = 1;
-   size_t idx = 3;
+   size_t lastidx;
+   size_t idx = 2;
+   size_t n_2 = n >> 1;
 
-   while (idx < n) {
-      if (sort->compare(sort->cmpstate, ADDR a[(n-idx)*INDEXMULT], key) < 0) goto DoBinarySearch;
-      lastidx = idx;
-      // TODO:
-      // idx = (idx << 1) + 1; // double index (idx reaches SIZE_MAX)
-      idx = (idx << 1); // TODO: remove line (only for test)
+   while (idx <= n_2) {
+      off = (off << 1);
+      if (sort->compare(sort->cmpstate, ELEM(enda - off), key) < 0) {
+         lastidx = idx >> 1;
+         goto DoBinarySearch;
+      }
+      idx = (idx << 1);
    }
+   lastidx = idx >> 1;
    idx = n+1;
 
 DoBinarySearch:
@@ -307,10 +322,9 @@ DoBinarySearch:
    // a[n-idx-1] < key
 
    while (lastidx < idx) {
-      // size_t mid = (lastidx + idx) >> 1; is wrong
       // (lastidx + idx) could overflow size_t type !
       size_t mid = lastidx + ((idx - lastidx +1) >> 1);
-      if (sort->compare(sort->cmpstate, ADDR a[(n-mid)*INDEXMULT], key) < 0)
+      if (sort->compare(sort->cmpstate, ELEM(enda - mid*ELEMSIZE), key) < 0)
          idx = mid-1;   // a[n-idx-1] < key
       else
          lastidx = mid; // key <= a[n-lastidx]
@@ -327,9 +341,9 @@ DoBinarySearch:
  * - n >= 1
  * - Values in array a are sorted in ascending order.
  * */
-static inline size_t search_greater(mergesort_t * sort, void * key, size_t n, ELEMTYPE a[n])
+static inline size_t search_greater(mergesort_t * sort, void * key, size_t n, uint8_t * a/*[n*ELEMSIZE]*/)
 {
-   if (sort->compare(sort->cmpstate, ADDR a[0], key) > 0) return 0;
+   if (sort->compare(sort->cmpstate, ELEM(a), key) > 0) return 0;
 
    // a[0] <= key
 
@@ -337,16 +351,20 @@ static inline size_t search_greater(mergesort_t * sort, void * key, size_t n, EL
    // a[lastidx] <= key < a[idx]
    // lastindex < idx
 
-   size_t lastidx = 0;
+   size_t lastidx;
    size_t idx = 1;
+   size_t off = ELEMSIZE;
+   size_t n_2 = n >> 1;
 
-   while (idx < n) {
-      if (sort->compare(sort->cmpstate, ADDR a[idx*INDEXMULT], key) > 0) goto DoBinarySearch;
-      lastidx = idx;
-      // TODO:
-      // idx = (idx << 1) + 1; // double index (idx reaches SIZE_MAX)
-      idx = (idx << 1); // TODO: remove line (only for test)
+   while (idx <= n_2) {
+      if (sort->compare(sort->cmpstate, ELEM(a + off), key) > 0) {
+         lastidx = idx >> 1;
+         goto DoBinarySearch;
+      }
+      idx = (idx << 1);
+      off = (off << 1);
    }
+   lastidx = idx >> 1;
    idx = n;
 
 DoBinarySearch:
@@ -356,10 +374,9 @@ DoBinarySearch:
    // a[lastidx-1] <= key
 
    while (lastidx < idx) {
-      // size_t mid = (lastidx + idx) >> 1; is wrong
       // (lastidx + idx) could overflow size_t type !
       size_t mid = lastidx + ((idx - lastidx) >> 1);
-      if (sort->compare(sort->cmpstate, ADDR a[mid*INDEXMULT], key) > 0)
+      if (sort->compare(sort->cmpstate, ELEM(a + mid*ELEMSIZE), key) > 0)
          idx = mid;        // key < a[idx]
        else
          lastidx = mid+1;  // a[lastidx-1] <= key
@@ -376,9 +393,12 @@ DoBinarySearch:
  * - n >= 1
  * - Values in array a are sorted in ascending order.
  * */
-static inline size_t rsearch_greater(mergesort_t * sort, void * key, size_t n, ELEMTYPE a[n])
+static inline size_t rsearch_greater(mergesort_t * sort, void * key, size_t n, uint8_t * a/*[n*ELEMSIZE]*/)
 {
-   if (sort->compare(sort->cmpstate, ADDR a[(n-1)*INDEXMULT], key) <= 0) return 0;
+   uint8_t * enda = a + n * ELEMSIZE;
+   size_t    off  = ELEMSIZE;
+
+   if (sort->compare(sort->cmpstate, ELEM(enda - off), key) <= 0) return 0;
 
    // key < a[n-1]
 
@@ -386,16 +406,19 @@ static inline size_t rsearch_greater(mergesort_t * sort, void * key, size_t n, E
    // a[n-idx] <= key < a[n-lastindex]
    // lastindex < idx
 
-   size_t lastidx = 1;
-   size_t idx = 3;
+   size_t lastidx;
+   size_t idx = 2;
+   size_t n_2 = n >> 1;
 
-   while (idx < n) {
-      if (sort->compare(sort->cmpstate, ADDR a[(n-idx)*INDEXMULT], key) <= 0) goto DoBinarySearch;
-      lastidx = idx;
-      // TODO:
-      idx = (idx << 1) + 1; // double index (idx reaches SIZE_MAX)
-      // idx = (idx << 1); // TODO: remove line (only for test)
+   while (idx <= n_2) {
+      off = (off << 1);
+      if (sort->compare(sort->cmpstate, ELEM(enda - off), key) <= 0) {
+         lastidx = idx >> 1;
+         goto DoBinarySearch;
+      }
+      idx = (idx << 1);
    }
+   lastidx = idx >> 1;
    idx = n+1;
 
 DoBinarySearch:
@@ -408,57 +431,58 @@ DoBinarySearch:
       // size_t mid = (lastidx + idx) >> 1; is wrong
       // (lastidx + idx) could overflow size_t type !
       size_t mid = lastidx + ((idx - lastidx +1) >> 1);
-      if (sort->compare(sort->cmpstate, ADDR a[(n-mid)*INDEXMULT], key) <= 0)
+      if (sort->compare(sort->cmpstate, ELEM(enda - mid*ELEMSIZE), key) <= 0)
          idx = mid-1;   // a[n-idx-1] <= key
-       else
+      else
          lastidx = mid; // key < a[n-lastidx]
    }
 
    return idx; // 0 < idx && idx <= n && (idx == n || a[n-idx-1] <= key) && key < a[n-idx]
 }
 
-/* function: merge_adjacent_subarrays
- * Merge the na elements starting at pa with the nb elements starting at pb
- * in a stable way. After successful return the array pa contains
- * (na+nb) elements in sorted order.
+/* function: merge_adjacent_slices
+ * Merge the llen elements starting at left with the rlen elements starting at right
+ * in a stable way. After success the array left contains
+ * (llen+rlen) elements in sorted order.
  * Return 0 if successful.
  *
  * The merging is done from lower to higher values.
  *
+ *
  * Unchecked Precondition:
- * - Sub-array pb follows sub-array pa.
- *   ((uint8_t*)pa + na * ELEMSIZE) == (uint8_t*)pb
- * - Both arrays are sorted.
- * - na <= nb
- * - na >= 1 && nb >= 1
+ * - Array slice left is followed by slice right.
+ *   (left + llen * ELEMSIZE) == right
+ * - Both sub-arrays are sorted.
+ * - llen <= rlen
+ * - llen >= 1 && rlen >= 1
  */
-static int merge_adjacent_subarrays(
+static int merge_adjacent_slices(
    mergesort_t * sort,
-   ELEMTYPE * pa, size_t na,
-   ELEMTYPE * pb, size_t nb)
+   uint8_t  * left,  size_t llen,
+   uint8_t  * right, size_t rlen)
 {
    int err;
    uint8_t * dest;
    // TODO:
-   size_t    min_gallop = 3*MIN_GALLOP;
-   size_t    acount;   /* # of times element in pa is smallest */
-   size_t    bcount;   /* # of times element in pb is smallest */
+   size_t    minblklen = 3*MIN_BLK_LEN;
+   size_t    lblklen;   /* # of times element in left is smallest */
+   size_t    rblklen;   /* # of times element in right is smallest */
    size_t    nrofbytes;
 
    /*
-    * All elements in a <= b[0] are already in place.
+    * All elements in left[0..lblklen-1] <= b[0] are already in place.
     */
-   acount = search_greater(sort, ELEM(pb), na, pa);
-   pa += acount * INDEXMULT;
-   na -= acount;
-   if (na == 0) return 0;
+   lblklen = search_greater(sort, ELEM(right), llen, left); // TODO: remove cast
+   left += lblklen * ELEMSIZE;
+   llen -= lblklen;
+   if (llen == 0) return 0;
 
-   err = ensuretempsize(sort, na);
+   err = ensuretempsize(sort, llen);
    if (err) return err;
 
-   memcpy(sort->temp, pa, na * ELEMSIZE);
-   dest = (uint8_t*) pa;
-   pa   = sort->temp;
+   memcpy(sort->temp, left, llen * ELEMSIZE);
+   dest = left;
+   left = sort->temp;
 
 #define COPY(dest, src, nr) \
          nrofbytes = (nr)*ELEMSIZE; \
@@ -472,38 +496,35 @@ static int merge_adjacent_subarrays(
          dest += nrofbytes; \
          src  += nrofbytes
 
-   uint8_t * left  = (uint8_t*) pa;
-   uint8_t * right = (uint8_t*) pb;
-
    COPY(dest, right, 1);
-   --nb;
-   if (nb == 0) goto DONE;
+   --rlen;
+   if (rlen == 0) goto DONE;
 
    for (;;) {
-      acount = 0;
-      bcount = 0;
+      lblklen = 0;
+      rblklen = 0;
 
      /* Do the straightforward thing until (if ever) one run
       * appears to win consistently.
       */
       for (;;) {
-         assert(na > 0 && nb > 0);
+         assert(llen > 0 && rlen > 0);
          if (sort->compare(sort->cmpstate, ELEM(right), ELEM(left)) < 0) {
             COPY(dest, right, 1);
-            ++bcount;
-            acount = 0;
-            --nb;
-            if (nb == 0) goto DONE;
-            if (bcount >= min_gallop)
+            ++rblklen;
+            lblklen = 0;
+            --rlen;
+            if (rlen == 0) goto DONE;
+            if (rblklen >= minblklen)
                break;
 
          } else {
             COPY(dest, left, 1);
-            ++acount;
-            bcount = 0;
-            --na;
-            if (na == 0) goto DONE;
-            if (acount >= min_gallop)
+            ++lblklen;
+            rblklen = 0;
+            --llen;
+            if (llen == 0) goto DONE;
+            if (lblklen >= minblklen)
                break;
          }
       }
@@ -513,91 +534,91 @@ static int merge_adjacent_subarrays(
       * (if ever) neither run appears to be winning consistently
       * anymore.
       */
-      ++min_gallop;
+      ++minblklen;
       do {
-         assert(na > 0 && nb > 0);
-         min_gallop -= (min_gallop > 1);
-         acount = search_greater(sort, ELEM(right), na, left);
-         if (acount) {
-            COPY(dest, left, acount);
-            na -= acount;
-            if (na == 0) goto DONE;
+         assert(llen > 0 && rlen > 0);
+         minblklen -= (MIN_BLK_LEN != 1);
+         lblklen = search_greater(sort, ELEM(right), llen, left);
+         if (lblklen) {
+            COPY(dest, left, lblklen);
+            llen -= lblklen;
+            if (llen == 0) goto DONE;
          }
          COPY(dest, right, 1);
-         --nb;
-         if (nb == 0) goto DONE;
+         --rlen;
+         if (rlen == 0) goto DONE;
 
-         bcount = search_greatequal(sort, ELEM(left), nb, right);
-         if (bcount) {
-            MOVE(dest, right, bcount);
-            nb -= bcount;
-            if (nb == 0) goto DONE;
+         rblklen = search_greatequal(sort, ELEM(left), rlen, right);
+         if (rblklen) {
+            MOVE(dest, right, rblklen);
+            rlen -= rblklen;
+            if (rlen == 0) goto DONE;
          }
          COPY(dest, left, 1);
-         --na;
-         if (na == 0) goto DONE;
-      } while (acount >= MIN_GALLOP || bcount >= MIN_GALLOP);
-      ++min_gallop;           /* penalize it for leaving galloping mode */
+         --llen;
+         if (llen == 0) goto DONE;
+      } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
+      ++minblklen;           /* penalize it for leaving galloping mode */
    }
 
 #undef COPY
 #undef MOVE
 
 DONE:
-   if (na) memcpy(dest, left, na * ELEMSIZE);
+   if (llen) memcpy(dest, left, llen * ELEMSIZE);
    return 0;
 }
 
-/* function: rmerge_adjacent_subarrays
+/* function: rmerge_adjacent_slices
  * TODO:
- * Merge the na elements starting at pa with the nb elements starting at pb
- * in a stable way, in-place.  na and nb must be > 0, and pa + na == pb.
- * Must also have that *pb < *pa, that pa[na-1] belongs at the end of the
- * merge, and should have na >= nb.  See listsort.txt for more info.
+ * Merge the llen elements starting at pa with the rlen elements starting at pb
+ * in a stable way, in-place.  llen and rlen must be > 0, and pa + llen == pb.
+ * Must also have that *pb < *pa, that pa[llen-1] belongs at the end of the
+ * merge, and should have llen >= rlen.  See listsort.txt for more info.
  * Return 0 if successful.
  *
  * The merging is done in reverse order from higher to lower values.
  *
  * Unchecked Precondition:
- * - Sub-array pb follows sub-array pa.
- *   ((uint8_t*)pa + na * ELEMSIZE) == (uint8_t*)pb
- * - Both arrays are sorted.
- * - nb <= na
- * - na >= 1 && nb >= 1 */
-static int rmerge_adjacent_subarrays(
+ * - Array slice left is followed by slice pb.
+ *   (left + llen * ELEMSIZE) == (uint8_t*)pb
+ * - Both sub-arrays are sorted.
+ * - rlen <= llen
+ * - llen >= 1 && rlen >= 1 */
+static int rmerge_adjacent_slices(
    mergesort_t * sort,
-   ELEMTYPE * pa, size_t na,
-   ELEMTYPE * pb, size_t nb)
+   ELEMTYPE * pa, size_t llen,
+   ELEMTYPE * pb, size_t rlen)
 {
    int err;
    ELEMTYPE * dest;
    ELEMTYPE * basea;
    ELEMTYPE * baseb;
    // TODO:
-   size_t     min_gallop = 3*MIN_GALLOP;
-   size_t     acount;   /* # of times element in pa is smallest */
-   size_t     bcount;   /* # of times element in pb is smallest */
+   size_t     minblklen = 3*MIN_BLK_LEN;
+   size_t    lblklen;   /* # of times element in left is smallest */
+   size_t    rblklen;   /* # of times element in right is smallest */
 
-   assert(pa && pb && na > 0 && nb > 0 && pa + na == pb);
+   assert(pa && pb && llen > 0 && rlen > 0 && pa + llen == pb);
 
    /* Where does a end in b?  Elements in b after that can be
     * ignored (already in place).
     */
-   bcount = rsearch_greatequal(sort, ADDR pa[(na-1)*INDEXMULT], nb, pb);
-   nb -= bcount;
-   if (nb == 0) return 0;
+   rblklen = rsearch_greatequal(sort, ADDR pa[(llen-1)*INDEXMULT], rlen, (uint8_t*) pb); // TODO: remove cast to (uint8_t*)
+   rlen -= rblklen;
+   if (rlen == 0) return 0;
 
-   err = ensuretempsize(sort, nb);
+   err = ensuretempsize(sort, rlen);
    if (err) return err;
 
    dest  = pb;
-   dest += nb*INDEXMULT;
-   memcpy(sort->temp, pb, nb * ELEMSIZE);
+   dest += rlen*INDEXMULT;
+   memcpy(sort->temp, pb, rlen * ELEMSIZE);
    basea = pa;
    baseb = sort->temp;
    pb = sort->temp;
-   pb += nb*INDEXMULT;
-   pa += na*INDEXMULT;
+   pb += rlen*INDEXMULT;
+   pa += llen*INDEXMULT;
 
 #define COPY(dest, src, nr) \
          dest -= (nr)*INDEXMULT; \
@@ -610,34 +631,34 @@ static int rmerge_adjacent_subarrays(
          memmove(dest, src, (nr)*ELEMSIZE)
 
    COPY(dest, pa, 1);
-   --na;
-   if (na == 0) goto DONE;
+   --llen;
+   if (llen == 0) goto DONE;
 
    for (;;) {
-      acount = 0;
-      bcount = 0;
+      lblklen = 0;
+      rblklen = 0;
 
       /* Do the straightforward thing until (if ever) one run
        * appears to win consistently.
        */
       for (;;) {
-         assert(na > 0 && nb > 0);
+         assert(llen > 0 && rlen > 0);
          if (sort->compare(sort->cmpstate, ADDR pb[-1*INDEXMULT], ADDR pa[-1*INDEXMULT]) < 0) {
             COPY(dest, pa, 1);
-            ++acount;
-            bcount = 0;
-            --na;
-            if (na == 0) goto DONE;
-            if (acount >= min_gallop)
+            ++lblklen;
+            rblklen = 0;
+            --llen;
+            if (llen == 0) goto DONE;
+            if (lblklen >= minblklen)
                break;
 
          } else {
             COPY(dest, pb, 1);
-            ++bcount;
-            acount = 0;
-            --nb;
-            if (nb == 0) goto DONE;
-            if (bcount >= min_gallop)
+            ++rblklen;
+            lblklen = 0;
+            --rlen;
+            if (rlen == 0) goto DONE;
+            if (rblklen >= minblklen)
                break;
          }
       }
@@ -647,35 +668,35 @@ static int rmerge_adjacent_subarrays(
        * (if ever) neither run appears to be winning consistently
        * anymore.
        */
-      ++min_gallop;
+      ++minblklen;
       do {
-         assert(na > 0 && nb > 0);
-         min_gallop -= (min_gallop > 1);
-         acount = rsearch_greater(sort, ADDR pb[-1*INDEXMULT], na, basea);
-         if (acount) {
-            MOVE(dest, pa, acount);
-            na -= acount;
-            if (na == 0) goto DONE;
+         assert(llen > 0 && rlen > 0);
+         minblklen -= (minblklen != 1);
+         lblklen = rsearch_greater(sort, ADDR pb[-1*INDEXMULT], llen, (uint8_t*)basea); // TODO: remove cast
+         if (lblklen) {
+            MOVE(dest, pa, lblklen);
+            llen -= lblklen;
+            if (llen == 0) goto DONE;
          }
          COPY(dest, pb, 1);
-         --nb;
-         if (nb == 0) goto DONE;
+         --rlen;
+         if (rlen == 0) goto DONE;
 
-         bcount = rsearch_greatequal(sort, ADDR pa[-1*INDEXMULT], nb, baseb);
-         if (bcount) {
-            COPY(dest, pb, bcount);
-            nb -= bcount;
-            if (nb == 0) goto DONE;
+         rblklen = rsearch_greatequal(sort, ADDR pa[-1*INDEXMULT], rlen, (uint8_t*)baseb); // TODO: remove cast to (uint8_t*)
+         if (rblklen) {
+            COPY(dest, pb, rblklen);
+            rlen -= rblklen;
+            if (rlen == 0) goto DONE;
          }
          COPY(dest, pa, 1);
-         --na;
-         if (na == 0) goto DONE;
-      } while (acount >= MIN_GALLOP || bcount >= MIN_GALLOP);
-      ++min_gallop;           /* penalize it for leaving galloping mode */
+         --llen;
+         if (llen == 0) goto DONE;
+      } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
+      ++minblklen;           /* penalize it for leaving galloping mode */
    }
 
 DONE:
-   if (nb) memcpy(dest-nb*INDEXMULT, baseb, nb * sizeof(void*));
+   if (rlen) memcpy(dest-rlen*INDEXMULT, baseb, rlen * sizeof(void*));
    return 0;
 }
 
@@ -689,19 +710,20 @@ static int merge_topofstack(
 {
    size_t n = (-- sort->stacksize) - isSecondTop;
 
-   ELEMTYPE * pa = sort->pending[n-1].base;
-   size_t     na = sort->pending[n-1].len;
-   ELEMTYPE * pb = sort->pending[n].base;
-   size_t     nb = sort->pending[n].len;
-   sort->pending[n-1].len = na + nb;
-   // does nothing in case of isSecondTop == false
-   sort->pending[n] = sort->pending[n+isSecondTop];
+   uint8_t * left  = sort->stack[n-1].base;
+   size_t    llen  = sort->stack[n-1].len;
+   uint8_t * right = sort->stack[n].base;
+   size_t    rlen  = sort->stack[n].len;
+   sort->stack[n-1].len = llen + rlen;
+   if (isSecondTop) {
+      sort->stack[n] = sort->stack[n+1];
+   }
 
-   // Minimize size of temp array: min(na, nb)
-   if (na <= nb)
-      return merge_adjacent_subarrays(sort, pa, na, pb, nb);
+   // Minimize size of temp array: min(llen, rlen)
+   if (llen <= rlen)
+      return merge_adjacent_slices(sort, left, llen, right, rlen);
    else
-      return rmerge_adjacent_subarrays(sort, pa, na, pb, nb);
+      return rmerge_adjacent_slices(sort, (ELEMTYPE*)left, llen, (ELEMTYPE*)right, rlen);
 }
 
 /* function: establish_stack_invariant
@@ -718,18 +740,18 @@ static int merge_topofstack(
 static int establish_stack_invariant(mergesort_t * sort)
 {
    int err;
-   struct mergesort_subarray_t * p = sort->pending;
+   struct mergesort_sortedslice_t * slice = sort->stack;
 
    while (sort->stacksize > 1) {
       bool   isSecondTop = false;
       size_t n = sort->stacksize;
 
-      if (n > 2 && p[n-3].len <= p[n-2].len + p[n-1].len) {
-         if (p[n-3].len <= p[n-1].len) {
+      if (n > 2 && slice[n-3].len <= slice[n-2].len + slice[n-1].len) {
+         if (slice[n-3].len <= slice[n-1].len) {
             isSecondTop = true;
          }
 
-      } else if (p[n-2].len > p[n-1].len) {
+      } else if (slice[n-2].len > slice[n-1].len) {
          break;
       }
 
@@ -880,7 +902,7 @@ int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * 
    * Scanning array left to right, finding presorted sub arrays,
    * and extending short sub arrays to minsize elements.
    */
-   uint8_t    minlen = compute_minlen(len);
+   uint8_t    minlen = compute_minslicelen(len);
    ELEMTYPE * next   = a;
    size_t     nextlen = len;
 
@@ -898,13 +920,13 @@ int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * 
       }
 
       /* push sub-array onto stack of unmerged sub-arrays */
-      if (sort->stacksize == lengthof(sort->pending)) {
+      if (sort->stacksize == lengthof(sort->stack)) {
          // stack size chosen too small for size_t type
          err = merge_topofstack(sort, false);
          if (err) goto ONABORT;
       }
-      sort->pending[sort->stacksize].base = next;
-      sort->pending[sort->stacksize].len  = subarray_len;
+      sort->stack[sort->stacksize].base = next;
+      sort->stack[sort->stacksize].len  = subarray_len;
       ++sort->stacksize;
 
       /* merge sub-array on stack until stack invariant is established */
@@ -921,8 +943,8 @@ int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * 
 
    // TODO:
    assert(sort->stacksize == 1);
-   assert(sort->pending[0].base == a);
-   assert(sort->pending[0].len  == len);
+   assert(sort->stack[0].base == a);
+   assert(sort->stack[0].len  == len);
 
    return 0;
 ONABORT:
@@ -943,49 +965,49 @@ static int test_constants(void)
    unsigned stacksize;
 
    // stack contains set whose length form qa sequence of Fibonnacci numbers
-   // stack[0].len == MINLEN, stack[1].len == MINLEN, stack[2].len >= stack[0].len + stack[1].len
+   // stack[0].len == MIN_SLICE_LEN, stack[1].len == MIN_SLICE_LEN, stack[2].len >= stack[0].len + stack[1].len
    // Fibonacci F1 = 1, F2 = 1, F3 = 2, ..., Fn = F(n-1) + F(n-2)
    // The sum of the first Fn is: F1 + F2 + ... + Fn = F(n+2) -1
-   // A stack of depth n describes MINLEN * (F1 + ... + F(n)) = MINLEN * (F(n+2) -1) entries.
+   // A stack of depth n describes MIN_SLICE_LEN * (F1 + ... + F(n)) = MIN_SLICE_LEN * (F(n+2) -1) entries.
 
    // A stack which could describe up to (size_t)-1 entries must have a depth n
-   // where MINLEN*F(n+2) > (size_t)-1. That means the nth Fibonacci number must overflow
+   // where MIN_SLICE_LEN*F(n+2) > (size_t)-1. That means the nth Fibonacci number must overflow
    // the type size_t.
 
    // loga(x) == log(x) / log(a)
    // 64 == log2(2**64) == log(2**64) / log(2) ; ==> log(2**64) == 64 * log(2)
-   // pow(2, bitsof(size_t)) overflows size_t and pow(2, bitsof(size_t))/MINLEN overflows (size_t)-1 / MINLEN
-   // ==> F(n+2) > (size_t)-1 / MINLEN
+   // pow(2, bitsof(size_t)) overflows size_t and pow(2, bitsof(size_t))/MIN_SLICE_LEN overflows (size_t)-1 / MIN_SLICE_LEN
+   // ==> F(n+2) > (size_t)-1 / MIN_SLICE_LEN
 
    //  The value of the nth Fibonnaci Fn for large numbers of n can be calculated as
    //  Fn ~ 1/sqrt(5) * golden_ratio**n;
    //  (pow(golden_ratio, n) == golden_ratio**n)
    //  ==> n = logphi(Fn*sqrt(5)) == (log(Fn) + log(sqrt(5))) / log(phi)
 
-   // TEST lengthof(pending): size_t
+   // TEST lengthof(stack): size_t
    {
-      unsigned ln_phi_SIZEMAX = (unsigned) ((bitsof(size_t)*log(2) - log(MINLEN) + log(sqrt(5))) / log(phi) + 0.5);
-      size_t size1 = 1*MINLEN; // size of previous set F1
-      size_t size2 = 1*MINLEN; // size of next set     F2
+      unsigned ln_phi_SIZEMAX = (unsigned) ((bitsof(size_t)*log(2) - log(MIN_SLICE_LEN) + log(sqrt(5))) / log(phi) + 0.5);
+      size_t size1 = 1*MIN_SLICE_LEN; // size of previous set F1
+      size_t size2 = 1*MIN_SLICE_LEN; // size of next set     F2
       size_t next;
 
       for (stacksize = 0; size2 >= size1; ++stacksize, size1=size2, size2=next) {
-         next = size1 + size2; // next == MINLEN*F(n+2) && n-1 == stacksize
+         next = size1 + size2; // next == MIN_SLICE_LEN*F(n+2) && n-1 == stacksize
       }
 
       TEST(stacksize == ln_phi_SIZEMAX-2);
-      TEST(stacksize <= lengthof(((mergesort_t*)0)->pending));
+      TEST(stacksize <= lengthof(((mergesort_t*)0)->stack));
    }
 
-   // TEST lengthof(pending): size_t == uint64_t
+   // TEST lengthof(stack): size_t == uint64_t
    {
-      unsigned ln_phi_SIZEMAX = (unsigned) ((64*log(2) - log(MINLEN) +  log(sqrt(5))) / log(phi) + 0.5);
-      uint64_t size1 = 1*MINLEN; // size of previous set F1
-      uint64_t size2 = 1*MINLEN; // size of next set     F2
+      unsigned ln_phi_SIZEMAX = (unsigned) ((64*log(2) - log(MIN_SLICE_LEN) +  log(sqrt(5))) / log(phi) + 0.5);
+      uint64_t size1 = 1*MIN_SLICE_LEN; // size of previous set F1
+      uint64_t size2 = 1*MIN_SLICE_LEN; // size of next set     F2
       uint64_t next;
 
       for (stacksize = 0; size2 >= size1; ++stacksize, size1=size2, size2=next) {
-         next = size1 + size2; // next == MINLEN*F(n+2) && n-1 == stacksize
+         next = size1 + size2; // next == MIN_SLICE_LEN*F(n+2) && n-1 == stacksize
       }
 
       TEST(stacksize == 85);

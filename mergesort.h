@@ -58,15 +58,12 @@ typedef struct mergesort_t mergesort_t;
 int unittest_sort_mergesort(void);
 #endif
 
-// TODO: rename into MIN_FAST_SEARCH
-#define MIN_GALLOP 7
 
-
-/* struct: mergesort_subarray_t
- * Describes a sub-array.
- * Len gives the number of elements stored in the array.
- * Base is the start address of the array (lower address). */
-struct mergesort_subarray_t {
+/* struct: mergesort_sortedslice_t
+ * Describes a part of an array which contains sorted data.
+ * Len gives the number of elements stored in the sub-array.
+ * Base is the start address of the sub-array (lower address). */
+struct mergesort_sortedslice_t {
     void * base;
     size_t len;
 };
@@ -103,25 +100,22 @@ struct mergesort_t {
     * The size in bytes of the allocated temporary storage. */
    size_t    tempsize;
 
-   /* variable: pending
-    * TODO: rename and describe
-    * A stack of stacksize pending runs yet to be merged.  Run #i starts at
-    * address base[i] and extends for len[i] elements.  It's always
-    * true (so long as the indices are in bounds) that
+   /* variable: stack
+    * A stack of stacksize sorted slices (see <mergesort_sortedslice_t>) waiting to be merged.
     *
-    *     pending[i].base + pending[i].len == pending[i+1].base
+    * Invariant:
+    * For all 0 <= i && i < stacksize-1:
+    * > stack[i].base + elemsize * stack[i].len == stack[i+1].base
     *
-    * so we could cut the storage for this, but it's a minor amount,
-    * and keeping all the info explicit simplifies the code.
     */
-   struct mergesort_subarray_t pending[85/*big enough to sort arrays of size (uint64_t)-1*/];
+   struct mergesort_sortedslice_t stack[85/*big enough to sort arrays of size (uint64_t)-1*/];
    /* variable: stacksize
-    * The number of entries of stack <pending>. */
-   size_t stacksize;
+    * The number of entries of <stack>. */
+   size_t    stacksize;
 
    /* variable: tempmem
-    * Temporary memory block. LArge enough to hold 256 pointers. */
-   uint8_t  tempmem[256 * sizeof(void*)];
+    * Temporary memory block. Large enough to hold 256 pointers. */
+   uint8_t   tempmem[256 * sizeof(void*)];
 };
 
 // group: lifetime

@@ -56,27 +56,23 @@ static test_errortimer_t   s_mergesort_errtimer = test_errortimer_FREE;
  * All such slices are stored on a stack. */
 #define MIN_SLICE_LEN 32
 
+
+// group: generic
+
 #define mergesort_IMPL_ISPOINTER   1
 
-
-#if 1
+#if (mergesort_IMPL_ISPOINTER == 1)
 
 #define NAME(name)   name ## _ptr
-#define ELEMTYPE     void*
-#define INDEXMULT    1
-#define ELEMSIZE     (sizeof(void*))
-#define ADDR
+// TODO: #define ELEMSIZE     (sizeof(void*))
+#define ELEMSIZE     (sort->elemsize)
 #define ELEM(addr)   ((void**)(addr))[0]
 
 #else
 
 #define NAME(name)   name ## _blob
-#define ELEMTYPE     uint8_t
-#define INDEXMULT    ELEMSIZE
 #define ELEMSIZE     (sort->elemsize)
-#define ADDR         &
-#define ELEM(addr)   &((addr)[0])
-#define
+#define ELEM(addr)   (addr)
 
 #endif
 
@@ -128,16 +124,11 @@ ONABORT:
 }
 
 /* function: ensuretempsize
- * Ensures <mergesort_t.temp> can store templen * <mergesort_t.elemsize> bytes.
- * If the temporary array has a less capacity it is reallocated.
- *
- * Unchecked Precondition:
- * - templen * <mergesort_t.elemsize> <= (size_t)-1
+ * Ensures <mergesort_t.temp> can store tempsize bytes.
+ * If the temporary array has less capacity it is reallocated.
  * */
-static inline int ensuretempsize(mergesort_t * sort, size_t templen)
+static inline int ensuretempsize(mergesort_t * sort, size_t tempsize)
 {
-   assert(sort->elemsize == sizeof(void*));
-   size_t tempsize = templen * sort->elemsize;
    return tempsize <= sort->tempsize ? 0 : alloctemp_mergesort(sort, tempsize);
 }
 
@@ -463,24 +454,26 @@ static int merge_adjacent_slices(
 {
    int err;
    uint8_t * dest;
-   // TODO:
-   size_t    minblklen = 3*MIN_BLK_LEN;
+   size_t    minblklen = 2*MIN_BLK_LEN;
    size_t    lblklen;   /* # of times element in left is smallest */
    size_t    rblklen;   /* # of times element in right is smallest */
    size_t    nrofbytes;
 
+
+// TODO: remove
+#define ELEMSIZE     sizeof(void*)
    /*
-    * All elements in left[0..lblklen-1] <= b[0] are already in place.
+    * All elements in left[0..lblklen-1] <= right[0] are already in place.
     */
-   lblklen = search_greater(sort, ELEM(right), llen, left); // TODO: remove cast
+   lblklen = search_greater(sort, ELEM(right), llen, left);
    left += lblklen * ELEMSIZE;
    llen -= lblklen;
    if (llen == 0) return 0;
 
-   err = ensuretempsize(sort, llen);
+   err = ensuretempsize(sort, (size_t) (right - left));
    if (err) return err;
 
-   memcpy(sort->temp, left, llen * ELEMSIZE);
+   memcpy(sort->temp, left, (size_t) (right - left));
    dest = left;
    left = sort->temp;
 
@@ -504,39 +497,37 @@ static int merge_adjacent_slices(
       lblklen = 0;
       rblklen = 0;
 
-     /* Do the straightforward thing until (if ever) one run
-      * appears to win consistently.
+     /*
+      * Copy lowest element from left or right to dest.
       */
       for (;;) {
-         assert(llen > 0 && rlen > 0);
          if (sort->compare(sort->cmpstate, ELEM(right), ELEM(left)) < 0) {
             COPY(dest, right, 1);
-            ++rblklen;
-            lblklen = 0;
             --rlen;
             if (rlen == 0) goto DONE;
+            ++rblklen;
+            lblklen = 0;
             if (rblklen >= minblklen)
                break;
 
          } else {
             COPY(dest, left, 1);
-            ++lblklen;
-            rblklen = 0;
             --llen;
             if (llen == 0) goto DONE;
+            ++lblklen;
+            rblklen = 0;
             if (lblklen >= minblklen)
                break;
          }
       }
 
-     /* One run is winning so consistently that galloping may
-      * be a huge win.  So try that, and continue galloping until
-      * (if ever) neither run appears to be winning consistently
-      * anymore.
+     /*
+      * minblklen elements were copied from one array en bloc.
+      * So try to copy blocks of elements, and continue until
+      * the blocksize is less than MIN_BLK_LEN.
       */
-      ++minblklen;
       do {
-         assert(llen > 0 && rlen > 0);
+         // lower blockmode barrier
          minblklen -= (MIN_BLK_LEN != 1);
          lblklen = search_greater(sort, ELEM(right), llen, left);
          if (lblklen) {
@@ -558,7 +549,7 @@ static int merge_adjacent_slices(
          --llen;
          if (llen == 0) goto DONE;
       } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
-      ++minblklen;           /* penalize it for leaving galloping mode */
+      minblklen += 2; // raise blockmode barrier if less than two runs
    }
 
 #undef COPY
@@ -580,57 +571,56 @@ DONE:
  * The merging is done in reverse order from higher to lower values.
  *
  * Unchecked Precondition:
- * - Array slice left is followed by slice pb.
- *   (left + llen * ELEMSIZE) == (uint8_t*)pb
+ * - Array slice left is followed by slice right.
+ *   (left + llen * ELEMSIZE) == right
  * - Both sub-arrays are sorted.
  * - rlen <= llen
  * - llen >= 1 && rlen >= 1 */
 static int rmerge_adjacent_slices(
    mergesort_t * sort,
-   ELEMTYPE * pa, size_t llen,
-   ELEMTYPE * pb, size_t rlen)
+   uint8_t * left,  size_t llen,
+   uint8_t * right, size_t rlen)
 {
    int err;
-   ELEMTYPE * dest;
-   ELEMTYPE * basea;
-   ELEMTYPE * baseb;
-   // TODO:
-   size_t     minblklen = 3*MIN_BLK_LEN;
+   uint8_t * dest;
+   uint8_t * lend = right;
+   uint8_t * rend;
+   size_t    minblklen = 2*MIN_BLK_LEN;
    size_t    lblklen;   /* # of times element in left is smallest */
    size_t    rblklen;   /* # of times element in right is smallest */
+   size_t    nrofbytes;
 
-   assert(pa && pb && llen > 0 && rlen > 0 && pa + llen == pb);
-
-   /* Where does a end in b?  Elements in b after that can be
-    * ignored (already in place).
+// TODO: remove
+#define ELEMSIZE     sizeof(void*)
+   /*
+    * All elements in right[0..rblklen-1] >= left[(llen-1)*ELEMSIZE] are already in place.
     */
-   rblklen = rsearch_greatequal(sort, ADDR pa[(llen-1)*INDEXMULT], rlen, (uint8_t*) pb); // TODO: remove cast to (uint8_t*)
+   rblklen = rsearch_greatequal(sort, ELEM(lend - ELEMSIZE), rlen, right);
    rlen -= rblklen;
    if (rlen == 0) return 0;
 
-   err = ensuretempsize(sort, rlen);
+   nrofbytes = rlen * ELEMSIZE;
+   err = ensuretempsize(sort, nrofbytes);
    if (err) return err;
 
-   dest  = pb;
-   dest += rlen*INDEXMULT;
-   memcpy(sort->temp, pb, rlen * ELEMSIZE);
-   basea = pa;
-   baseb = sort->temp;
-   pb = sort->temp;
-   pb += rlen*INDEXMULT;
-   pa += llen*INDEXMULT;
+   memcpy(sort->temp, right, nrofbytes);
+   dest  = right + nrofbytes;
+   right = sort->temp;
+   rend  = right + nrofbytes;
 
 #define COPY(dest, src, nr) \
-         dest -= (nr)*INDEXMULT; \
-         src  -= (nr)*INDEXMULT; \
-         memcpy(dest, src, (nr)*ELEMSIZE)
+         nrofbytes = (nr)*ELEMSIZE; \
+         dest -= nrofbytes; \
+         src  -= nrofbytes; \
+         memcpy(dest, src, nrofbytes)
 
 #define MOVE(dest, src, nr) \
-         dest -= (nr)*INDEXMULT; \
-         src  -= (nr)*INDEXMULT; \
-         memmove(dest, src, (nr)*ELEMSIZE)
+         nrofbytes = (nr)*ELEMSIZE; \
+         dest -= nrofbytes; \
+         src  -= nrofbytes; \
+         memmove(dest, src, nrofbytes)
 
-   COPY(dest, pa, 1);
+   COPY(dest, lend, 1);
    --llen;
    if (llen == 0) goto DONE;
 
@@ -638,66 +628,67 @@ static int rmerge_adjacent_slices(
       lblklen = 0;
       rblklen = 0;
 
-      /* Do the straightforward thing until (if ever) one run
-       * appears to win consistently.
-       */
+     /*
+      * Copy highest element from left or right to dest.
+      */
       for (;;) {
-         assert(llen > 0 && rlen > 0);
-         if (sort->compare(sort->cmpstate, ADDR pb[-1*INDEXMULT], ADDR pa[-1*INDEXMULT]) < 0) {
-            COPY(dest, pa, 1);
-            ++lblklen;
-            rblklen = 0;
+         if (sort->compare(sort->cmpstate, ELEM(rend - ELEMSIZE), ELEM(lend - ELEMSIZE)) < 0) {
+            COPY(dest, lend, 1);
             --llen;
             if (llen == 0) goto DONE;
+            ++lblklen;
+            rblklen = 0;
             if (lblklen >= minblklen)
                break;
 
          } else {
-            COPY(dest, pb, 1);
-            ++rblklen;
-            lblklen = 0;
+            COPY(dest, rend, 1);
             --rlen;
             if (rlen == 0) goto DONE;
+            ++rblklen;
+            lblklen = 0;
             if (rblklen >= minblklen)
                break;
          }
       }
 
-      /* One run is winning so consistently that galloping may
-       * be a huge win.  So try that, and continue galloping until
-       * (if ever) neither run appears to be winning consistently
-       * anymore.
-       */
-      ++minblklen;
+     /*
+      * minblklen elements were copied from one array en bloc.
+      * So try to copy blocks of elements, and continue until
+      * the blocksize is less than MIN_BLK_LEN.
+      */
       do {
-         assert(llen > 0 && rlen > 0);
+         // lower blockmode barrier
          minblklen -= (minblklen != 1);
-         lblklen = rsearch_greater(sort, ADDR pb[-1*INDEXMULT], llen, (uint8_t*)basea); // TODO: remove cast
+         lblklen = rsearch_greater(sort, ELEM(rend - ELEMSIZE), llen, left);
          if (lblklen) {
-            MOVE(dest, pa, lblklen);
+            MOVE(dest, lend, lblklen);
             llen -= lblklen;
             if (llen == 0) goto DONE;
          }
-         COPY(dest, pb, 1);
+         COPY(dest, rend, 1);
          --rlen;
          if (rlen == 0) goto DONE;
 
-         rblklen = rsearch_greatequal(sort, ADDR pa[-1*INDEXMULT], rlen, (uint8_t*)baseb); // TODO: remove cast to (uint8_t*)
+         rblklen = rsearch_greatequal(sort, ELEM(lend - ELEMSIZE), rlen, right);
          if (rblklen) {
-            COPY(dest, pb, rblklen);
+            COPY(dest, rend, rblklen);
             rlen -= rblklen;
             if (rlen == 0) goto DONE;
          }
-         COPY(dest, pa, 1);
+         COPY(dest, lend, 1);
          --llen;
          if (llen == 0) goto DONE;
       } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
-      ++minblklen;           /* penalize it for leaving galloping mode */
+      minblklen += 2; // raise blockmode barrier if less than two runs
    }
 
 DONE:
-   if (rlen) memcpy(dest-rlen*INDEXMULT, baseb, rlen * sizeof(void*));
+   // left + (rlen + llen) * ELEMSIZE == dest
+   if (rlen) memcpy(left, right, rlen * ELEMSIZE);
    return 0;
+// TODO: remove
+#define ELEMSIZE     (sort->elemsize)
 }
 
 /* function: merge_topofstack
@@ -723,7 +714,7 @@ static int merge_topofstack(
    if (llen <= rlen)
       return merge_adjacent_slices(sort, left, llen, right, rlen);
    else
-      return rmerge_adjacent_slices(sort, (ELEMTYPE*)left, llen, (ELEMTYPE*)right, rlen);
+      return rmerge_adjacent_slices(sort, left, llen, right, rlen);
 }
 
 /* function: establish_stack_invariant
@@ -767,9 +758,9 @@ static int establish_stack_invariant(mergesort_t * sort)
  * Regardless of invariants, merge all runs on the stack until only one
  * remains.  This is used at the end of the mergesort.
  *
- * Returns 0 on success, -1 on error.
+ * Returns 0 on success.
  */
-static int merge_all(mergesort_t * sort)
+static inline int merge_all(mergesort_t * sort)
 {
    int err;
 
@@ -784,34 +775,39 @@ static int merge_all(mergesort_t * sort)
 /* function: insertsort
  * Sorts array a of length len.
  * insertsort is a stable sort for sorting small arrays.
- * It has O(n log n) compares, but can do O(n * n) data movements
+ * It has O(n log n) compares, but has O(n * n) data movements
  * in the worst case.
  *
  * Unchecked Precondition:
  * - start > 0 && start <= len
  * - a[0 .. start-1] is already sorted
 */
-static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, void * a[len])
+static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, uint8_t * a/*[len*ELEMSIZE]*/)
 {
-   sort_compare_f compare  = sort->compare;
-   void         * cmpstate = sort->cmpstate;
-
-   for (unsigned i = start; i < len; ++i) {
+// TODO: remove
+// #define ELEMSIZE     sizeof(void*)
+   uint8_t * next = (uint8_t*)a + start * ELEMSIZE;
+   for (unsigned i = start; i < len; ++i, next += ELEMSIZE) {
       /* Invariant: i > 0 && a[0 .. i-1] sorted */
       unsigned l = 0;
       unsigned r = i;
-      void * next = a[i];
       do {
          unsigned mid = (r + l) >> 1;
-         if (compare(cmpstate, next, a[mid]) < 0)
+         if (sort->compare(sort->cmpstate, ELEM(next), ELEM(a + mid*ELEMSIZE)) < 0)
             r = mid;
          else
             l = mid+1;
       } while (l < r);
-      for (r = i; r > l; --r)
-         a[r] = a[r-1];
-      a[l] = next;
+      if (i != l) {
+         memcpy(sort->temp, next, ELEMSIZE);
+         uint8_t * addr = a + l * ELEMSIZE;
+         memmove(addr + ELEMSIZE, addr, (size_t) (next - addr));
+         memcpy(addr, sort->temp, ELEMSIZE);
+      }
    }
+
+// TODO: remove
+#define ELEMSIZE     (sort->elemsize)
 
    return 0;
 }
@@ -820,16 +816,22 @@ static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, void * a[l
  * Reverse the elements of an array from a[0] up to a[len-1].
  *
  * Unchecked Precondition:
- * - len >= 2 */
-static inline void reverse_elements(size_t len, void * a[len])
+ * - lo < hi
+ * - lo points to first element a[0]
+ * - hi points to last element a[(n-1)*ELEMSIZE] */
+static inline void reverse_elements(mergesort_t * sort, uint8_t * lo, uint8_t * hi)
 {
-   size_t lo = 0;
-   size_t hi = len-1;
+// TODO: remove
+// #define ELEMSIZE     sizeof(void*)
    do {
-      void * t = a[lo];
-      a[lo++] = a[hi];
-      a[hi--] = t;
+      memcpy(sort->temp, lo, ELEMSIZE);
+      memcpy(lo, hi, ELEMSIZE);
+      memcpy(hi, sort->temp, ELEMSIZE);
+      lo += ELEMSIZE;
+      hi -= ELEMSIZE;
    } while (lo < hi);
+// TODO: remove
+#define ELEMSIZE     (sort->elemsize)
 }
 
 /* function: count_presorted
@@ -847,31 +849,32 @@ static inline void reverse_elements(size_t len, void * a[len])
  *
  * In the descending case the strictness property a[0] > a[1] is needed instead of a[0] >= a[1].
  * Calling reverse_elements would violate the stability property in case of equal elements. */
-static inline size_t count_presorted(mergesort_t * sort, size_t len, void * a[len])
+static inline size_t count_presorted(mergesort_t * sort, size_t len, uint8_t * a/*[len*ELEMSIZE]*/)
 {
-   size_t n;
-
    if (len <= 1)
       return len;
 
-   n = 1;
-   if (sort->compare(sort->cmpstate, a[n], a[n-1]) < 0) {
-      for (n = n + 1; n < len; ++n) {
-         if (sort->compare(sort->cmpstate, a[n], a[n-1]) < 0)
+   uint8_t * next = a;
+   size_t    n;
+   if (sort->compare(sort->cmpstate, ELEM(next + ELEMSIZE), ELEM(next)) < 0) {
+      next += ELEMSIZE;
+      for (n = len - 2; n; --n, next += ELEMSIZE) {
+         if (sort->compare(sort->cmpstate, ELEM(next + ELEMSIZE), ELEM(next)) < 0)
             continue;
          break;
       }
 
-      reverse_elements(n, a);
+      reverse_elements(sort, a, next);
 
    } else {
-      for (n = n + 1; n < len; ++n) {
-         if (sort->compare(sort->cmpstate, a[n], a[n-1]) < 0)
+      for (n = len - 2; n; --n) {
+         next += ELEMSIZE;
+         if (sort->compare(sort->cmpstate, ELEM(next + ELEMSIZE), ELEM(next)) < 0)
             break;
       }
    }
 
-   return n;
+   return len - n;
 }
 
 // group: sort
@@ -880,7 +883,7 @@ static inline size_t count_presorted(mergesort_t * sort, size_t len, void * a[le
 int sortptr_mergesort(mergesort_t * sort, size_t len, void * a[len], sort_compare_f cmp, void * cmpstate)
 
 #elif (mergesort_IMPL_ISPOINTER == 0)
-int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * a/*uint8_t[len]*/, sort_compare_f cmp, void * cmpstate)
+int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * a/*uint8_t[len*elemsize]*/, sort_compare_f cmp, void * cmpstate)
 
 #else
 #error "Expect (mergesort_IMPL_ISPOINTER == 0) || (mergesort_IMPL_ISPOINTER == 1)"
@@ -902,40 +905,40 @@ int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * 
    * Scanning array left to right, finding presorted sub arrays,
    * and extending short sub arrays to minsize elements.
    */
-   uint8_t    minlen = compute_minslicelen(len);
-   ELEMTYPE * next   = a;
-   size_t     nextlen = len;
+   uint8_t   minlen  = compute_minslicelen(len);
+   uint8_t * next    = (uint8_t*) a;
+   size_t    nextlen = len;
 
    do {
       /* get size of next presorted sub array */
-      size_t subarray_len = count_presorted(sort, nextlen, next);
+      size_t slice_len = count_presorted(sort, nextlen, next);
 
       /* extend size to min(minlen, nextlen). */
-      if (subarray_len < minlen) {
+      if (slice_len < minlen) {
          const uint8_t extlen = (uint8_t) ( nextlen <= minlen
                               ? nextlen : (unsigned)minlen);
-         err = insertsort(sort, (uint8_t)subarray_len, extlen, next);
+         err = insertsort(sort, (uint8_t)slice_len, extlen, next);
          if (err) goto ONABORT;
-         subarray_len = extlen;
+         slice_len = extlen;
       }
 
-      /* push sub-array onto stack of unmerged sub-arrays */
+      /* push presorted slice onto stack of unmerged slices */
       if (sort->stacksize == lengthof(sort->stack)) {
          // stack size chosen too small for size_t type
          err = merge_topofstack(sort, false);
          if (err) goto ONABORT;
       }
       sort->stack[sort->stacksize].base = next;
-      sort->stack[sort->stacksize].len  = subarray_len;
+      sort->stack[sort->stacksize].len  = slice_len;
       ++sort->stacksize;
 
-      /* merge sub-array on stack until stack invariant is established */
+      /* merge sorted slices until stack invariant is established */
       err = establish_stack_invariant(sort);
       if (err) goto ONABORT;
 
       /* advance */
-      next    += subarray_len*INDEXMULT;
-      nextlen -= subarray_len;
+      next    += slice_len * ELEMSIZE;
+      nextlen -= slice_len;
    } while (nextlen);
 
    err = merge_all(sort);
@@ -1056,10 +1059,20 @@ static int test_compare(void * cmpstate, const void * left, const void * right)
    return 0;
 }
 
+static int test_compare_blob(void * cmpstate, const void * left, const void * right)
+{
+   ++s_compare_count;
+   (void) cmpstate;
+   if (*(const uintptr_t*)left < *(const uintptr_t*)right)
+      return -1;
+   else if (*(const uintptr_t*)left > *(const uintptr_t*)right)
+      return +1;
+   return 0;
+}
+
 static int test_compare2(const void * left, const void * right)
 {
    ++s_compare_count;
-   // works cause all pointer values are positive integer values ==> no overflow if subtracted
    if (*(const uintptr_t*)left < *(const uintptr_t*)right)
       return -1;
    else if (*(const uintptr_t*)left > *(const uintptr_t*)right)
@@ -1075,9 +1088,9 @@ static int test_sort(void)
    const unsigned len    = 50000000;
 
    // prepare
-   s_compare_count = 0;
    TEST(0 == init_vmpage(&vmpage, len * sizeof(void*)));
    a = (void**) vmpage.addr;
+   s_compare_count = 0;
 
    for (uintptr_t i = 0; i < len; ++i) {
       a[i] = (void*) i;
@@ -1092,11 +1105,14 @@ static int test_sort(void)
 
    time_t start = time(0);
 
-#if 0
-   qsort(a, len, sizeof(void*), &test_compare2);
+   extern void qsortx(void *a, size_t n, size_t es, int (*cmp)(const void *, const void *));
+
+#if 1
+   qsortx(a, len, sizeof(void*), &test_compare2);
 #else
    TEST(0 == init_mergesort(&sort))
-   TEST(0 == sortptr_mergesort(&sort, len, a, &test_compare, 0));
+   // TEST(0 == sortptr_mergesort(&sort, len, a, &test_compare, 0));
+   TEST(0 == sortblob_mergesort(&sort, sizeof(void*), len, a, &test_compare_blob, 0));
    TEST(0 == free_mergesort(&sort));
 #endif
 
@@ -1109,8 +1125,6 @@ static int test_sort(void)
    }
 
    printf("compare_count = %llu\n", s_compare_count);
-
-exit(0);
 
    // unprepare
    a = 0;

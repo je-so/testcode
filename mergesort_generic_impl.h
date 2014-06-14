@@ -1,6 +1,28 @@
 
 // section: mergesort_t
 
+#undef search_greatequal
+#undef rsearch_greatequal
+#undef search_greater
+#undef rsearch_greater
+#undef merge_adjacent_slices
+#undef rmerge_adjacent_slices
+#undef merge_topofstack
+#undef establish_stack_invariant
+#undef merge_all
+#undef insertsort
+#undef reverse_elements
+#undef count_presorted
+#undef NAME
+#undef ELEMSIZE
+#undef ELEM
+#undef INITFASTCOPY
+#undef COPYINCR_1
+#undef COPYDECR_1
+#undef COPYINCR
+#undef COPYDECR
+#undef SWAP
+
 // every selected mergesort_IMPL_TYPE has its own namespace
 
 #define search_greatequal         NAME(search_greatequal)
@@ -30,30 +52,48 @@
  * For example merge_all is mapped to merge_all_ptr, merge_all_long, or merge_all_bytes. */
 #define NAME(name)   name ## _ptr
 /* define: ELEMSIZE
- * TODO: */
+ * The size of the element. This value is used as optimization in
+ * case of mergesort_IMPL_TYPE==mergesort_TYPE_POINTER. In the pointer
+ * case it is defined as constant sizeof(void*) instead of variable <mergesort_t->elemsize>. */
 #define ELEMSIZE     (sizeof(void*))
-// TODO:
+/* define: ELEM
+ * Access of single element from its address.
+ * The return value is either addr or the content of the element
+ * in case of type void*. The compare function uses this value. */
 #define ELEM(addr)   ((void**)(addr))[0]
-// TODO:
-#define INITFASTSWAP
+/* define: INITFASTCOPY
+ * Initializes variable fastcopy. Which is true in case
+ * of a single byte or long value. In the pointer case where the elementsize
+ * is known (sizeof(void*)) it is not necessary and therefore left empty. */
+#define INITFASTCOPY
 
-// TODO:
-#define COPYINCR_SINGLE(dest, src) \
+/* define: COPYINCR_1
+ * Copies a single element from address src to address dest.
+ * The pointer src and dest (type uint8_t*) are incremented afterwards. */
+#define COPYINCR_1(dest, src) \
 { \
    *(void**)(dest) = *(void**)(src); \
    dest += sizeof(void*); \
    src  += sizeof(void*); \
 }
 
-// TODO:
-#define COPYDECR_SINGLE(dest, src) \
+/* define: COPYDECR_1
+ * Copies a single element from address src to address dest.
+ * The pointer src and dest (type uint8_t*) are decremented before the copy operation. */
+#define COPYDECR_1(dest, src) \
 { \
    dest -= sizeof(void*); \
    src  -= sizeof(void*); \
    *(void**)(dest) = *(void**)(src); \
 }
 
-// TODO:
+/* define: COPYINCR
+ * Copies nr elements from address src to address dest.
+ * The pointer src and dest (type uint8_t*) are incremented after every single element
+ * by the size of the element.
+ *
+ * Unchecked Precondition:
+ * - dest < src || memory_does_not_overlap(src, dest, nr*ELEMSIZE) */
 #define COPYINCR(dest, src, nr) \
 { \
    size_t _n = (nr); \
@@ -64,7 +104,13 @@
    } while (--_n); \
 }
 
-// TODO:
+/* define: COPYDECR
+ * Copies nr elements from address src to address dest.
+ * The pointer src and dest (type uint8_t*) are decremented before copying
+ * every single element by the size of the element.
+ *
+ * Unchecked Precondition:
+ * - dest > src || memory_does_not_overlap(src, dest, nr*ELEMSIZE) */
 #define COPYDECR(dest, src, nr) \
 { \
    size_t _n = (nr); \
@@ -75,7 +121,10 @@
    } while (--_n); \
 }
 
-// TODO:
+/* define: SWAP
+ * Swaps the element at lo with element at hi.
+ * Pointer lo and hi (type uint8_t*) must point
+ * directly to the element. They are not changed after return. */
 #define SWAP(lo, hi) \
 { \
    void * t = *(void**)lo; \
@@ -90,11 +139,11 @@
 #define NAME(name)   name ## _long
 #define ELEMSIZE     (sort->elemsize)
 #define ELEM(addr)   (addr)
-#define INITFASTSWAP const int fastswap = (ELEMSIZE == sizeof(long) ? 0 : 1);
+#define INITFASTCOPY const int fastcopy = (ELEMSIZE == sizeof(long));
 
-#define COPYINCR_SINGLE(dest, src) \
+#define COPYINCR_1(dest, src) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       *(long*)(dest) = *(long*)(src); \
       dest += sizeof(long); \
       src  += sizeof(long); \
@@ -103,9 +152,9 @@
    } \
 }
 
-#define COPYDECR_SINGLE(dest, src) \
+#define COPYDECR_1(dest, src) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       dest -= sizeof(long); \
       src  -= sizeof(long); \
       *(long*)(dest) = *(long*)(src); \
@@ -136,7 +185,7 @@
 
 #define SWAP(lo, hi) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       long t = *(long*) lo; \
       *(long*) lo = *(long*) hi; \
       *(long*) hi = t; \
@@ -161,11 +210,11 @@
 #define NAME(name)   name ## _bytes
 #define ELEMSIZE     (sort->elemsize)
 #define ELEM(addr)   (addr)
-#define INITFASTSWAP const int fastswap = (ELEMSIZE == 1 ? 0 : 1);
+#define INITFASTCOPY const int fastcopy = (ELEMSIZE == 1);
 
-#define COPYINCR_SINGLE(dest, src) \
+#define COPYINCR_1(dest, src) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       *(dest) = *(src); \
       ++ dest; \
       ++ src; \
@@ -174,9 +223,9 @@
    } \
 }
 
-#define COPYDECR_SINGLE(dest, src) \
+#define COPYDECR_1(dest, src) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       -- dest; \
       -- src; \
       *(dest) = *(src); \
@@ -207,7 +256,7 @@
 
 #define SWAP(lo, hi) \
 { \
-   if (fastswap == 0) { \
+   if (fastcopy) { \
       uint8_t t = *(lo); \
       *(lo) = *(hi); \
       *(hi) = t; \
@@ -472,8 +521,7 @@ static int merge_adjacent_slices(
    size_t    minblklen = 2*MIN_BLK_LEN;
    size_t    lblklen;   /* # of times element in left is smallest */
    size_t    rblklen;   /* # of times element in right is smallest */
-   size_t    nrofbytes;
-   INITFASTSWAP;
+   INITFASTCOPY;
 
    /*
     * All elements in left[0..lblklen-1] <= right[0] are already in place.
@@ -490,7 +538,7 @@ static int merge_adjacent_slices(
    dest = left;
    left = sort->temp;
 
-   COPYINCR_SINGLE(dest, right);
+   COPYINCR_1(dest, right);
    --rlen;
    if (rlen == 0) goto DONE;
 
@@ -503,7 +551,7 @@ static int merge_adjacent_slices(
       */
       for (;;) {
          if (sort->compare(sort->cmpstate, ELEM(right), ELEM(left)) < 0) {
-            COPYINCR_SINGLE(dest, right);
+            COPYINCR_1(dest, right);
             --rlen;
             if (rlen == 0) goto DONE;
             ++rblklen;
@@ -512,7 +560,7 @@ static int merge_adjacent_slices(
                break;
 
          } else {
-            COPYINCR_SINGLE(dest, left);
+            COPYINCR_1(dest, left);
             --llen;
             if (llen == 0) goto DONE;
             ++lblklen;
@@ -536,7 +584,7 @@ static int merge_adjacent_slices(
             llen -= lblklen;
             if (llen == 0) goto DONE;
          }
-         COPYINCR_SINGLE(dest, right);
+         COPYINCR_1(dest, right);
          --rlen;
          if (rlen == 0) goto DONE;
 
@@ -546,7 +594,7 @@ static int merge_adjacent_slices(
             rlen -= rblklen;
             if (rlen == 0) goto DONE;
          }
-         COPYINCR_SINGLE(dest, left);
+         COPYINCR_1(dest, left);
          --llen;
          if (llen == 0) goto DONE;
       } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
@@ -559,11 +607,9 @@ DONE:
 }
 
 /* function: rmerge_adjacent_slices
- * TODO:
- * Merge the llen elements starting at pa with the rlen elements starting at pb
- * in a stable way, in-place.  llen and rlen must be > 0, and pa + llen == pb.
- * Must also have that *pb < *pa, that pa[llen-1] belongs at the end of the
- * merge, and should have llen >= rlen.  See listsort.txt for more info.
+ * Merge the llen elements starting at left with the rlen elements starting at right
+ * in a stable way. After success the array left contains
+ * (llen+rlen) elements in sorted order.
  * Return 0 if successful.
  *
  * The merging is done in reverse order from higher to lower values.
@@ -587,7 +633,7 @@ static int rmerge_adjacent_slices(
    size_t    lblklen;   /* # of times element in left is smallest */
    size_t    rblklen;   /* # of times element in right is smallest */
    size_t    nrofbytes;
-   INITFASTSWAP;
+   INITFASTCOPY;
 
    /*
     * All elements in right[0..rblklen-1] >= left[(llen-1)*ELEMSIZE] are already in place.
@@ -605,7 +651,7 @@ static int rmerge_adjacent_slices(
    right = sort->temp;
    rend  = right + nrofbytes;
 
-   COPYDECR_SINGLE(dest, lend);
+   COPYDECR_1(dest, lend);
    --llen;
    if (llen == 0) goto DONE;
 
@@ -618,7 +664,7 @@ static int rmerge_adjacent_slices(
       */
       for (;;) {
          if (sort->compare(sort->cmpstate, ELEM(rend - ELEMSIZE), ELEM(lend - ELEMSIZE)) < 0) {
-            COPYDECR_SINGLE(dest, lend);
+            COPYDECR_1(dest, lend);
             --llen;
             if (llen == 0) goto DONE;
             ++lblklen;
@@ -627,7 +673,7 @@ static int rmerge_adjacent_slices(
                break;
 
          } else {
-            COPYDECR_SINGLE(dest, rend);
+            COPYDECR_1(dest, rend);
             --rlen;
             if (rlen == 0) goto DONE;
             ++rblklen;
@@ -651,7 +697,7 @@ static int rmerge_adjacent_slices(
             llen -= lblklen;
             if (llen == 0) goto DONE;
          }
-         COPYDECR_SINGLE(dest, rend);
+         COPYDECR_1(dest, rend);
          --rlen;
          if (rlen == 0) goto DONE;
 
@@ -661,7 +707,7 @@ static int rmerge_adjacent_slices(
             rlen -= rblklen;
             if (rlen == 0) goto DONE;
          }
-         COPYDECR_SINGLE(dest, lend);
+         COPYDECR_1(dest, lend);
          --llen;
          if (llen == 0) goto DONE;
       } while (lblklen >= MIN_BLK_LEN || rblklen >= MIN_BLK_LEN);
@@ -677,7 +723,15 @@ DONE:
 /* function: merge_topofstack
  * Merges two sorted sub-arrays at top of stack.
  * If isSecondTop is true the two arrays at stack indices -3 and -2
- * are merged else at stack indices -2 and -1. */
+ * are merged else at stack indices -2 and -1.
+ *
+ * This function calls either <merge_adjacent_slices> or <rmerge_adjacent_slices>
+ * depending on the length of the left or right slice.
+ *
+ * This helps to minimize the size of the temporary array used during the merge
+ * operation.
+ *
+ * */
 static int merge_topofstack(
    mergesort_t * sort,
    bool        isSecondTop)
@@ -768,7 +822,7 @@ static inline int merge_all(mergesort_t * sort)
 */
 static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, uint8_t * a/*[len*ELEMSIZE]*/)
 {
-   INITFASTSWAP;
+   INITFASTCOPY;
    uint8_t * next = (uint8_t*)a + start * ELEMSIZE;
    for (unsigned i = start; i < len; ++i, next += ELEMSIZE) {
       /* Invariant: i > 0 && a[0 .. i-1] sorted */
@@ -784,11 +838,11 @@ static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, uint8_t * 
       if (i != l) {
          uint8_t * dest = sort->tempmem;
          uint8_t * src  = next;
-         COPYINCR_SINGLE(dest, src);
+         COPYINCR_1(dest, src);
          dest = next;
          COPYDECR(src, dest, (size_t)(i-l))
          src = sort->tempmem;
-         COPYINCR_SINGLE(dest, src);
+         COPYINCR_1(dest, src);
       }
    }
 
@@ -798,15 +852,14 @@ static int insertsort(mergesort_t * sort, uint8_t start, uint8_t len, uint8_t * 
 /* function: reverse_elements
  * Reverse the elements of an array from a[0] up to a[len-1].
  *
- * Uses <mergesort_t.tempmem>.
- *
  * Unchecked Precondition:
  * - lo < hi
  * - lo points to first element a[0]
  * - hi points to last element a[(n-1)*ELEMSIZE] */
 static inline void reverse_elements(mergesort_t * sort, uint8_t * lo, uint8_t * hi)
 {
-   INITFASTSWAP;
+   (void) sort; // not necessary in ptr case
+   INITFASTCOPY;
    do {
       SWAP(lo, hi);
       lo += ELEMSIZE;
@@ -826,8 +879,6 @@ static inline void reverse_elements(mergesort_t * sort, uint8_t * lo, uint8_t * 
  *
  * A descending sequence is transormed into an ascending sequence
  * by calling reverse_elements.
- *
- * reverse_elements uses <mergesort_t.tempmem>.
  *
  * In the descending case the strictness property a[0] > a[1] is needed instead of a[0] >= a[1].
  * Calling reverse_elements would violate the stability property in case of equal elements. */
@@ -889,7 +940,7 @@ static int sortbytes_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len,
    * and extending short sub arrays to minsize elements.
    */
    uint8_t   minlen  = compute_minslicelen(len);
-   uint8_t * next    = a;
+   uint8_t * next    = (uint8_t*) a;
    size_t    nextlen = len;
 
    do {
@@ -932,5 +983,3 @@ ONABORT:
    TRACEABORT_ERRLOG(err);
    return err;
 }
-
-

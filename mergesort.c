@@ -47,13 +47,16 @@ static test_errortimer_t   s_mergesort_errtimer = test_errortimer_FREE;
 // group: constants
 
 /* define: MIN_BLK_LEN
- * The minimum nr of elements moved as one block in merge. */
+ * The minimum nr of elements moved as one block in a merge operation.
+ * The merge operation is implemented in <merge_adjacent_slices> and
+ * <rmerge_adjacent_slices>. */
 #define MIN_BLK_LEN 7
 
 /* define: MIN_SLICE_LEN
- * The minum number of elements (length) of a sorted sub-array.
- * Every presorted slice is described in <mergesort_sortedslice_t>.
- * All such slices are stored on a stack. */
+ * The minimum number of elements stored in a sorted slice.
+ * The actual minimum length is computed by <compute_minslicelen>
+ * but is always bigger or equal than this value.
+ * Every slice is described with <mergesort_sortedslice_t>. */
 #define MIN_SLICE_LEN 32
 
 // group: memory-helper
@@ -79,6 +82,7 @@ static int alloctemp_mergesort(mergesort_t * sort, size_t tempsize)
    // TODO: replace call to init_vmpage with call to temporary stack memory manager
    //       == implement temporary stack memory manager ==
    if (tempsize) {
+      ONERROR_testerrortimer(&s_mergesort_errtimer, &err, ONABORT);
       err = init_vmpage(&mblock, tempsize);
       if (err) goto ONABORT;
       sort->temp     = mblock.addr;
@@ -101,7 +105,7 @@ static inline int ensuretempsize(mergesort_t * sort, size_t tempsize)
 
 // group: lifetime
 
-int init_mergesort(/*out*/mergesort_t * sort)
+void init_mergesort(/*out*/mergesort_t * sort)
 {
     sort->compare  = 0;
     sort->cmpstate = 0;
@@ -109,7 +113,6 @@ int init_mergesort(/*out*/mergesort_t * sort)
     sort->temp     = sort->tempmem;
     sort->tempsize = sizeof(sort->tempmem);
     sort->stacksize = 0;
-    return 0;
 }
 
 int free_mergesort(mergesort_t * sort)
@@ -143,6 +146,9 @@ ONABORT:
  * Else return an int k, 32 <= k <= 64, such that n/k is close to, but
  * strictly less than, an exact power of 2.
  *
+ * The implementation choses the 6 most sign. bits of n as minsize.
+ * And it increments minsize by one if n/minsize is not an exact power
+ * of two.
  */
 static uint8_t compute_minslicelen(size_t n)
 {
@@ -206,7 +212,7 @@ static int setsortstate(
 
 int sortblob_mergesort(mergesort_t * sort, uint8_t elemsize, size_t len, void * a/*uint8_t[len*elemsize]*/, sort_compare_f cmp, void * cmpstate)
 {
-   if (0 == (uintptr_t)a % sizeof(long) || 0 == elemsize % sizeof(long)) {
+   if (0 == (uintptr_t)a % sizeof(long) && 0 == elemsize % sizeof(long)) {
       return sortlong_mergesort(sort, elemsize, len, a, cmp, cmpstate);
 
    } else {
@@ -281,14 +287,90 @@ ONABORT:
    return EINVAL;
 }
 
-static int test_compare(void * cmpstate, const void * left, const void * right);
+static int test_memhelper(void)
+{
+   mergesort_t sort;
+   vmpage_t    vmpage;
+
+   // TEST alloctemp_mergesort: size == 0
+   memset(&sort, 0, sizeof(sort));
+   for (unsigned i = 0; i < 2; ++i) {
+      TEST(0 == alloctemp_mergesort(&sort, 0));
+      TEST(sort.tempmem == sort.temp);
+      TEST(sizeof(sort.tempmem) == sort.tempsize);
+   }
+
+   // TEST alloctemp_mergesort: size > 0
+   TEST(0 == alloctemp_mergesort(&sort, 1));
+   TEST(0 != sort.temp);
+   TEST(pagesize_vm() == sort.tempsize);
+   vmpage = (vmpage_t) vmpage_INIT(sort.tempsize, sort.temp);
+   TEST(0 != ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+
+   // TEST alloctemp_mergesort: free (size == 0)
+   TEST(0 == alloctemp_mergesort(&sort, 0));
+   TEST(sort.tempmem == sort.temp);
+   TEST(sizeof(sort.tempmem) == sort.tempsize);
+   TEST(0 == ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+
+   // alloctemp_mergesort: different sizes
+   for (unsigned i = 1; i <= 10; ++i) {
+      TEST(0 == alloctemp_mergesort(&sort, i * pagesize_vm()));
+      TEST(0 != sort.temp);
+      TEST(i*pagesize_vm() == sort.tempsize);
+      vmpage = (vmpage_t) vmpage_INIT(sort.tempsize, sort.temp);
+      TEST(0 != ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+   }
+
+   // TEST alloctemp_mergesort: ERROR
+   init_testerrortimer(&s_mergesort_errtimer, 1, ENOMEM);
+   TEST(ENOMEM == alloctemp_mergesort(&sort, 1));
+   // freed (reset to tempmem)
+   TEST(sort.tempmem == sort.temp);
+   TEST(sizeof(sort.tempmem) == sort.tempsize);
+   TEST(0 == ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+
+   // TEST ensuretempsize: no reallocation
+   for (unsigned i = 0; i <= sort.tempsize; ++i) {
+      TEST(0 == ensuretempsize(&sort, i));
+      TEST(sort.tempmem == sort.temp);
+      TEST(sizeof(sort.tempmem) == sort.tempsize);
+   }
+
+   // TEST ensuretempsize: reallocation
+   for (unsigned i = 10; i <= 11; ++i) {
+      // reallocation
+      TEST(0 == ensuretempsize(&sort, i * pagesize_vm()));
+      TEST(0 != sort.temp);
+      TEST(i*pagesize_vm() == sort.tempsize);
+      vmpage = (vmpage_t) vmpage_INIT(sort.tempsize, sort.temp);
+      TEST(0 != ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+      // no reallocation
+      TEST(0 == ensuretempsize(&sort, 0));
+      TEST(0 == ensuretempsize(&sort, i * pagesize_vm()-1));
+      TEST(vmpage.addr == sort.temp);
+      TEST(vmpage.size == sort.tempsize);
+      TEST(0 != ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+   }
+
+   // TEST ensuretempsize: ERROR
+   init_testerrortimer(&s_mergesort_errtimer, 1, ENOMEM);
+   TEST(ENOMEM == ensuretempsize(&sort, sort.tempsize+1));
+   // freed (reset to tempmem)
+   TEST(sort.tempmem == sort.temp);
+   TEST(sizeof(sort.tempmem) == sort.tempsize);
+   TEST(0 == ismapped_vm(&vmpage, accessmode_RDWR_PRIVATE));
+
+   return 0;
+ONABORT:
+   return EINVAL;
+}
 
 static int test_initfree(void)
 {
    mergesort_t sort = mergesort_FREE;
 
-   // TEST sort_FREE
-   // TODO:
+   // TEST mergesort_FREE
    TEST(0 == sort.compare);
    TEST(0 == sort.cmpstate);
    TEST(0 == sort.elemsize);
@@ -296,6 +378,35 @@ static int test_initfree(void)
    TEST(0 == sort.tempsize);
    TEST(0 == sort.stacksize);
 
+   // TEST init_mergesort
+   memset(&sort, 255, sizeof(sort));
+   init_mergesort(&sort);
+   TEST(0 == sort.compare);
+   TEST(0 == sort.cmpstate);
+   TEST(0 == sort.elemsize);
+   TEST(sort.tempmem == sort.temp);
+   TEST(sizeof(sort.tempmem) == sort.tempsize);
+   TEST(0 == sort.stacksize);
+
+   // TEST free_mergesort: sort.tempmem == sort.temp
+   sort.stacksize = 1;
+   TEST(0 == free_mergesort(&sort));
+   TEST(0 == sort.temp);
+   TEST(0 == sort.tempsize);
+   TEST(0 == sort.stacksize);
+
+   // TEST free_mergesort: sort.tempmem != sort.temp
+   alloctemp_mergesort(&sort, pagesize_vm());
+   sort.stacksize = 1;
+   TEST(sort.temp != 0);
+   TEST(sort.temp != sort.tempmem);
+   TEST(sort.tempsize == pagesize_vm());
+   TEST(0 == free_mergesort(&sort));
+   TEST(0 == sort.temp);
+   TEST(0 == sort.tempsize);
+   TEST(0 == sort.stacksize);
+
+   // TEST free_mergesort: ERROR
 
    // TODO:
 
@@ -369,7 +480,7 @@ static int test_sort(void)
 #if 0
    qsortx(a, len, sizeof(void*), &test_compare2);
 #else
-   TEST(0 == init_mergesort(&sort))
+   init_mergesort(&sort);
    // TEST(0 == sortptr_mergesort(&sort, len, a, &test_compare, 0));
    TEST(0 == sortblob_mergesort(&sort, sizeof(void*), len, a, &test_compare_blob, 0));
    TEST(0 == free_mergesort(&sort));
@@ -399,6 +510,7 @@ ONABORT:
 int unittest_sort_mergesort()
 {
    if (test_constants())      goto ONABORT;
+   if (test_memhelper())      goto ONABORT;
    if (test_initfree())       goto ONABORT;
    if (test_sort())           goto ONABORT;
 

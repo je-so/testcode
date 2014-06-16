@@ -991,26 +991,422 @@ ONABORT:
    return EINVAL;
 }
 
+static void set_key(uintptr_t key, uint8_t * barray, long * larray, void ** parray)
+{
+   parray[0] = (void*) key;
+   larray[0] = (long) key;
+   barray[0] = (uint8_t) (key / 256);
+   barray[1] = (uint8_t) key;
+   barray[2] = 0;
+}
+
+static int compare_content(int type, uint8_t * barray, long * larray, void ** parray, unsigned len)
+{
+   for (unsigned i = 0; i < len; ++i) {
+      uintptr_t key = 5*i;
+      switch (type) {
+      case 0: TEST(barray[3*i]   == (uint8_t) (key / 256));
+              TEST(barray[3*i+1] == (uint8_t) key);
+              TEST(barray[3*i+2] == 0); break;
+      case 1: TEST(larray[i] == (long) key);  break;
+      case 2: TEST(parray[i] == (void*) key); break;
+      }
+   }
+
+   return 0;
+ONABORT:
+   return EINVAL;
+}
+
 static int test_merge(void)
 {
    mergesort_t sort;
+   void *      parray[128];
+   long        larray[128];
+   uint8_t     barray[3*128];
+   typedef int (*merge_slices_f) (mergesort_t * sort, uint8_t * left, size_t llen, uint8_t * right, size_t rlen);
+   merge_slices_f merge_slices [3][2] = {
+      { &merge_adjacent_slices_bytes, &rmerge_adjacent_slices_bytes },
+      { &merge_adjacent_slices_long,  &rmerge_adjacent_slices_long },
+      { &merge_adjacent_slices_ptr,   &rmerge_adjacent_slices_ptr },
+   };
 
    // prepare
    init_mergesort(&sort);
+   for (unsigned i = 0; i < lengthof(larray); ++i) {
+      uintptr_t key = 5*i;
+      set_key(key, barray+3*i, larray+i, parray+i);
+   }
 
-   // TODO: ?
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: allocate enough temporary memory
+   for (unsigned nrpage = 2; nrpage <= 10; nrpage += 2) {
+      vmpage_t vmpage;
+      TEST(0 == init_vmpage(&vmpage, pagesize_vm()*nrpage));
+      for (int type = 0; type < 3; ++type) {
+         for (int reverse = 0; reverse <= 1; ++reverse) {
+            for (size_t lsize = pagesize_vm(); lsize < vmpage.size; lsize += pagesize_vm()) {
+               switch (type) {
+               case 0: setsortstate(&sort, &test_compare_bytes, 0, 2, 1); break;
+               case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); break;
+               case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); break;
+               }
+               memset(vmpage.addr, 1, vmpage.size);
+               memset(vmpage.addr + lsize, 0, vmpage.size - lsize);
+               TEST(0 == merge_slices[type][reverse](&sort,
+                                 vmpage.addr, lsize / sort.elemsize,
+                                 vmpage.addr+lsize, (vmpage.size - lsize) / sort.elemsize));
+               TEST(0 != sort.temp);
+               TEST(sort.tempmem  != sort.temp);
+               TEST(sort.tempsize == (size_t) (reverse ? vmpage.size - lsize : lsize));
+               TEST(0 == alloctemp_mergesort(&sort, 0));
+               TEST(sort.tempmem  == sort.temp);
+            }
+         }
+      }
+      TEST(0 == free_vmpage(&vmpage));
+   }
 
-   // TEST merge_adjacent_slices
-   // TEST rmerge_adjacent_slices
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: all elements are already in place
+   for (int type = 0; type < 3; ++type) {
+      for (int reverse = 0; reverse <= 1; ++reverse) {
+         for (unsigned llen = 1; llen < lengthof(larray); ++llen) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, lengthof(barray)); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), lengthof(larray)); left = (uint8_t*)larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), lengthof(parray)); left = (uint8_t*)parray; break;
+            }
+            uint8_t * right = left + llen * sort.elemsize;
+            TEST(0 == merge_slices[type][reverse](&sort, left, llen, right, lengthof(larray)-llen));
+            // nothing changed
+            sort.tempsize = 0;
+            TEST(0 == compare_content(type, barray, larray, parray, lengthof(larray)));
+            // no tempmem used
+            TEST(sort.temp == sort.tempmem);
+         }
+      }
+   }
 
-   // TEST merge_topofstack
-   // TODO: ?
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: alternating left right
+   for (int type = 0; type < 3; ++type) {
+      for (int reverse = 0; reverse <= 1; ++reverse) {
+         for (unsigned off = 0; off <= 1; ++off) {
+            for (unsigned i = 0, ki = 0; i < lengthof(larray); ++i, ki += 2) {
+               uintptr_t key = 5u*((ki%lengthof(larray)) + (ki>=lengthof(larray) ? off : (unsigned)!off));
+               set_key(key, barray+3*i, larray+i, parray+i);
+            }
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, lengthof(barray)); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), lengthof(larray)); left = (uint8_t*)larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), lengthof(parray)); left = (uint8_t*)parray; break;
+            }
+            uint8_t * right = left + lengthof(larray)/2 * sort.elemsize;
+            TEST(0 == merge_slices[type][reverse](&sort, left, lengthof(larray)/2, right, lengthof(larray)/2));
+            TEST(0 == compare_content(type, barray, larray, parray, lengthof(larray)));
+         }
+      }
+   }
 
-   // TEST establish_stack_invariant
-   // TODO: ?
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: block modes
+   size_t blocksize[][3][2] = {
+      { { 1, 2*MIN_BLK_LEN+1}, { 2*MIN_BLK_LEN, 1 }, { 0, 0 } }, // triggers first if (llen == 0) goto DONE;
+      { { 1, 2*MIN_BLK_LEN+1}, { 2*MIN_BLK_LEN, 1 }, { 2*MIN_BLK_LEN, 0 } }, // triggers second if (rlen == 0) goto DONE;
+      { { 1, 2*MIN_BLK_LEN+1}, { 2*MIN_BLK_LEN, 2*MIN_BLK_LEN }, { 2*MIN_BLK_LEN, 0 } }, // triggers third if (rlen == 0) goto DONE;
+      { { 1, 2*MIN_BLK_LEN+1}, { 2*MIN_BLK_LEN, 2*MIN_BLK_LEN }, { 1, MIN_BLK_LEN } }, // triggers fourth if (llen == 0) goto DONE;
+      // reverse
+      { { 0, 2*MIN_BLK_LEN}, { 2*MIN_BLK_LEN, 2*MIN_BLK_LEN }, { 1, 1 } }, // triggers reverse first if (llen == 0) goto DONE;
+      { { 2*MIN_BLK_LEN, 1}, { 2*MIN_BLK_LEN, 2*MIN_BLK_LEN }, { 1, 1 } }, // triggers reverse second if (rlen == 0) goto DONE;
+      { { 2*MIN_BLK_LEN, MIN_BLK_LEN+1}, { 2*MIN_BLK_LEN, 2*MIN_BLK_LEN }, { 1, 1 } }, // triggers reverse third if (rlen == 0) goto DONE;
+      { { 0, 1 }, { 1, 2*MIN_BLK_LEN }, { 2*MIN_BLK_LEN+1, 1 } }, // triggers reverse fourth if (llen == 0) goto DONE;
+   };
+   for (unsigned ti = 0; ti < lengthof(blocksize); ++ti) {
+      unsigned llen = 0;
+      unsigned rlen = 0;
+      for (unsigned bi = 0; bi < lengthof(blocksize[ti]); ++bi) {
+         llen += blocksize[ti][bi][0];
+         rlen += blocksize[ti][bi][1];
+      }
+      for (int type = 0; type < 3; ++type) {
+         for (int reverse = 0; reverse <= 1; ++reverse) {
+            for (unsigned isswap = 0; isswap <= 1; ++isswap) {
+               unsigned ki = 0, li = 0, ri = llen;
+               for (unsigned bi = 0; bi < lengthof(blocksize[ti]); ++bi) {
+                  unsigned lk = ki + (!isswap ? 0 : blocksize[ti][bi][1]);
+                  unsigned rk = ki + (isswap  ? 0 : blocksize[ti][bi][0]);
+                  ki += blocksize[ti][bi][0] + blocksize[ti][bi][1];
+                  for (unsigned i = 0; i < blocksize[ti][bi][0]; ++i, ++lk, ++li) {
+                     set_key(5*lk, barray+3*li, larray+li, parray+li);
+                  }
+                  for (unsigned i = 0; i < blocksize[ti][bi][1]; ++i, ++rk, ++ri) {
+                     set_key(5*rk, barray+3*ri, larray+ri, parray+ri);
+                  }
+               }
+               uint8_t * left;
+               switch (type) {
+               case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, lengthof(barray)); left = barray; break;
+               case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), lengthof(larray)); left = (uint8_t*)larray; break;
+               case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), lengthof(parray)); left = (uint8_t*)parray; break;
+               }
+               uint8_t * right = left + llen * sort.elemsize;
+               TEST(0 == merge_slices[type][reverse](&sort, left, llen, right, rlen));
+               TEST(0 == compare_content(type, barray, larray, parray, llen+rlen));
+            }
+         }
+      }
+   }
+
+   // TEST merge_topofstack: stacksize + isSecondTop
+   memset(barray, 0, sizeof(barray));
+   memset(larray, 0, sizeof(larray));
+   memset(parray, 0, sizeof(parray));
+   for (unsigned stacksize = 2; stacksize <= 10; ++stacksize) {
+      for (int type = 0; type < 3; ++type) {
+         uint8_t * left;
+         switch (type) {
+         case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+         case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+         case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+         }
+         for (unsigned isSecondTop = 0; isSecondTop <= 1; ++isSecondTop) {
+            if (isSecondTop && stacksize < 3) continue;
+            for (unsigned s = 1; s <= 3; ++s) {
+               unsigned top = stacksize-1u-isSecondTop;
+               memset(sort.stack, 0, sizeof(sort.stack));
+               sort.stack[top-1].base = left;
+               sort.stack[top-1].len  = s*lengthof(larray)/4;
+               sort.stack[top].base = left + s*lengthof(larray)/4 * sort.elemsize;
+               sort.stack[top].len  = lengthof(larray) - s*lengthof(larray)/4;
+               sort.stack[top+1].base = (void*)s;
+               sort.stack[top+1].len  = SIZE_MAX/s;
+               sort.stacksize = stacksize;
+               switch (type) {
+               case 0: TEST(0 == merge_topofstack_bytes(&sort, isSecondTop)); break;
+               case 1: TEST(0 == merge_topofstack_long(&sort, isSecondTop)); break;
+               case 2: TEST(0 == merge_topofstack_ptr(&sort, isSecondTop)); break;
+               }
+               TEST(sort.stacksize == stacksize-1);
+               TEST(sort.stack[top-1].base == left);
+               TEST(sort.stack[top-1].len  == lengthof(larray));
+               TEST(sort.stack[top+1].base == (void*)s);
+               TEST(sort.stack[top+1].len  == SIZE_MAX/s);
+               if (isSecondTop) {
+                  TEST(sort.stack[top].base == (void*)s);
+                  TEST(sort.stack[top].len  == SIZE_MAX/s);
+               } else {
+                  TEST(sort.stack[top].base == left + s*lengthof(larray)/4 * sort.elemsize);
+                  TEST(sort.stack[top].len  == lengthof(larray) - s*lengthof(larray)/4);
+               }
+               for (unsigned i = 0; i < lengthof(larray); ++i) {
+                  TEST(0 == barray[3*i] && 0 == barray[3*i+1] && 0 == barray[3*i+2]);
+                  TEST(0 == larray[i]);
+                  TEST(0 == parray[i]);
+               }
+            }
+         }
+      }
+   }
+
+   // TEST merge_topofstack: tempsize has size of smaller slice
+   for (unsigned nrpage = 5; nrpage <= 10; nrpage += 5) {
+      vmpage_t vmpage;
+      TEST(0 == init_vmpage(&vmpage, pagesize_vm()*nrpage));
+      for (int type = 0; type < 3; ++type) {
+         switch (type) {
+         case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); break;
+         case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); break;
+         case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); break;
+         }
+         for (unsigned lsize = 1; lsize < nrpage; lsize += nrpage/2) {
+            memset(vmpage.addr, 1, vmpage.size);
+            memset(vmpage.addr + lsize*pagesize_vm(), 0, vmpage.size - lsize*pagesize_vm());
+            sort.stack[0].base = vmpage.addr;
+            sort.stack[0].len  = lsize*pagesize_vm() / sort.elemsize;
+            sort.stack[1].base = vmpage.addr + lsize*pagesize_vm();
+            sort.stack[1].len  = vmpage.size / sort.elemsize - sort.stack[0].len;
+            sort.stacksize = 2;
+            switch (type) {
+            case 0: TEST(0 == merge_topofstack_bytes(&sort, false)); break;
+            case 1: TEST(0 == merge_topofstack_long(&sort, false)); break;
+            case 2: TEST(0 == merge_topofstack_ptr(&sort, false)); break;
+            }
+            TEST(sort.stacksize == 1);
+            TEST(sort.stack[0].base == vmpage.addr);
+            TEST(sort.stack[0].len  == vmpage.size / sort.elemsize);
+            TEST(sort.tempsize == pagesize_vm() * (lsize == 1 ? lsize : nrpage - lsize));
+            TEST(0 == alloctemp_mergesort(&sort, 0));
+         }
+      }
+      TEST(0 == free_vmpage(&vmpage));
+   }
+
+   // TEST establish_stack_invariant: does nothing if invariant ok
+   memset(barray, 0, sizeof(barray));
+   memset(larray, 0, sizeof(larray));
+   memset(parray, 0, sizeof(parray));
+   for (unsigned stackoffset = 0; stackoffset <= lengthof(sort.stack)/2; stackoffset += lengthof(sort.stack)/2) {
+      for (unsigned size = 1; size <= 10; ++size) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            // 3 entries
+            if (stackoffset) {
+               sort.stack[stackoffset-1].base = left;
+               sort.stack[stackoffset-1].len  = (2*size+2);
+            }
+            sort.stack[stackoffset+0].base = left + (2*size+2)*sort.elemsize;
+            sort.stack[stackoffset+0].len  = size+1;
+            sort.stack[stackoffset+1].base = left + (3*size+3)*sort.elemsize;
+            sort.stack[stackoffset+1].len  = size;
+            sort.stacksize = stackoffset+2;
+            switch (type) {
+            case 0: TEST(0 == establish_stack_invariant_bytes(&sort)); break;
+            case 1: TEST(0 == establish_stack_invariant_long(&sort)); break;
+            case 2: TEST(0 == establish_stack_invariant_ptr(&sort)); break;
+            }
+            TEST(sort.stacksize == stackoffset+2);
+            if (stackoffset) {
+               TEST(sort.stack[stackoffset-1].base == left);
+               TEST(sort.stack[stackoffset-1].len  == (2*size+2));
+            }
+            TEST(sort.stack[stackoffset+0].base == left + (2*size+2)*sort.elemsize);
+            TEST(sort.stack[stackoffset+0].len  == size+1);
+            TEST(sort.stack[stackoffset+1].base == left + (3*size+3)*sort.elemsize);
+            TEST(sort.stack[stackoffset+1].len  == size);
+         }
+      }
+   }
+
+   // TEST establish_stack_invariant: merge if top[-2].len <= top[-1].len
+   for (unsigned stackoffset = 0; stackoffset <= lengthof(sort.stack)/3; stackoffset += lengthof(sort.stack)/3) {
+      for (unsigned size = 1; size <= 10; ++size) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            if (stackoffset) {
+               sort.stack[stackoffset-2].base = 0;
+               sort.stack[stackoffset-2].len  = SIZE_MAX;
+               sort.stack[stackoffset-1].base = 0;
+               sort.stack[stackoffset-1].len  = SIZE_MAX/2;
+            }
+            sort.stack[stackoffset+0].base = left;
+            sort.stack[stackoffset+0].len  = size;
+            sort.stack[stackoffset+1].base = left + size*sort.elemsize;
+            sort.stack[stackoffset+1].len  = 9;
+            sort.stacksize = stackoffset+2;
+            switch (type) {
+            case 0: TEST(0 == establish_stack_invariant_bytes(&sort)); break;
+            case 1: TEST(0 == establish_stack_invariant_long(&sort)); break;
+            case 2: TEST(0 == establish_stack_invariant_ptr(&sort)); break;
+            }
+            if (size == 10) {
+               TEST(sort.stacksize == stackoffset+2);
+               TEST(sort.stack[stackoffset+0].base == left);
+               TEST(sort.stack[stackoffset+0].len  == size);
+               TEST(sort.stack[stackoffset+1].base == left + size*sort.elemsize);
+               TEST(sort.stack[stackoffset+1].len  == 9);
+            } else {
+               TEST(sort.stacksize == stackoffset+1);
+               TEST(sort.stack[stackoffset+0].base == left);
+               TEST(sort.stack[stackoffset+0].len  == size+9);
+            }
+         }
+      }
+   }
+
+   // TEST establish_stack_invariant: merge if top[-3].len <= top[-2].len + top[-1].len
+   for (unsigned stackoffset = 0; stackoffset <= lengthof(sort.stack)/2; stackoffset += lengthof(sort.stack)/2) {
+      for (unsigned size = 1; size <= 10; ++size) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            if (stackoffset) {
+               sort.stack[stackoffset-2].base = 0;
+               sort.stack[stackoffset-2].len  = SIZE_MAX;
+               sort.stack[stackoffset-1].base = 0;
+               sort.stack[stackoffset-1].len  = SIZE_MAX/2;
+            }
+            sort.stack[stackoffset+0].base = left;
+            sort.stack[stackoffset+0].len  = size;
+            sort.stack[stackoffset+1].base = left + size*sort.elemsize;
+            sort.stack[stackoffset+1].len  = 5;
+            sort.stack[stackoffset+2].base = left + (5+size)*sort.elemsize;
+            sort.stack[stackoffset+2].len  = 4;
+            sort.stacksize = stackoffset+3;
+            switch (type) {
+            case 0: TEST(0 == establish_stack_invariant_bytes(&sort)); break;
+            case 1: TEST(0 == establish_stack_invariant_long(&sort)); break;
+            case 2: TEST(0 == establish_stack_invariant_ptr(&sort)); break;
+            }
+            if (size == 10) {
+               TEST(sort.stacksize == stackoffset+3);
+               TEST(sort.stack[stackoffset+0].base == left);
+               TEST(sort.stack[stackoffset+0].len  == size);
+               TEST(sort.stack[stackoffset+1].base == left + size*sort.elemsize);
+               TEST(sort.stack[stackoffset+1].len  == 5);
+               TEST(sort.stack[stackoffset+2].base = left + (5+size)*sort.elemsize);
+               TEST(sort.stack[stackoffset+2].len  = 4);
+            } else if (size <= 4) {
+               // first merge [-2] and [-1] which then satisfy invariant ([-3].len <= [-1].len)
+               TEST(sort.stacksize == stackoffset+2);
+               TEST(sort.stack[stackoffset+0].base == left);
+               TEST(sort.stack[stackoffset+0].len  == size+5);
+               TEST(sort.stack[stackoffset+1].base == left + (5+size)*sort.elemsize);
+               TEST(sort.stack[stackoffset+1].len  == 4);
+
+            } else {
+               // first merge [-1] and [-2] and then with [-3]
+               TEST(sort.stacksize == stackoffset+1);
+               TEST(sort.stack[stackoffset+0].base == left);
+               TEST(sort.stack[stackoffset+0].len  == size+9);
+            }
+         }
+      }
+   }
 
    // TEST merge_all
-   // TODO: ?
+   for (unsigned stacksize = 0; stacksize <= 5 && stacksize < lengthof(sort.stack); ++stacksize) {
+      for (unsigned incr = 0; incr <= 1; ++incr) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            unsigned total = 0;
+            for (unsigned i = 0, s = 1 + (1-incr)*(stacksize-1); i < stacksize; ++i, total += s, s += (unsigned)-1 + 2*incr) {
+               sort.stack[i].base = left + total * sort.elemsize;
+               sort.stack[i].len  = s;
+            }
+            sort.stacksize = stacksize;
+            switch (type) {
+            case 0: TEST(0 == merge_all_bytes(&sort)); break;
+            case 1: TEST(0 == merge_all_long(&sort)); break;
+            case 2: TEST(0 == merge_all_ptr(&sort)); break;
+            }
+            if (stacksize == 0) {
+               TEST(sort.stacksize == 0);
+            } else {
+               TEST(sort.stacksize == 1);
+               TEST(sort.stack[0].base == left);
+               TEST(sort.stack[0].len  == total);
+            }
+         }
+      }
+   }
 
    // unprepare
    TEST(0 == free_mergesort(&sort));
@@ -1105,6 +1501,8 @@ ONABORT:
 
 int unittest_sort_mergesort()
 {
+   if (test_presort())        goto ONABORT; // TODO: remove
+   #if 0 // TODO: remove
    if (test_stacksize())      goto ONABORT;
    if (test_memhelper())      goto ONABORT;
    if (test_initfree())       goto ONABORT;
@@ -1117,6 +1515,7 @@ int unittest_sort_mergesort()
    if (test_merge())          goto ONABORT;
    if (test_presort())        goto ONABORT;
    if (test_sort())           goto ONABORT;
+   #endif // TODO: remove
 
    return 0;
 ONABORT:

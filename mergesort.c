@@ -991,13 +991,28 @@ ONABORT:
    return EINVAL;
 }
 
-static void set_key(uintptr_t key, uint8_t * barray, long * larray, void ** parray)
+static void set_value(uintptr_t value, uint8_t * barray, long * larray, void ** parray)
 {
-   parray[0] = (void*) key;
-   larray[0] = (long) key;
-   barray[0] = (uint8_t) (key / 256);
-   barray[1] = (uint8_t) key;
+   parray[0] = (void*) value;
+   larray[0] = (long) value;
+   barray[0] = (uint8_t) (value / 256);
+   barray[1] = (uint8_t) value;
    barray[2] = 0;
+}
+
+static int compare_value(int type, uintptr_t value, unsigned i, uint8_t * barray, long * larray, void ** parray)
+{
+   switch (type) {
+   case 0: TEST(barray[3*i]   == (uint8_t) (value / 256));
+           TEST(barray[3*i+1] == (uint8_t) value );
+           TEST(barray[3*i+2] == 0); break;
+   case 1: TEST(larray[i] == (long) value);  break;
+   case 2: TEST(parray[i] == (void*) value); break;
+   }
+
+   return 0;
+ONABORT:
+   return EINVAL;
 }
 
 static int compare_content(int type, uint8_t * barray, long * larray, void ** parray, unsigned len)
@@ -1034,8 +1049,8 @@ static int test_merge(void)
    // prepare
    init_mergesort(&sort);
    for (unsigned i = 0; i < lengthof(larray); ++i) {
-      uintptr_t key = 5*i;
-      set_key(key, barray+3*i, larray+i, parray+i);
+      uintptr_t val = 5*i;
+      set_value(val, barray+3*i, larray+i, parray+i);
    }
 
    // TEST merge_adjacent_slices, rmerge_adjacent_slices: allocate enough temporary memory
@@ -1092,8 +1107,8 @@ static int test_merge(void)
       for (int reverse = 0; reverse <= 1; ++reverse) {
          for (unsigned off = 0; off <= 1; ++off) {
             for (unsigned i = 0, ki = 0; i < lengthof(larray); ++i, ki += 2) {
-               uintptr_t key = 5u*((ki%lengthof(larray)) + (ki>=lengthof(larray) ? off : (unsigned)!off));
-               set_key(key, barray+3*i, larray+i, parray+i);
+               uintptr_t val = 5u*((ki%lengthof(larray)) + (ki>=lengthof(larray) ? off : (unsigned)!off));
+               set_value(val, barray+3*i, larray+i, parray+i);
             }
             uint8_t * left;
             switch (type) {
@@ -1136,10 +1151,10 @@ static int test_merge(void)
                   unsigned rk = ki + (isswap  ? 0 : blocksize[ti][bi][0]);
                   ki += blocksize[ti][bi][0] + blocksize[ti][bi][1];
                   for (unsigned i = 0; i < blocksize[ti][bi][0]; ++i, ++lk, ++li) {
-                     set_key(5*lk, barray+3*li, larray+li, parray+li);
+                     set_value(5*lk, barray+3*li, larray+li, parray+li);
                   }
                   for (unsigned i = 0; i < blocksize[ti][bi][1]; ++i, ++rk, ++ri) {
-                     set_key(5*rk, barray+3*ri, larray+ri, parray+ri);
+                     set_value(5*rk, barray+3*ri, larray+ri, parray+ri);
                   }
                }
                uint8_t * left;
@@ -1155,6 +1170,9 @@ static int test_merge(void)
          }
       }
    }
+
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: stable
+   // TODO: test stable merge !!
 
    // TEST merge_topofstack: stacksize + isSecondTop
    memset(barray, 0, sizeof(barray));
@@ -1420,18 +1438,165 @@ ONABORT:
 static int test_presort(void)
 {
    mergesort_t sort;
+   void *      parray[64];
+   long        larray[64];
+   uint8_t     barray[3*64];
 
    // prepare
    init_mergesort(&sort);
 
-   // TEST insertsort
-   // TODO: ?
+   // TEST insertsort: stable (equal elements keep position relative to themselves)
+   for (unsigned i = 0; i < lengthof(larray); i += 2) {
+      set_value(1+(i < lengthof(larray)/2), barray+3*i, larray+i, parray+i);
+      set_value(i, barray+3*i+3, larray+i+1, parray+i+1);
+   }
+   for (int type = 0; type < 2; ++type) {
+      uint8_t   len = lengthof(larray)/2;
+      uint8_t * left;
+      switch (type) {
+      case 0: setsortstate(&sort, &test_compare_bytes, 0, 2*3, 1); left = barray; break;
+      case 1: setsortstate(&sort, &test_compare_long, 0, 2*sizeof(long), 1); left = (uint8_t*) larray; break;
+      }
+      switch (type) {
+      case 0: insertsort_bytes(&sort, 1, len, left); break;
+      case 1: insertsort_long(&sort, 1, len, left); break;
+      }
+      for (unsigned i = 0; i < lengthof(larray)/2; i += 2) { // sorted
+         TEST(0 == compare_value(type, 1, i, barray, larray, parray));
+         TEST(0 == compare_value(type, i+lengthof(larray)/2, i+1, barray, larray, parray));
+         TEST(0 == compare_value(type, 2, i+lengthof(larray)/2, barray, larray, parray));
+         TEST(0 == compare_value(type, i, i+lengthof(larray)/2+1, barray, larray, parray));
+      }
+   }
+
+   // TEST insertsort: elements before start are not sorted
+   for (uint8_t len = 1; len < lengthof(larray); ++len) {
+      for (uint8_t start = 1; start <= len; ++start) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            for (unsigned i = 0; i < start; ++i) {
+               set_value(start-i, barray+3*i, larray+i, parray+i);
+            }
+            for (unsigned i = start; i < len; ++i) {
+               set_value(len-i+start, barray+3*i, larray+i, parray+i);
+            }
+            switch (type) {
+            case 0: insertsort_bytes(&sort, start, len, left); break;
+            case 1: insertsort_long(&sort, start, len, left); break;
+            case 2: insertsort_ptr(&sort, start, len, left); break;
+            }
+            for (unsigned i = 0; i < start; ++i) { // not sorted
+               TEST(0 == compare_value(type, start-i, i, barray, larray, parray));
+            }
+            for (unsigned i = start; i < len; ++i) { // sorted
+               TEST(0 == compare_value(type, i+1, i, barray, larray, parray));
+            }
+         }
+      }
+   }
+
+   // TEST insertsort: sort ascending & descending
+   for (unsigned startval = 1; startval <= lengthof(larray); ++startval) {
+      for (unsigned step = 1; step < lengthof(larray); step += 2) {
+         for (int type = 0; type < 3; ++type) {
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+            case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+            case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+            }
+            for (unsigned i = 0; i < lengthof(larray); ++i) {
+               unsigned val = (startval + i * step) % lengthof(larray);
+               set_value(val, barray+3*i, larray+i, parray+i);
+            }
+            switch (type) {
+            case 0: insertsort_bytes(&sort, 1, lengthof(larray), left); break;
+            case 1: insertsort_long(&sort, 1, lengthof(larray), left); break;
+            case 2: insertsort_ptr(&sort, 1, lengthof(larray), left); break;
+            }
+            for (unsigned i = 0; i < lengthof(larray); ++i) {
+               TEST(0 == compare_value(type, i, i, barray, larray, parray));
+            }
+         }
+      }
+   }
 
    // TEST reverse_elements
-   // TODO: ?
+   for (unsigned len = 1; len <= lengthof(larray); ++len) {
+      for (int type = 0; type < 3; ++type) {
+         uint8_t * left;
+         switch (type) {
+         case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+         case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+         case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+         }
+         for (unsigned i = 0; i < len; ++i) {
+            set_value(i, barray+3*i, larray+i, parray+i);
+         }
+         switch (type) {
+         case 0: reverse_elements_bytes(&sort, left, left+(len-1)*sort.elemsize); break;
+         case 1: reverse_elements_long(&sort, left, left+(len-1)*sort.elemsize); break;
+         case 2: reverse_elements_ptr(&sort, left, left+(len-1)*sort.elemsize); break;
+         }
+         for (unsigned i = 0; i < len; ++i) {
+            TEST(0 == compare_value(type, i, len-1-i, barray, larray, parray));
+         }
+      }
+   }
 
-   // TEST count_presorted
-   // TODO: ?
+   // TEST count_presorted: ascending (or equal)
+   for (unsigned len = 2; len <= lengthof(larray); ++len) {
+      for (int type = 0; type < 3; ++type) {
+         uint8_t * left;
+         switch (type) {
+         case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+         case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+         case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+         }
+         for (unsigned i = 0; i < lengthof(larray); ++i) {
+            set_value(1+i/2, barray+3*i, larray+i, parray+i);
+         }
+         if (len < lengthof(larray)) {
+            set_value(len/2, barray+3*len, larray+len, parray+len);
+         }
+         switch (type) {
+         case 0: TEST(len == count_presorted_bytes(&sort, len, left)); break;
+         case 1: TEST(len == count_presorted_long(&sort, len, left)); break;
+         case 2: TEST(len == count_presorted_ptr(&sort, len, left)); break;
+         }
+      }
+   }
+
+   // TEST count_presorted: descending (order is reversed before return)
+   for (unsigned len = 2; len <= lengthof(larray); ++len) {
+      for (int type = 0; type < 3; ++type) {
+         uint8_t * left;
+         switch (type) {
+         case 0: setsortstate(&sort, &test_compare_bytes, 0, 3, 1); left = barray; break;
+         case 1: setsortstate(&sort, &test_compare_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+         case 2: setsortstate(&sort, &test_compare_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
+         }
+         for (unsigned i = 0; i < lengthof(larray); ++i) {
+            set_value(SIZE_MAX-i, barray+3*i, larray+i, parray+i);
+         }
+         if (len < lengthof(larray)) {
+            set_value(SIZE_MAX, barray+3*len, larray+len, parray+len);
+         }
+         switch (type) {
+         case 0: TEST(len == count_presorted_bytes(&sort, len, left)); break;
+         case 1: TEST(len == count_presorted_long(&sort, len, left)); break;
+         case 2: TEST(len == count_presorted_ptr(&sort, len, left)); break;
+         }
+         for (unsigned i = 0; i < len; ++i) {
+            TEST(0 == compare_value(type, SIZE_MAX-i, len-1-i, barray, larray, parray));
+         }
+      }
+   }
 
    // unprepare
    TEST(0 == free_mergesort(&sort));
@@ -1501,7 +1666,9 @@ ONABORT:
 
 int unittest_sort_mergesort()
 {
+   if (test_merge())          goto ONABORT; // TODO: remove
    if (test_presort())        goto ONABORT; // TODO: remove
+   if (test_sort())           goto ONABORT; // TODO: remove
    #if 0 // TODO: remove
    if (test_stacksize())      goto ONABORT;
    if (test_memhelper())      goto ONABORT;

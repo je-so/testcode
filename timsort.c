@@ -3,6 +3,8 @@
 #include "C-kern/api/test/errortimer.h"
 #include "C-kern/api/memory/vm.h"
 #include "C-kern/api/test/unittest.h"
+#include "C-kern/api/time/timevalue.h"
+#include "C-kern/api/time/systimer.h"
 
 typedef int (* test_compare_f) (const void * left, const void * right);
 
@@ -936,7 +938,7 @@ static int test_sort(void)
 {
    vmpage_t       vmpage;
    void        ** a      = 0;
-   const unsigned len    = 50000000;
+   const unsigned len    = 500000;
 
    // prepare
    s_compare_count = 0;
@@ -947,6 +949,7 @@ static int test_sort(void)
       a[i] = (void*) i;
    }
 
+   srandom(123456);
    for (unsigned i = 0; i < len; ++i) {
       unsigned r = ((unsigned) random()) % len;
       void * t = a[r];
@@ -954,17 +957,15 @@ static int test_sort(void)
       a[i] = t;
    }
 
-   time_t start = time(0);
-
-#if 0
-   qsort(a, len, sizeof(void*), &test_compare2);
-#else
+   systimer_t timer;
+   TEST(0 == init_systimer(&timer, sysclock_MONOTONIC));
+   TEST(0 == startinterval_systimer(timer, &(struct timevalue_t){.nanosec = 1000000}));
    listsort(len, a, test_compare);
-#endif
+   uint64_t mergetime_ms;
+   TEST(0 == expirationcount_systimer(timer, &mergetime_ms));
+   TEST(0 == free_systimer(&timer));
 
-   time_t end = time(0);
-
-   printf("time = %u\n", (unsigned) (end - start));
+   printf("time = %u\n", (unsigned) mergetime_ms);
 
    for (uintptr_t i = 0; i < len; ++i) {
       TEST(a[i] == (void*) i);

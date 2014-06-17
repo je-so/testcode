@@ -31,6 +31,8 @@
 #include "C-kern/api/memory/vm.h"
 #ifdef KONFIG_UNITTEST
 #include "C-kern/api/test/unittest.h"
+#include "C-kern/api/time/timevalue.h"
+#include "C-kern/api/time/systimer.h"
 #endif
 
 
@@ -188,6 +190,7 @@ static int setsortstate(
    sort->compare  = cmp;
    sort->cmpstate = cmpstate;
    sort->elemsize = elemsize;
+   sort->stacksize = 0;
    return 0;
 }
 
@@ -436,7 +439,6 @@ static int test_compare_ptr(void * cmpstate, const void * left, const void * rig
 {
    (void) cmpstate;
    ++s_compare_count;
-   // works cause all pointer values are positive integer values ==> no overflow if subtracted
    if ((uintptr_t)left < (uintptr_t)right)
       return -1;
    else if ((uintptr_t)left > (uintptr_t)right)
@@ -464,13 +466,45 @@ static int test_compare_bytes(void * cmpstate, const void * left, const void * r
    return lk - rk;
 }
 
+static int test_comparehalf_ptr(void * cmpstate, const void * left, const void * right)
+{
+   (void) cmpstate;
+   uintptr_t lk = (uintptr_t)left / 2;
+   uintptr_t rk = (uintptr_t)right / 2;
+   if (lk < rk)
+      return -1;
+   else if (lk > rk)
+      return +1;
+   return 0;
+}
 
-static int test_compare2(const void * left, const void * right) // TODO: remove
+static int test_comparehalf_long(void * cmpstate, const void * left, const void * right)
+{
+   (void) cmpstate;
+   long lk = *(const long*)left / 2;
+   long rk = *(const long*)right / 2;
+   if (lk < rk)
+      return -1;
+   else if (lk > rk)
+      return +1;
+   return 0;
+}
+
+static int test_comparehalf_bytes(void * cmpstate, const void * left, const void * right)
+{
+   (void) cmpstate;
+   int lk = ((const uint8_t*)left)[0] * 256 + ((const uint8_t*)left)[1];
+   int rk = ((const uint8_t*)right)[0] * 256 + ((const uint8_t*)right)[1];
+   return lk/2 - rk/2;
+}
+
+
+static int test_compare_qsort(const void * left, const void * right)
 {
    ++s_compare_count;
-   if (*(const uintptr_t*)left < *(const uintptr_t*)right)
+   if (*(const long*)left < *(const long*)right)
       return -1;
-   else if (*(const uintptr_t*)left > *(const uintptr_t*)right)
+   else if (*(const long*)left > *(const long*)right)
       return +1;
    return 0;
 }
@@ -513,14 +547,18 @@ static int test_set(void)
    mergesort_t sort = mergesort_FREE;
 
    // TEST setsortstate
+   sort.stacksize = 1;
    TEST(0 == setsortstate(&sort, &test_compare_ptr, (void*)3, 5, 15/*only used to check for EINVAL*/));
    TEST(sort.compare  == &test_compare_ptr);
    TEST(sort.cmpstate == (void*)3);
    TEST(sort.elemsize == 5);
+   TEST(sort.stacksize == 0);
+   sort.stacksize = 100;
    TEST(0 == setsortstate(&sort, &test_compare_long, (void*)0, 16, SIZE_MAX/16/*only used to check for EINVAL*/));
    TEST(sort.compare  == &test_compare_long);
    TEST(sort.cmpstate == 0);
    TEST(sort.elemsize == 16);
+   TEST(sort.stacksize == 0);
 
    // TEST setsortstate: EINVAL (cmp == 0)
    TEST(EINVAL == setsortstate(&sort, 0, (void*)1, 1, 1));
@@ -1171,8 +1209,56 @@ static int test_merge(void)
       }
    }
 
-   // TEST merge_adjacent_slices, rmerge_adjacent_slices: stable
-   // TODO: test stable merge !!
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: stable 1
+   for (int type = 0; type < 3; ++type) {
+      for (int reverse = 0; reverse <= 1; ++reverse) {
+         for (unsigned isswap = 0; isswap <= 1; ++isswap) {
+            for (unsigned i = 0; i < lengthof(larray)/2; ++i) {
+               set_value(2*i, barray+3*i, larray+i, parray+i);
+            }
+            for (unsigned i = lengthof(larray)/2; i < lengthof(larray); ++i) {
+               set_value(2*i-lengthof(larray)+1, barray+3*i, larray+i, parray+i);
+            }
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_comparehalf_bytes, 0, 3, lengthof(barray)); left = barray; break;
+            case 1: setsortstate(&sort, &test_comparehalf_long, 0, sizeof(long), lengthof(larray)); left = (uint8_t*)larray; break;
+            case 2: setsortstate(&sort, &test_comparehalf_ptr, 0, sizeof(void*), lengthof(parray)); left = (uint8_t*)parray; break;
+            }
+            uint8_t * right = left + lengthof(larray)/2 * sort.elemsize;
+            TEST(0 == merge_slices[type][reverse](&sort, left, lengthof(larray)/2, right, lengthof(larray)/2));
+            for (unsigned i = 0; i < lengthof(larray); ++i) {
+               TEST(0 == compare_value(type, i, i, barray, larray, parray));
+            }
+         }
+      }
+   }
+
+   // TEST merge_adjacent_slices, rmerge_adjacent_slices: stable 2
+   for (int type = 0; type < 3; ++type) {
+      for (int reverse = 0; reverse <= 1; ++reverse) {
+         for (unsigned isswap = 0; isswap <= 1; ++isswap) {
+            for (unsigned i = 0; i < lengthof(larray)/2; ++i) {
+               set_value(2*i+1, barray+3*i, larray+i, parray+i);
+            }
+            for (unsigned i = lengthof(larray)/2; i < lengthof(larray); ++i) {
+               set_value(2*i-lengthof(larray), barray+3*i, larray+i, parray+i);
+            }
+            uint8_t * left;
+            switch (type) {
+            case 0: setsortstate(&sort, &test_comparehalf_bytes, 0, 3, lengthof(barray)); left = barray; break;
+            case 1: setsortstate(&sort, &test_comparehalf_long, 0, sizeof(long), lengthof(larray)); left = (uint8_t*)larray; break;
+            case 2: setsortstate(&sort, &test_comparehalf_ptr, 0, sizeof(void*), lengthof(parray)); left = (uint8_t*)parray; break;
+            }
+            uint8_t * right = left + lengthof(larray)/2 * sort.elemsize;
+            TEST(0 == merge_slices[type][reverse](&sort, left, lengthof(larray)/2, right, lengthof(larray)/2));
+            for (unsigned i = 0; i < lengthof(larray); i += 2) {
+               TEST(0 == compare_value(type, i+1, i, barray, larray, parray));
+               TEST(0 == compare_value(type, i, i+1, barray, larray, parray));
+            }
+         }
+      }
+   }
 
    // TEST merge_topofstack: stacksize + isSecondTop
    memset(barray, 0, sizeof(barray));
@@ -1446,26 +1532,24 @@ static int test_presort(void)
    init_mergesort(&sort);
 
    // TEST insertsort: stable (equal elements keep position relative to themselves)
-   for (unsigned i = 0; i < lengthof(larray); i += 2) {
-      set_value(1+(i < lengthof(larray)/2), barray+3*i, larray+i, parray+i);
-      set_value(i, barray+3*i+3, larray+i+1, parray+i+1);
+   for (unsigned i = 0; i < lengthof(larray); ++i) {
+      set_value(lengthof(larray)-1-i, barray+3*i, larray+i, parray+i);
    }
-   for (int type = 0; type < 2; ++type) {
-      uint8_t   len = lengthof(larray)/2;
+   for (int type = 0; type < 3; ++type) {
       uint8_t * left;
       switch (type) {
-      case 0: setsortstate(&sort, &test_compare_bytes, 0, 2*3, 1); left = barray; break;
-      case 1: setsortstate(&sort, &test_compare_long, 0, 2*sizeof(long), 1); left = (uint8_t*) larray; break;
+      case 0: setsortstate(&sort, &test_comparehalf_bytes, 0, 3, 1); left = barray; break;
+      case 1: setsortstate(&sort, &test_comparehalf_long, 0, sizeof(long), 1); left = (uint8_t*) larray; break;
+      case 2: setsortstate(&sort, &test_comparehalf_ptr, 0, sizeof(void*), 1); left = (uint8_t*) parray; break;
       }
       switch (type) {
-      case 0: insertsort_bytes(&sort, 1, len, left); break;
-      case 1: insertsort_long(&sort, 1, len, left); break;
+      case 0: insertsort_bytes(&sort, 1, lengthof(larray), left); break;
+      case 1: insertsort_long(&sort, 1, lengthof(larray), left); break;
+      case 2: insertsort_ptr(&sort, 1, lengthof(larray), left); break;
       }
-      for (unsigned i = 0; i < lengthof(larray)/2; i += 2) { // sorted
-         TEST(0 == compare_value(type, 1, i, barray, larray, parray));
-         TEST(0 == compare_value(type, i+lengthof(larray)/2, i+1, barray, larray, parray));
-         TEST(0 == compare_value(type, 2, i+lengthof(larray)/2, barray, larray, parray));
-         TEST(0 == compare_value(type, i, i+lengthof(larray)/2+1, barray, larray, parray));
+      for (unsigned i = 0; i < lengthof(larray); i += 2) { // sorted
+         TEST(0 == compare_value(type, i+1, i, barray, larray, parray));
+         TEST(0 == compare_value(type, i, i+1, barray, larray, parray));
       }
    }
 
@@ -1607,69 +1691,233 @@ ONABORT:
    return EINVAL;
 }
 
-static int test_sort(void)
+static void shuffle(uint8_t elemsize, size_t len, uint8_t a[len*elemsize])
 {
-   mergesort_t    sort   = mergesort_FREE;
-   vmpage_t       vmpage;
-   void        ** a      = 0;
-   const unsigned len    = 50000000;
-
-   // prepare
-   TEST(0 == init_vmpage(&vmpage, len * sizeof(void*)));
-   a = (void**) vmpage.addr;
-   s_compare_count = 0;
-
-   for (uintptr_t i = 0; i < len; ++i) {
-      a[i] = (void*) i;
-   }
-
+   assert(elemsize < 16);
+   uint8_t temp[16];
    for (unsigned i = 0; i < len; ++i) {
       unsigned r = ((unsigned) random()) % len;
-      void * t = a[r];
-      a[r] = a[i];
-      a[i] = t;
+      memcpy(temp, &a[elemsize*r], elemsize);
+      memcpy(&a[r*elemsize], &a[i*elemsize], elemsize);
+      memcpy(&a[i*elemsize], temp, elemsize);
+   }
+}
+
+static int test_sort(mergesort_t * sort, const unsigned len, vmpage_t * vmpage)
+{
+   uint8_t * const a = vmpage->addr;
+
+   // prepare
+   s_compare_count = 0;
+
+   // TEST sortblob_mergesort: bytes stable
+   TEST(vmpage->size > 3*65536)
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      a[3*i]   = (uint8_t) (i);
+      a[3*i+1] = 0;
+      a[3*i+2] = (uint8_t) (i/256);
+   }
+   TEST(0 == sortblob_mergesort(sort, 3, 65536, a, &test_compare_bytes, 0));
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      TEST(a[3*i]   == (uint8_t) (i/256));
+      TEST(a[3*i+1] == 0);
+      TEST(a[3*i+2] == (uint8_t)i);
    }
 
-   time_t start = time(0);
+   // TEST sortblob_mergesort: long stable
+   TEST(vmpage->size > 2*sizeof(long)*65536);
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      ((long*)a)[2*i]   = (long) (i & 255);
+      ((long*)a)[2*i+1] = (long) (i / 256);
+   }
+   TEST(0 == sortblob_mergesort(sort, 2*sizeof(long), 65536, a, &test_compare_long, 0));
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      TEST(((long*)a)[2*i]   == (long) (i / 256));
+      TEST(((long*)a)[2*i+1] == (long) (i & 255));
+   }
 
-   extern void qsortx(void *a, size_t n, size_t es, int (*cmp)(const void *, const void *));
-
-#if 0
-   qsortx(a, len, sizeof(void*), &test_compare2);
-#else
-   init_mergesort(&sort);
-   // TEST(0 == sortptr_mergesort(&sort, len, a, &test_compare_ptr, 0));
-   TEST(0 == sortblob_mergesort(&sort, sizeof(void*), len, a, &test_compare_long, 0));
-   TEST(0 == free_mergesort(&sort));
-#endif
-
-   time_t end = time(0);
-
-   printf("time = %u\n", (unsigned) (end - start));
-
+   // TEST sortptr_mergesort: stable
    for (uintptr_t i = 0; i < len; ++i) {
-      TEST(a[i] == (void*) i);
+      ((void**)a)[i] = (void*) i;
+   }
+   shuffle(2*sizeof(void*), len/2, (uint8_t*)a);
+   TEST(0 == sortptr_mergesort(sort, len, (void**)a, &test_comparehalf_ptr, 0));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((void**)a)[i] == (void*) i);
    }
 
-   printf("compare_count = %llu\n", s_compare_count);
+   // TEST sortblob_mergesort: bytes ascending
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      a[2*i]   = (uint8_t) (i/256);
+      a[2*i+1] = (uint8_t) (i);
+   }
+   TEST(0 == sortblob_mergesort(sort, 2, 65536, a, &test_compare_bytes, 0));
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      TEST(a[2*i]   == (uint8_t) (i/256));
+      TEST(a[2*i+1] == (uint8_t) (i));
+   }
 
-   // unprepare
-   a = 0;
-   TEST(0 == free_vmpage(&vmpage));
+   // TEST sortblob_mergesort: long ascending
+   TEST(vmpage->size > 3*sizeof(long)*len);
+   for (uintptr_t i = 0; i < len; ++i) {
+      ((long*)a)[3*i]   = (long) i;
+      ((long*)a)[3*i+1] = (long) i;
+      ((long*)a)[3*i+2] = (long) i;
+   }
+   TEST(0 == sortblob_mergesort(sort, 3*sizeof(long), len, a, &test_compare_long, 0));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((long*)a)[3*i]   == (long) i);
+      TEST(((long*)a)[3*i+1] == (long) i);
+      TEST(((long*)a)[3*i+2] == (long) i);
+   }
+
+   // TEST sortptr_mergesort: ascending
+   for (uintptr_t i = 0; i < len; ++i) {
+      ((void**)a)[i] = (void*) i;
+   }
+   TEST(0 == sortptr_mergesort(sort, len, (void**)a, &test_compare_ptr, 0));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((void**)a)[i] == (void*) i);
+   }
+
+   // TEST sortblob_mergesort: bytes descending
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      a[2*i]   = (uint8_t) ((65535-i)/256);
+      a[2*i+1] = (uint8_t)  (65535-i);
+   }
+   TEST(0 == sortblob_mergesort(sort, 2, 65536, a, &test_compare_bytes, 0));
+   for (uintptr_t i = 0; i < 65536; ++i) {
+      TEST(a[2*i]   == (uint8_t) (i/256));
+      TEST(a[2*i+1] == (uint8_t) (i));
+   }
+
+   // TEST sortblob_mergesort: long descending
+   for (uintptr_t i = 0; i < len; ++i) {
+      ((long*)a)[i] = (long) (len-1-i);
+   }
+   TEST(0 == sortblob_mergesort(sort, sizeof(long), len, a, &test_compare_long, 0));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((long*)a)[i] == (long) i);
+   }
+
+   // TEST sortptr_mergesort: descending
+   for (uintptr_t i = 0; i < len; ++i) {
+      ((void**)a)[i] = (void*) (len-1-i);
+   }
+   TEST(0 == sortptr_mergesort(sort, len, (void**)a, &test_compare_ptr, 0));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((void**)a)[i] == (void*) i);
+   }
+
+   // TEST sortblob_mergesort: bytes random
+   for (unsigned t = 0; t < 1; ++t) {
+      if (t == 0) {
+         for (uintptr_t i = 0; i < 65536; ++i) {
+            a[2*i]   = (uint8_t) (i/256);
+            a[2*i+1] = (uint8_t) (i);
+         }
+      }
+      shuffle(2, 65536, a);
+      TEST(0 == sortblob_mergesort(sort, 2, 65536, a, &test_compare_bytes, 0));
+      for (uintptr_t i = 0; i < 65536; ++i) {
+         TEST(a[2*i]   == (uint8_t) (i/256));
+         TEST(a[2*i+1] == (uint8_t) (i));
+      }
+   }
+
+   // TEST sortblob_mergesort: long random
+   for (unsigned t = 0; t < 2; ++t) {
+      if (t == 0) {
+         for (uintptr_t i = 0; i < len; ++i) {
+            ((long*)a)[2*i]   = (long) i;
+            ((long*)a)[2*i+1] = (long) i;
+         }
+      }
+      shuffle(2*sizeof(long), len, a);
+      TEST(0 == sortblob_mergesort(sort, 2*sizeof(long), len, a, &test_compare_long, 0));
+      for (uintptr_t i = 0; i < len; ++i) {
+         TEST(((long*)a)[2*i]   == (long) i);
+         TEST(((long*)a)[2*i+1] == (long) i);
+      }
+   }
+
+   // TEST sortptr_mergesort: random
+   for (unsigned t = 0; t < 2; ++t) {
+      if (t == 0) {
+         for (uintptr_t i = 0; i < len; ++i) {
+            ((void**)a)[i] = (void*) i;
+         }
+      }
+      shuffle(sizeof(void*), len, a);
+      TEST(0 == sortptr_mergesort(sort, len, (void**)a, &test_compare_ptr, 0));
+      for (uintptr_t i = 0; i < len; ++i) {
+         TEST(((void**)a)[i] == (void*) i);
+      }
+   }
 
    return 0;
 ONABORT:
-   free_mergesort(&sort);
-   if (a) free_vmpage(&vmpage);
+   return EINVAL;
+}
+
+static int test_measuretime(mergesort_t * sort, const unsigned len, vmpage_t * vmpage)
+{
+   uint8_t * const a     = vmpage->addr;
+   systimer_t      timer = systimer_FREE;
+
+   // prepare
+   s_compare_count = 0;
+
+   // TEST sortptr_mergesort: compare against quicksort
+   for (uintptr_t i = 0; i < len; ++i) {
+      ((long*)a)[i] = (long) i;
+   }
+   srandom(123458);
+   shuffle(sizeof(long), len, a);
+   TEST(0 == init_systimer(&timer, sysclock_MONOTONIC));
+   TEST(0 == startinterval_systimer(timer, &(struct timevalue_t){.nanosec = 1000000}));
+   s_compare_count = 0;
+   TEST(0 == sortblob_mergesort(sort, sizeof(long), len, a, &test_compare_long, 0));
+   uint64_t mergetime_ms;
+   uint64_t mergecount = s_compare_count;
+   TEST(0 == expirationcount_systimer(timer, &mergetime_ms));
+   for (uintptr_t i = 0; i < len; ++i) {
+      TEST(((long*)a)[i] == (long) i);
+   }
+   srandom(123458);
+   shuffle(sizeof(long), len, a);
+   TEST(0 == startinterval_systimer(timer, &(struct timevalue_t){.nanosec = 1000000}));
+   s_compare_count = 0;
+   qsort(a, len, sizeof(long), test_compare_qsort);
+   uint64_t qsorttime_ms;
+   TEST(0 == expirationcount_systimer(timer, &qsorttime_ms));
+   // mergesort needs less compares !!
+   if (mergecount > s_compare_count) {
+      logf_unittest("** mergesort uses more compares than quicksort ** ") ;
+   }
+   // mergesort beats quicksort sometimes
+   if (qsorttime_ms < mergetime_ms) {
+      logf_unittest("** mergesort is slower than quicksort ** ") ;
+   }
+
+   // unprepare
+   TEST(0 == free_systimer(&timer));
+
+   return 0;
+ONABORT:
+   free_systimer(&timer);
    return EINVAL;
 }
 
 int unittest_sort_mergesort()
 {
-   if (test_merge())          goto ONABORT; // TODO: remove
-   if (test_presort())        goto ONABORT; // TODO: remove
-   if (test_sort())           goto ONABORT; // TODO: remove
-   #if 0 // TODO: remove
+   const unsigned len = 300000;
+   vmpage_t       vmpage;
+   mergesort_t    sort;
+
+   init_mergesort(&sort);
+   TEST(0 == init_vmpage(&vmpage, len * (4*sizeof(void*))));
+
    if (test_stacksize())      goto ONABORT;
    if (test_memhelper())      goto ONABORT;
    if (test_initfree())       goto ONABORT;
@@ -1681,11 +1929,16 @@ int unittest_sort_mergesort()
    if (test_rsearchgreater()) goto ONABORT;
    if (test_merge())          goto ONABORT;
    if (test_presort())        goto ONABORT;
-   if (test_sort())           goto ONABORT;
-   #endif // TODO: remove
+   if (test_sort(&sort, len/10, &vmpage))       goto ONABORT;
+   if (test_measuretime(&sort, len, &vmpage))   goto ONABORT;
+
+   TEST(0 == free_mergesort(&sort));
+   TEST(0 == free_vmpage(&vmpage));
 
    return 0;
 ONABORT:
+   free_vmpage(&vmpage);
+   free_mergesort(&sort);
    return EINVAL;
 }
 

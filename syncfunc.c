@@ -32,11 +32,6 @@
 #endif
 
 
-// section: syncfunc_t
-
-// group: lifetime
-
-
 // section: Functions
 
 // group: test
@@ -110,41 +105,31 @@ static int test_getset(void)
 
    // TEST setall_syncfunc: syncfunc_opt_ALL
    memset(&sfunc, 0, sizeof(sfunc));
-   setall_syncfunc(&sfunc, syncfunc_opt_ALL, &test_execmd_sf, (void*)2, (void*)3, ((syncwait_node_t) { (void*)4, (void*)5 }) );
+   setall_syncfunc(&sfunc, syncfunc_opt_ALL, &test_execmd_sf, (void*)2, (void*)3);
    TEST(sfunc.mainfct   == &test_execmd_sf);
    TEST(sfunc.state     == (void*)2);
    TEST(sfunc.contlabel == (void*)3);
-   TEST(sfunc.caller.next == (void*)4);
-   TEST(sfunc.caller.prev == (void*)5);
 
    // TEST setall_syncfunc: combination of flags
    for (syncfunc_opt_e opt1 = 0; opt1 <= syncfunc_opt_STATE; opt1 += syncfunc_opt_STATE) {
       for (syncfunc_opt_e opt2 = 0; opt2 <= syncfunc_opt_CONTLABEL; opt2 += syncfunc_opt_CONTLABEL) {
-         for (syncfunc_opt_e opt3 = 0; opt3 <= syncfunc_opt_CALLER; opt3 += syncfunc_opt_CALLER) {
-            memset(&sfunc, 0, sizeof(sfunc));
-            setall_syncfunc(&sfunc, opt1|opt2|opt3, &test_execmd_sf, (void*)2, (void*)3, ((syncwait_node_t) { (void*)4, (void*)5 }) );
-            TEST(sfunc.mainfct == &test_execmd_sf);
-            syncfunc_t * sf2 = &sfunc;
-            if (opt1) {
-               TEST(sfunc.state == (void*)2);
-            } else {
-               sf2 = (syncfunc_t *) ((uint8_t*)sf2 - sizeof(void*));
-            }
-            if (opt2) {
-               TEST(sf2->contlabel == (void*)3);
-            } else {
-               sf2 = (syncfunc_t *) ((uint8_t*)sf2 - sizeof(void*));
-            }
-            if (opt3) {
-               TEST(sf2->caller.next == (void*)4);
-               TEST(sf2->caller.prev == (void*)5);
-            } else {
-               sf2 = (syncfunc_t *) ((uint8_t*)sf2 - sizeof(syncwait_node_t));
-            }
-            while (sf2 != &sfunc) {
-               TEST(0 == * (void**) ((uint8_t*)sf2 + sizeof(syncfunc_t)));
-               sf2 = (syncfunc_t *) ((uint8_t*)sf2 + sizeof(void*));
-            }
+         memset(&sfunc, 0, sizeof(sfunc));
+         setall_syncfunc(&sfunc, opt1|opt2, &test_execmd_sf, (void*)2, (void*)3);
+         TEST(sfunc.mainfct == &test_execmd_sf);
+         syncfunc_t * sf2 = &sfunc;
+         if (opt1) {
+            TEST(sfunc.state == (void*)2);
+         } else {
+            sf2 = (syncfunc_t *) ((uint8_t*)sf2 - sizeof(void*));
+         }
+         if (opt2) {
+            TEST(sf2->contlabel == (void*)3);
+         } else {
+            sf2 = (syncfunc_t *) ((uint8_t*)sf2 - sizeof(void*));
+         }
+         while (sf2 != &sfunc) {
+            TEST(0 == * (void**) ((uint8_t*)sf2 + sizeof(syncfunc_t)));
+            sf2 = (syncfunc_t *) ((uint8_t*)sf2 + sizeof(void*));
          }
       }
    }

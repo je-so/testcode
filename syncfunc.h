@@ -29,10 +29,9 @@
 #ifndef CKERN_TASK_SYNCFUNC_HEADER
 #define CKERN_TASK_SYNCFUNC_HEADER
 
-#include "C-kern/api/task/syncwait_node.h"
-
 // forward
 struct syncrunner_t;
+struct syncwait_condition_t;
 
 /* typedef: struct syncfunc_t
  * Export <syncfunc_t> into global namespace. */
@@ -62,25 +61,40 @@ typedef int (* syncfunc_f) (syncfunc_param_t * sfparam, uint32_t sfcmd);
  * Describes the meaning of the sfcmd (sync-func-command) parameter.
  * It is expected as second parameter sfcmd in sync functions with signature <syncfunc_f>.
  *
- * syncfunc_cmd_RUN         - The execution should start from the beginning or at some fixed place.
- * syncfunc_cmd_CONTINUE    - The execution should continue at <syncfunc_t.contlabel>.
- * syncfunc_cmd_EXIT        - Receiving this command means that the function should free all resources and
- *                            return <syncfunc_cmd_EXIT> to indicate end of execution.
- *                            The value returned in <syncfunc_param_t.retcode> is used as return value of the function.
- *                            If <syncfunc_cmd_TERMINATE> is returned the function indicates that it
- *                            has not completed but the value in <syncfunc_param_t.retcode> is also used as return code.
- *                            Any other returned value is interpreted as <syncfunc_cmd_EXIT>.
- * syncfunc_cmd_TERMINATE   - Receiving this command means either an outside error occurred which made it impossible
- *                            to continue or another function requested to terminate this function. Either way
- *                            the called function should free all resources and return <syncfunc_cmd_TERMINATE> or
- *                            <syncfunc_cmd_EXIT>. Any other returned value is interpreted as <syncfunc_cmd_TERMINATE>.
- *                            The value stored in <syncfunc_param_t.retcode> is used as return value of the function.
+ * syncfunc_cmd_RUN         - In: Receiving this command means execution should start from the beginning
+ *                            or at some fixed place.
+ *                            Out: Returning this value means that <syncfunc_t.contlabel> is invalid and
+ *                            at the next invocation of this sync function <syncfunc_cmd_RUN> is given as command.
+ * syncfunc_cmd_CONTINUE    - In: Receiving this command means the execution should continue at <syncfunc_t.contlabel>.
+ *                            Out: Returning this value means that the value set in <syncfunc_t.contlabel> is valid
+ *                            and the execution should continue at contlabel the next time this function is called.
+ * syncfunc_cmd_EXIT        - In: Receiving this command means an outside error occurred which made it impossible
+ *                            to continue. This function should free all resources and return. Any returned value
+ *                            is interpreted as <syncfunc_cmd_EXIT>. The value set in <syncfunc_param_t.retcode>
+ *                            is used as return value.
+ *                            Out: Returning this value indicates that execution has ended with or without an error.
+ *                            The value set in <syncfunc_param_t.retcode> is used as return value and a value != 0 indicates
+ *                            an error. Any execution context for this function is removed from <syncrunner_t>.
+ *                            The function is never called again and if there is a function waiting for this function to exit
+ *                            it is woken up.
+ * syncfunc_cmd_WAIT       -  In: This command is never recieved.
+ *                            Out: Returning this value indicates that execution should halt until a condition is met.
+ *                            The value <syncfunc_param_t.contlabel> must be set to indicate where execution should
+ *                            continue. Also the <syncfunc_param_t.condition> must be set to the address of the condition
+ *                            for which this function should be waiting.
+ *                            If <syncfunc_param_t.condition> is set to 0 the implicit condition is to wait for
+ *                            exit of the last created <syncfunc_t>.
+ *                            If the condition is true the function is woken up with command <syncfunc_cmd_CONTINUE>
+ *                            and <syncfunc_param_t.waiterr> set to 0. In case condition was 0 <syncfunc_param_t.retcode>
+ *                            carries the return code of the exited function.
+ *                            If an out of memory error occurred and the function could not be added to the wait list
+ *                            of the condition variable the variable <syncfunc_param_t.waiterr> is set to ENOMEM or
+ *                            another error value > 0.
  * */
 enum syncfunc_cmd_e {
    syncfunc_cmd_RUN,
    syncfunc_cmd_CONTINUE,
-   syncfunc_cmd_EXIT,
-   syncfunc_cmd_TERMINATE
+   syncfunc_cmd_EXIT
 } ;
 
 typedef enum syncfunc_cmd_e syncfunc_cmd_e;
@@ -91,7 +105,7 @@ enum syncfunc_opt_e {
    syncfunc_opt_NONE      = 0,
    syncfunc_opt_STATE     = 1,
    syncfunc_opt_CONTLABEL = 2,
-   syncfunc_opt_CALLER    = 4
+   syncfunc_opt_ALL       = 3
 };
 
 typedef enum syncfunc_opt_e syncfunc_opt_e;
@@ -116,23 +130,34 @@ struct syncfunc_param_t {
     * This value serves only as in parameter. */
    struct syncrunner_t * syncrun;
    /* variable: state
-    * Value of <syncfunc_t.state>.
     * This value serves as inout parameter;
-    * the value stored after return is provided as input to the next invocation of the function.
-    * In first entry this value is 0 - except if during creation of a new <syncfunc_t> a value
-    * has been set - see <syncrunner_t>. */
+    * The value stored after return is provided as input to the next invocation of the function. */
    void *      state;
    /* variable: contlabel
-    * Value of <syncfunc_t.contlabel>.
     * This value serves as inout parameter.
     * The value is only valid on function entry if parameter sfcmd is set to <syncfunc_cmd_CONTINUE>.
-    * The value stored after return is only used if the return value of the function is <syncfunc_cmd_CONTINUE>. */
+    * The value stored after return is only used if the return value of the function is <syncfunc_cmd_CONTINUE>
+    * or <syncfunc_cmd_WAIT>. */
    void *      contlabel;
    /* variable: retcode
-    * The value serves as return value of the function.
-    * This value is an out parameter.
-    * It is only used if the returned value of the function is either <syncfunc_cmd_EXIT> or <syncfunc_cmd_TERMINATE>. */
+    * The value is the return value of the function or retcode of waited for function.
+    * It serves as an inout parameter.
+    * It is only used as out value if the return value of the function is <syncfunc_cmd_EXIT>.
+    * The in value is only valid if the last execution of the function returned with <syncfunc_cmd_WAIT>
+    * and <condition> was set to 0 (waiting for exit of a function). */
    int         retcode;
+   /* variable: condition
+    * The value is the condition the function wants to wait for.
+    * This value serves as out parameter.
+    * It is only used if the returned value of the function is <syncfunc_cmd_WAIT>. */
+   struct syncwait_condition_t
+             * condition;
+   /* variable: waiterr
+    * The value is the result of a wait operation.
+    * This value serves as in parameter.
+    * It is only valid if the last execution of the function returned with <syncfunc_cmd_WAIT>.
+    * A value != 0 indicates that the wait operation failed and waiterr is the error code. */
+    int        waiterr;
 };
 
 // group: lifetime
@@ -140,7 +165,7 @@ struct syncfunc_param_t {
 /* define: syncfunc_param_FREE
  * Static initializer. */
 #define syncfunc_param_FREE \
-         { 0, 0, 0, 0 }
+         { 0, 0, 0, 0, 0, 0 }
 
 
 /* struct: syncfunc_t
@@ -151,7 +176,7 @@ struct syncfunc_param_t {
  * to data structures with locks (see <mutex_t>).
  *
  * Optional Data Fields:
- * The variables <state>, <contlabel>, and <caller> are all optional.
+ * The variables <state>, and <contlabel> are optional.
  *
  * In the simplest case a function is described with only <mainfct>.
  * Fields which contains the value 0 are considered invalid.
@@ -202,12 +227,6 @@ struct syncfunc_t {
     * >    ...
     * > } */
    void *      contlabel; // OPTIONAL
-   /* variable: caller
-    * Points to the caller of this function which waits for the end of execution.
-    * This double linked allows to build a chain of functions waiting for end of
-    * a called function (call stack). The double linked list allows to move a waiting
-    * function in memory (compact memory) and to adapt other nodes in the chain. */
-   syncwait_node_t   caller; // OPTIONAL
 };
 
 // group: lifetime
@@ -215,7 +234,7 @@ struct syncfunc_t {
 /* define: syncfunc_FREE
  * Static initializer. */
 #define syncfunc_FREE \
-         { 0, 0, 0, syncwait_node_FREE }
+         { 0, 0, 0 }
 
 // group: query
 
@@ -232,6 +251,16 @@ void * getstate_syncfunc(const syncfunc_param_t * sfparam);
  * See also <syncfunc_opt_e>. */
 size_t getsize_syncfunc(const syncfunc_opt_e optfields);
 
+/* function: optstate_syncfunc
+ * Returns value of optional <state> field or 0.
+ * The bitfield optfields determines which fields are available. */
+void * optstate_syncfunc(const syncfunc_t * sfunc, const syncfunc_opt_e optfields);
+
+/* function: optcontlabel_syncfunc
+ * Returns value of optional <contlabel> field or 0.
+ * The bitfield optfields determines which fields are available. */
+void * optcontlabel_syncfunc(const syncfunc_t * sfunc, const syncfunc_opt_e optfields);
+
 // group: update
 
 /* function: setstate_syncfunc
@@ -246,13 +275,13 @@ void setstate_syncfunc(syncfunc_param_t * sfparam, void * new_state);
  * Sets alle fields in <syncfunc_t> to the provided values.
  * The parameter optfields encodes which optional fields are available.
  * Unavailable fields are ignored. */
-void setall_syncfunc(syncfunc_t * sfunc, const syncfunc_opt_e optfields, syncfunc_f mainfct, void * state, void * contlabel, const syncwait_node_t caller);
+void setall_syncfunc(syncfunc_t * sfunc, const syncfunc_opt_e optfields, syncfunc_f mainfct, void * state, void * contlabel);
 
 // group: implementation-support
 // Macros which makes implementing a <syncfunc_f> possible.
 
 /* function: execmd_syncfunc
- * Jumps to onrun, or to onexit, to onterminate, or continues execution where the previous execution left off.
+ * Jumps to onrun, or to onexit, or continues execution where the previous execution left off.
  * The first and second parameter should be same as in <syncfunc_f>.
  * The behaviour depends on value of sfcmd. The first parameter is only used if sfcmd equals <syncfunc_cmd_CONTINUE>.
  *
@@ -262,16 +291,11 @@ void setall_syncfunc(syncfunc_t * sfunc, const syncfunc_opt_e optfields, syncfun
  * syncfunc_cmd_CONTINUE    - The execution continues at a place remembered during
  *                            exit of the function's last execution cycle.
  * syncfunc_cmd_EXIT        - The execution continues at label onexit.
- *                            The code at label onexit should try to end execution, free all resources,
- *                            and return the value <syncfunc_cmd_EXIT> or <syncfunc_cmd_TERMINATE>.
- *                            The returned value <syncfunc_cmd_EXIT> indicates that execution has been completed.
- * syncfunc_cmd_TERMINATE   - The execution continues at label onterminate.
- *                            The code at label onterminate should try to free all resources, abort any transactions
- *                            and return the value <syncfunc_cmd_TERMINATE> or <syncfunc_cmd_EXIT>.
- *                            The returned value <syncfunc_cmd_EXIT> indicates that execution has been completed.
+ *                            The code at this label should try to free all resources and call <exit_syncfunc>.
+ *                            Or set the return code in <syncfunc_param_t.retcode> and return <syncfunc_cmd_EXIT>.
  * All other values         - The function does nothing and execution continues after it.
  * */
-void execmd_syncfunc(const syncfunc_param_t * sfparam, uint32_t sfcmd, LABEL onrun, LABEL onexit, IDNAME onterminate);
+void execmd_syncfunc(const syncfunc_param_t * sfparam, uint32_t sfcmd, LABEL onrun, IDNAME onexit);
 
 /* function: yield_syncfunc
  * Yields processor to other <syncfunc_t> in the same thread.
@@ -281,18 +305,26 @@ void yield_syncfunc(const syncfunc_param_t * sfparam);
 
 /* function: exit_syncfunc
  * Exits this function and returns retcode as return code.
- * The caller assumes that computation ended normally.
  * Convention: A retcode of 0 means OK, values > 0 correspond to system errors and application errors. */
 void exit_syncfunc(const syncfunc_param_t * sfparam, int retcode);
 
-/* function: terminate_syncfunc
- * Terminates this function and returns retcode as return code.
- * The caller assumes that computation terminated before
- * execution could produce the desired result.
- * Convention: A retcode of 0 means that the function received command <syncfunc_cmd_TERMINATE>,
- * a retcode != 0 means the function terminated itself cause of the error returned in retcode.
- * Values > 0 correspond to system and application errors. */
-void terminate_syncfunc(const syncfunc_param_t * sfparam, int retcode);
+/* function: wait_syncfunc
+ * Waits until condition is true.
+ * A return value of 0 indicates success.
+ * The return value ENOMEM (or any other value != 0) means that
+ * not enough resources were available to add the caller to the
+ * wait list if condition. */
+int wait_syncfunc(const syncfunc_param_t * sfparam, struct syncwait_condition_t * condition);
+
+/* function: waitexit_syncfunc
+ * Wait until the last created sync function exits.
+ * The out param retcode is set to the return code of the function (see <exit_syncfunc>).
+ * It is also set in case waitexit_syncfunc does not succeed.
+ * This function returns 0 in case of success.
+ * It returns value ENOMEM (or any other value != 0) to state that there were
+ * not enough resources to add the caller to the wait list of the last created
+ * sync function (see <syncrunner_t>). */
+int waitexit_syncfunc(const syncfunc_param_t * sfparam, /*out;err*/int * retcode);
 
 
 
@@ -300,7 +332,7 @@ void terminate_syncfunc(const syncfunc_param_t * sfparam, int retcode);
 
 /* define: execmd_syncfunc
  * Implements <syncfunc_t.execmd_syncfunc>. */
-#define execmd_syncfunc(sfparam, sfcmd, onrun, onexit, onterminate) \
+#define execmd_syncfunc(sfparam, sfcmd, onrun, onexit) \
          ( __extension__ ({               \
          switch ( (syncfunc_cmd_e)        \
                   (sfcmd)) {              \
@@ -312,30 +344,29 @@ void terminate_syncfunc(const syncfunc_param_t * sfparam, int retcode);
          case syncfunc_cmd_EXIT:          \
             (void) (sfparam);             \
             goto onexit;                  \
-         case syncfunc_cmd_TERMINATE:     \
-            (void) (sfparam);             \
-            goto onterminate;             \
+         default: /*ignoring all other*/  \
+            break;                        \
          }}))
 
 /* define: exit_syncfunc
  * Implements <syncfunc_t.exit_syncfunc>. */
 #define exit_syncfunc(sfparam, _rc) \
-         {                             \
-            (sfparam)->retcode = (_rc);  \
-            return syncfunc_cmd_EXIT;  \
+         {                                \
+            (sfparam)->retcode = (_rc);   \
+            return syncfunc_cmd_EXIT;     \
          }
 
 /* define: getsize_syncfunc
  * Implements <syncfunc_t.getsize_syncfunc>. */
 #define getsize_syncfunc(optfields) \
-         (  sizeof(syncfunc_f)                  \
+         ( __extension__ ({                     \
+            syncfunc_opt_e _opt = (optfields);  \
+            sizeof(syncfunc_f)                  \
             + ((_opt & syncfunc_opt_STATE)      \
-              ? sizeof(void*) : 0);             \
+              ? sizeof(void*) : 0)              \
             + ((_opt & syncfunc_opt_CONTLABEL)  \
               ? sizeof(void*) : 0);             \
-            + ((_opt & syncfunc_opt_CALLER)     \
-              ? sizeof(syncwait_node_t) : 0)    \
-         )
+         }))
 
 
 /* define: getstate_syncfunc
@@ -343,27 +374,45 @@ void terminate_syncfunc(const syncfunc_param_t * sfparam, int retcode);
 #define getstate_syncfunc(sfparam) \
          ((sfparam)->state)
 
+/* define: optcontlabel_syncfunc
+ * Implements <syncfunc_t.optcontlabel_syncfunc>. */
+#define optcontlabel_syncfunc(sfunc, optfields) \
+         ( __extension__ ({                     \
+            void ** _sf = &(sfunc)->state;      \
+            syncfunc_opt_e _opt = (optfields);  \
+            if (_opt & syncfunc_opt_STATE) {    \
+               ++ _sf;                          \
+            }                                   \
+            (_opt & syncfunc_opt_CONTLABEL)     \
+            ? *_sf : (void*)0;                  \
+         }))
+
+/* define: optstate_syncfunc
+ * Implements <syncfunc_t.optstate_syncfunc>. */
+#define optstate_syncfunc(sfunc, optfields) \
+         ( __extension__ ({                     \
+            void ** _sf = &(sfunc)->state;      \
+            syncfunc_opt_e _opt = (optfields);  \
+            (_opt & syncfunc_opt_STATE)         \
+            ? *_sf : (void*)0;                  \
+         }))
+
 /* define: setall_syncfunc
  * Implements <syncfunc_t.setall_syncfunc>. */
-#define setall_syncfunc(sfunc, optfields, mainfct, state, contlabel, caller) \
+#define setall_syncfunc(sfunc, optfields, _mainfct, _state, _contlabel) \
          do {                                   \
-            void * _sf = (sfunc);               \
+            syncfunc_t * _sf0 = (sfunc);        \
+            void ** _sf = (void**)_sf0;         \
             syncfunc_opt_e _opt = (optfields);  \
-            *(syncfunc_f**)_sf = mainfct;       \
-            _sf = (uint8_t*)_sf                 \
-                + sizeof(syncfunc_f);           \
+            _sf0->mainfct = _mainfct;           \
+            _sf = (void**)                      \
+                  &((syncfunc_t*)_sf)->state;   \
             if (_opt & syncfunc_opt_STATE) {    \
-               *(void**)_sf = state;            \
-               _sf = (uint8_t*)_sf              \
-                   + sizeof(void*);             \
+               *_sf = _state;                   \
+               ++_sf;                           \
             }                                   \
             if (_opt & syncfunc_opt_CONTLABEL){ \
-               *(void**)_sf = contlabel;        \
-               _sf = (uint8_t*)_sf              \
-                   + sizeof(void*);             \
-            }                                   \
-            if (_opt & syncfunc_opt_CALLER) {   \
-               *(syncwait_node_t*)_sf = caller; \
+               *_sf = _contlabel;               \
             }                                   \
          } while(0)
 
@@ -372,13 +421,30 @@ void terminate_syncfunc(const syncfunc_param_t * sfparam, int retcode);
 #define setstate_syncfunc(sfparam, new_state) \
          do { (sfparam)->state = (new_state) ; } while(0)
 
-/* define: terminate_syncfunc
- * Implements <syncfunc_t.terminate_syncfunc>. */
-#define terminate_syncfunc(sfparam, _rc) \
-         {                                   \
-            (sfparam)->retcode = (_rc);      \
-            return syncfunc_cmd_TERMINATE;   \
-         }
+/* define: wait_syncfunc
+ * Implements <syncfunc_t.wait_syncfunc>. */
+#define wait_syncfunc(sfparam, _condition) \
+         ( __extension__ ({                                 \
+            __label__ continue_after_wait;                  \
+            (sfparam)->condition = _condition;              \
+            (sfparam)->contlabel = &&continue_after_wait;   \
+            return syncfunc_cmd_WAIT;                       \
+            continue_after_wait: ;                          \
+            (sfparam)->waiterr;                             \
+         }))
+
+/* define: waitexit_syncfunc
+ * Implements <syncfunc_t.waitexit_syncfunc>. */
+#define waitexit_syncfunc(sfparam, _retcode) \
+         ( __extension__ ({                                 \
+            __label__ continue_after_wait;                  \
+            (sfparam)->condition = 0;                       \
+            (sfparam)->contlabel = &&continue_after_wait;   \
+            return syncfunc_cmd_WAIT;                       \
+            continue_after_wait: ;                          \
+            *(_retcode) = (sfparam)->retcode;               \
+            (sfparam)->waiterr;                             \
+         }))
 
 /* define: yield_syncfunc
  * Implements <syncfunc_t.yield_syncfunc>. */

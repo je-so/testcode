@@ -31,6 +31,62 @@
 #include "C-kern/api/test/unittest.h"
 #endif
 
+// section: syncfunc_t
+
+// group: update
+
+void relink_syncfunc(syncfunc_t * sfunc, const size_t structsize)
+{
+   const int iswaitfor = (sfunc->optfields & syncfunc_opt_WAITFOR);
+   if (iswaitfor && !(sfunc->optfields & syncfunc_opt_WAITRESULT)) {
+      synclink_t * waitfor = addrwaitfor_syncfunc(sfunc);
+      if (isvalid_synclink(waitfor)) {
+         relink_synclink(waitfor);
+      }
+   }
+
+   if (0 != (sfunc->optfields & syncfunc_opt_WAITLIST)) {
+      synclinkd_t * waitlist = addrwaitlist_syncfunc(sfunc, iswaitfor);
+      if (isvalid_synclinkd(waitlist)) {
+         relink_synclinkd(waitlist);
+      }
+   }
+
+   if (0 != (sfunc->optfields & syncfunc_opt_CALLER)) {
+      const int isstate = (sfunc->optfields & syncfunc_opt_STATE);
+      synclink_t * caller = addrcaller_syncfunc(sfunc, structsize, isstate);
+      if (isvalid_synclink(caller)) {
+         relink_synclink(caller);
+      }
+   }
+}
+
+void unlink_syncfunc(syncfunc_t * sfunc, const size_t structsize)
+{
+   const int iswaitfor = (sfunc->optfields & syncfunc_opt_WAITFOR);
+   if (iswaitfor && !(sfunc->optfields & syncfunc_opt_WAITRESULT)) {
+      synclink_t * waitfor = addrwaitfor_syncfunc(sfunc);
+      if (isvalid_synclink(waitfor)) {
+         unlink_synclink(waitfor);
+      }
+   }
+
+   if (0 != (sfunc->optfields & syncfunc_opt_WAITLIST)) {
+      synclinkd_t * waitlist = addrwaitlist_syncfunc(sfunc, iswaitfor);
+      if (isvalid_synclinkd(waitlist)) {
+         unlink_synclinkd(waitlist);
+      }
+   }
+
+   if (0 != (sfunc->optfields & syncfunc_opt_CALLER)) {
+      const int isstate = (sfunc->optfields & syncfunc_opt_STATE);
+      synclink_t * caller = addrcaller_syncfunc(sfunc, structsize, isstate);
+      if (isvalid_synclink(caller)) {
+         unlink_synclink(caller);
+      }
+   }
+}
+
 
 // section: Functions
 
@@ -40,10 +96,20 @@
 
 static int test_sfparam(void)
 {
+   struct syncrunner_t *  R = (struct syncrunner_t*)1;
    syncfunc_param_t sfparam = syncfunc_param_FREE;
 
    // TEST syncfunc_param_FREE
    TEST(0 == sfparam.syncrun);
+   TEST(0 == sfparam.contoffset);
+   TEST(0 == sfparam.state);
+   TEST(0 == sfparam.condition);
+   TEST(0 == sfparam.waiterr);
+   TEST(0 == sfparam.retcode);
+
+   // TEST syncfunc_param_INIT
+   sfparam = (syncfunc_param_t) syncfunc_param_INIT(R);
+   TEST(R == sfparam.syncrun);
    TEST(0 == sfparam.contoffset);
    TEST(0 == sfparam.state);
    TEST(0 == sfparam.condition);
@@ -56,28 +122,47 @@ ONERR:
 
 }
 
+// forward
+static int test_start_sf(syncfunc_param_t * sfparam, uint32_t sfcmd);
+
 static int test_initfree(void)
 {
-   syncfunc_t func = syncfunc_FREE;
+   syncfunc_t sfunc = syncfunc_FREE;
 
    // TEST syncfunc_FREE
-   TEST(0 == func.mainfct);
-   TEST(0 == func.contoffset);
-   TEST(0 == func.optfields);
-   TEST(0 == func.state);
+   TEST(0 == sfunc.mainfct);
+   TEST(0 == sfunc.contoffset);
+   TEST(0 == sfunc.optfields);
+   TEST(0 == sfunc.waitfor.link);
+   TEST(0 == sfunc.waitlist.prev);
+   TEST(0 == sfunc.waitlist.next);
+   TEST(0 == sfunc.caller.link);
+   TEST(0 == sfunc.state);
+
+   // TEST init_syncfunc
+   for (syncfunc_opt_e opt = 0; opt <= syncfunc_opt_ALL; ++opt) {
+      memset(&sfunc, 255, sizeof(sfunc));
+      init_syncfunc(&sfunc, &test_start_sf, opt);
+      TEST(sfunc.mainfct    == &test_start_sf);
+      TEST(sfunc.contoffset == 0);
+      TEST(sfunc.optfields  == opt);
+      // not initialised
+      TEST(sfunc.waitfor.link  != 0);
+      TEST(sfunc.waitlist.prev != 0);
+      TEST(sfunc.waitlist.next != 0);
+      TEST(sfunc.caller.link   != 0);
+      TEST(sfunc.state         != 0);
+   }
 
    return 0;
 ONERR:
    return EINVAL;
 }
 
-// forward
-static int test_start_sf(syncfunc_param_t * sfparam, uint32_t sfcmd);
-
 static int test_getset(void)
 {
-   syncfunc_t sfunc = syncfunc_FREE;
-   size_t size;
+   syncfunc_t sfunc  = syncfunc_FREE;
+   size_t     size;
 
    // TEST getsize_syncfunc: syncfunc_opt_NONE
    TEST(offsetof(syncfunc_t, waitfor) == getsize_syncfunc(syncfunc_opt_NONE));
@@ -88,11 +173,31 @@ static int test_getset(void)
    // TEST getsize_syncfunc: combination of flags
    for (syncfunc_opt_e opt = 0; opt <= syncfunc_opt_ALL; ++opt) {
       size = offsetof(syncfunc_t, waitfor);
-      if (opt & syncfunc_opt_WAITFOR_MASK) size += sizeof(sfunc.waitfor);
+      if (opt & syncfunc_opt_WAITFOR)  size += sizeof(sfunc.waitfor);
       if (opt & syncfunc_opt_WAITLIST) size += sizeof(sfunc.waitlist);
       if (opt & syncfunc_opt_CALLER)   size += sizeof(sfunc.caller);
       if (opt & syncfunc_opt_STATE)    size += sizeof(sfunc.state);
       TEST(size == getsize_syncfunc(opt));
+   }
+
+   // TEST getcaller_syncfunc: empty link
+   for (int isstate = 0; isstate <= 1; ++isstate) {
+      for (size = getsize_syncfunc(syncfunc_opt_ALL); size >= offwaitlist_syncfunc(true) + (isstate ? sizeof(void*) : 0u); size -= sizeof(void*)) {
+         TEST(0 == getcaller_syncfunc(&sfunc, size, isstate));
+      }
+   }
+
+   // TEST getcaller_syncfunc: connected link
+   for (int ci = 0; ci <= 4; ++ci) {
+      syncfunc_t caller[5];
+      memset(&caller[ci], 0, sizeof(caller[ci]));
+      for (int isstate = 0; isstate <= 1; ++isstate) {
+         for (size = getsize_syncfunc(syncfunc_opt_ALL); size >= offwaitlist_syncfunc(true) + (isstate ? sizeof(void*) : 0u); size -= sizeof(void*)) {
+            memset(&sfunc, 0, sizeof(sfunc));
+            addrcaller_syncfunc(&sfunc, size, isstate)->link = &caller[ci].waitfor;
+            TEST(&caller[ci] == getcaller_syncfunc(&sfunc, size, isstate));
+         }
+      }
    }
 
    // TEST offwaitfor_syncfunc
@@ -123,6 +228,9 @@ static int test_getset(void)
       }
    }
 
+   // TEST addrwaitresult_syncfunc
+   TEST(&sfunc.waitresult == addrwaitresult_syncfunc(&sfunc));
+
    // TEST addrwaitfor_syncfunc
    TEST(&sfunc.waitfor == addrwaitfor_syncfunc(&sfunc));
 
@@ -151,6 +259,108 @@ static int test_getset(void)
                     + size
                     - sizeof(sfunc.state);
       TEST(addrstate_syncfunc(&sfunc, size) == (void**)expect);
+   }
+
+   // TEST relink_syncfunc
+   for (syncfunc_opt_e opt = 0; opt <= syncfunc_opt_ALL; ++opt) {
+      syncfunc_t sfunc2  = syncfunc_FREE;
+      const int  iswaitfor = (opt & syncfunc_opt_WAITFOR);
+      const int  isresult  = (opt & syncfunc_opt_WAITRESULT);
+      const int  iswaitlist = (opt & syncfunc_opt_WAITLIST);
+      const int  iscaller = (opt & syncfunc_opt_CALLER);
+      const int  isstate  = (opt & syncfunc_opt_STATE);
+
+      size = getsize_syncfunc(opt);
+      memset(&sfunc, 0, sizeof(sfunc));
+      sfunc.optfields = opt;
+
+      // test relink_syncfunc: invalid links
+      relink_syncfunc(&sfunc, size);
+      if (iswaitfor) {
+         addrwaitfor_syncfunc(&sfunc)->link = &sfunc2.waitfor;
+      }
+      if (iswaitlist) {
+         addrwaitlist_syncfunc(&sfunc, iswaitfor)->prev = &sfunc2.waitlist;
+         addrwaitlist_syncfunc(&sfunc, iswaitfor)->next = &sfunc2.waitlist;
+      }
+      if (iscaller) {
+         addrcaller_syncfunc(&sfunc, size, isstate)->link = &sfunc2.caller;
+      }
+
+      // test relink_syncfunc: valid links
+      relink_syncfunc(&sfunc, size);
+      if (iswaitfor) {
+         TEST(addrwaitfor_syncfunc(&sfunc)->link == &sfunc2.waitfor);
+         if (!isresult) {
+            TEST(addrwaitfor_syncfunc(&sfunc) == sfunc2.waitfor.link);
+         } else {
+            TEST(0 == isvalid_synclink(&sfunc2.waitfor));
+         }
+      } else {
+         TEST(0 == isvalid_synclink(&sfunc2.waitfor));
+      }
+      if (iswaitlist) {
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor)->prev == &sfunc2.waitlist);
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor)->next == &sfunc2.waitlist);
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor) == sfunc2.waitlist.prev);
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor) == sfunc2.waitlist.next);
+      } else {
+         TEST(0 == isvalid_synclinkd(&sfunc2.waitlist));
+      }
+      if (iscaller) {
+         TEST(addrcaller_syncfunc(&sfunc, size, isstate)->link == &sfunc2.caller);
+         TEST(addrcaller_syncfunc(&sfunc, size, isstate) == sfunc2.caller.link);
+      } else {
+         TEST(0 == isvalid_synclink(&sfunc2.caller));
+      }
+   }
+
+   // TEST unlink_syncfunc
+   for (syncfunc_opt_e opt = 0; opt <= syncfunc_opt_ALL; ++opt) {
+      syncfunc_t sfunc2  = syncfunc_FREE;
+      const int  iswaitfor = (opt & syncfunc_opt_WAITFOR);
+      const int  isresult  = (opt & syncfunc_opt_WAITRESULT);
+      const int  iswaitlist = (opt & syncfunc_opt_WAITLIST);
+      const int  iscaller = (opt & syncfunc_opt_CALLER);
+      const int  isstate  = (opt & syncfunc_opt_STATE);
+
+      size = getsize_syncfunc(opt);
+      memset(&sfunc, 0, sizeof(sfunc));
+      sfunc.optfields = opt;
+
+      // test unlink_syncfunc: invalid links (nothing is done)
+      unlink_syncfunc(&sfunc, size);
+      if (iswaitfor) {
+         init_synclink(addrwaitfor_syncfunc(&sfunc), &sfunc2.waitfor);
+      }
+      if (iswaitlist) {
+         init_synclinkd(addrwaitlist_syncfunc(&sfunc, iswaitfor), &sfunc2.waitlist);
+      }
+      if (iscaller) {
+         init_synclink(addrcaller_syncfunc(&sfunc, size, isstate), &sfunc2.caller);
+      }
+
+      // test unlink_syncfunc: valid links
+      unlink_syncfunc(&sfunc, size);
+      // link target sfunc2 is made invalid
+      if (iswaitfor && isresult) {
+         TEST(addrwaitfor_syncfunc(&sfunc) == sfunc2.waitfor.link);
+      } else {
+         TEST(0 == isvalid_synclink(&sfunc2.waitfor));
+      }
+      TEST(0 == isvalid_synclinkd(&sfunc2.waitlist));
+      TEST(0 == isvalid_synclink(&sfunc2.caller));
+      // sfunc is not changed
+      if (iswaitfor) {
+         TEST(addrwaitfor_syncfunc(&sfunc)->link == &sfunc2.waitfor);
+      }
+      if (iswaitlist) {
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor)->prev == &sfunc2.waitlist);
+         TEST(addrwaitlist_syncfunc(&sfunc, iswaitfor)->next == &sfunc2.waitlist);
+      }
+      if (iscaller) {
+         TEST(addrcaller_syncfunc(&sfunc, size, isstate)->link == &sfunc2.caller);
+      }
    }
 
    return 0;

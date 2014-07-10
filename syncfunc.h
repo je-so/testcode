@@ -331,14 +331,23 @@ static inline void init_syncfunc(syncfunc_t * sfunc, syncfunc_f mainfct, syncfun
  * ohne Nebeneffekte sein. */
 size_t getsize_syncfunc(const syncfunc_opt_e optfields);
 
-/* function: getcaller_syncfunc
- * Liefere den Aufrufer aus dem optionalen Feld <caller>.
- * Gibt 0 zurück, falls der link in caller 0 ist.
- * Die Parameter structsize und isstate haben dieselbe Bedeutung wie bei <addrcaller_syncfunc>.
+/* function: waitforcast_syncfunc
+ * Caste waitfor nach <syncfunc_t>.
  *
  * Precondition:
- * o Das Feld <caller> muss vorhanden sein. */
-static inline syncfunc_t * getcaller_syncfunc(syncfunc_t * sfunc, const size_t structsize, const bool isstate);
+ * o waitfor != 0
+ * o waitfor == addrwaitfor_syncfunc(...) || waitfor == addrcaller_syncfunc(...)->link */
+syncfunc_t * waitforcast_syncfunc(synclink_t * waitfor);
+
+/* function: waitlistcast_syncfunc
+ * Caste waitlist nach <syncfunc_t>.
+ *
+ * Precondition:
+ * o waitlist != 0
+ * o waitlist == addrwaitlist_syncfunc(...)
+ *   || waitfor == addrwaitlist_syncfunc(...)->next
+ *   || waitfor == addrwaitlist_syncfunc(...)->prev */
+syncfunc_t * waitlistcast_syncfunc(synclink_t * waitlist, const bool iswaitfor);
 
 /* function: offwaitfor_syncfunc
  * Liefere den Byteoffset zum Feld <waitfor>. */
@@ -404,6 +413,13 @@ void ** addrstate_syncfunc(syncfunc_t * sfunc, const size_t structsize);
 /* function: relink_syncfunc
  * Korrigiert die Ziellinks von <waitfor>, <waitlist> und <caller>, nachdem sfunc im Speicher verschoben wurde. */
 void relink_syncfunc(syncfunc_t * sfunc, const size_t structsize);
+
+/* function: setresult_syncfunc
+ * Setzt <waitresult> auf Wert result.
+ *
+ * Precondition:
+ * Feld <waitfor> bzw. <waitresult> ist vorhanden. */
+static inline void setresult_syncfunc(syncfunc_t * sfunc, int result);
 
 /* function: unlink_syncfunc
  * Invalidiert die Ziellinks von <waitfor>, <waitlist> und <caller>.
@@ -618,6 +634,14 @@ static inline void init_syncfunc(syncfunc_t * sfunc, syncfunc_f mainfct, syncfun
 #define offstate_syncfunc(structsize, isstate) \
          ((structsize) - ((isstate) ? sizeof(void*) : 0))
 
+/* define: setresult_syncfunc
+ * Implementiert <syncfunc_t.setresult_syncfunc>. */
+static inline void setresult_syncfunc(syncfunc_t * sfunc, int result)
+         {
+            sfunc->optfields = (uint8_t) (sfunc->optfields | syncfunc_opt_WAITRESULT);
+            *addrwaitresult_syncfunc(sfunc) = result;
+         }
+
 /* define: setstate_syncfunc
  * Implementiert <syncfunc_t.setstate_syncfunc>. */
 #define setstate_syncfunc(sfparam, new_state) \
@@ -685,6 +709,16 @@ static inline void init_syncfunc(syncfunc_t * sfunc, syncfunc_f mainfct, syncfun
             (sfparam)->waiterr;                             \
          }))
 
+/* define: waitforcast_syncfunc
+ * Implementiert <syncfunc_t.waitforcast_syncfunc>. */
+#define waitforcast_syncfunc(waitfor) \
+            ((syncfunc_t*) ((uint8_t*) (waitfor) - offwaitfor_syncfunc()))
+
+/* define: waitlistcast_syncfunc
+ * Implementiert <syncfunc_t.waitlistcast_syncfunc>. */
+#define waitlistcast_syncfunc(waitlist, iswaitfor) \
+            ((syncfunc_t*) ((uint8_t*) (waitlist) - offwaitlist_syncfunc(iswaitfor)))
+
 /* define: yield_syncfunc
  * Implementiert <syncfunc_t.yield_syncfunc>. */
 #define yield_syncfunc(sfparam) \
@@ -702,21 +736,5 @@ static inline void init_syncfunc(syncfunc_t * sfunc, syncfunc_f mainfct, syncfun
             return syncfunc_cmd_CONTINUE;                   \
             continue_after_yield: ;                         \
          }))
-
-/* define: getcaller_syncfunc
- * Implementiert <syncfunc_t.getcaller_syncfunc>. */
-static inline syncfunc_t * getcaller_syncfunc(syncfunc_t * sfunc, const size_t structsize, const bool isstate)
-         {
-            synclink_t * caller = addrcaller_syncfunc(sfunc, structsize, isstate);
-            if (! caller->link)
-               return 0;
-
-            syncfunc_t * sfcaller = (syncfunc_t*) (
-                                     (uint8_t*) caller->link
-                                     - offwaitfor_syncfunc()
-                                    );
-
-            return sfcaller;
-         }
 
 #endif

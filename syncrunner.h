@@ -29,8 +29,9 @@
 #ifndef CKERN_TASK_SYNCRUNNER_HEADER
 #define CKERN_TASK_SYNCRUNNER_HEADER
 
-#include "C-kern/api/task/syncqueue.h"
+#include "C-kern/api/task/synccmd.h"
 #include "C-kern/api/task/syncfunc.h"
+#include "C-kern/api/task/syncqueue.h"
 
 // forward
 struct syncfunc_t;
@@ -54,21 +55,14 @@ int unittest_task_syncrunner(void);
 /* struct: syncrunner_t
  * TODO: describe type
  *
- *
  * TODO: make queue_t adaptable to different page sizes !
  * TODO: syncqueue_t uses 512 or 1024 bytes (check in table with different sizes !!) !
- * TODO: add syncrunner_t subsystem only if THREAD is defined
- * TODO: add syncrunner_t to threadcontext_t and config / initthread
- * TODO: replace syncrun_t with syncrunner_t, remove syncrun from all makefiles and threadcontext !!
- *
- * TODO: replace syncqueue_t with queue_t / remove syncqueue
  *
  * */
 struct syncrunner_t {
-   // TODO: add doc + test
-   // 0..2
-   unsigned       called_queue_idx; // TODO: remove ?
-   // TODO: add doc + test
+   /* variable: caller
+    * Zeigt auf <syncfunc_t.caller> der zuletzt mit <addcall_syncrunner> hinzugefügten Funktion.
+    * Falls 0, dann wurde <addcall_syncrunner> noch nicht von der gerade ablaufenden <syncfunc_t> aufgerufen. */
    synclink_t   * caller;
    /* variable: wakeup
     * Verlinkt Einträge in <waitqueue>. Die Felder <syncfunc.waitresult> und <syncfunc.waitlist>ist vorhanden. */
@@ -87,7 +81,7 @@ struct syncrunner_t {
 /* define: syncrunner_FREE
  * Static initializer. */
 #define syncrunner_FREE \
-         {  0, 0, synclinkd_FREE, \
+         {  0, synclinkd_FREE, \
             { syncqueue_FREE, syncqueue_FREE, syncqueue_FREE, syncqueue_FREE, syncqueue_FREE, syncqueue_FREE }, \
             false, \
          }

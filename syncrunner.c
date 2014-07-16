@@ -656,6 +656,7 @@ int run_syncrunner(syncrunner_t * srun)
 {
    int err;
    syncfunc_param_t param = syncfunc_param_INIT(srun);
+   queue_iterator_t iter = queue_iterator_FREE;
    syncqueue_t    * squeue;
    queue_t        * queue;
    syncfunc_t     * sfunc;
@@ -690,10 +691,16 @@ int run_syncrunner(syncrunner_t * srun)
 
       // new entries are added to end of queue ==> do not run them during this invocation
 
-      // TODO: change iterator (removing current element is not safe!!)
-      foreachReverse (_queue, next, queue, size) {
-         if (next == nextfree_syncqueue(squeue)) continue;
-         sfunc   = next;
+      void * prev;
+      bool isPrev;
+      err = initlast_queueiterator(&iter, queue, size);
+      if (err) goto ONERR;
+      isPrev = prev_queueiterator(&iter, &prev);
+      while (isPrev) {
+         sfunc = prev;
+         isPrev = prev_queueiterator(&iter, &prev); // makes calling remove_syncqueue(squeue, sfunc) safe
+         if (sfunc == nextfree_syncqueue(squeue)) continue;
+
          isstate = (sfunc->optfields & syncfunc_opt_STATE);
 
          cmd = CALL_SYNCFUNC(srun, sfunc, size, isstate, param);
@@ -759,6 +766,9 @@ int run_syncrunner(syncrunner_t * srun)
          err = preallocate_syncqueue(&srun->rwqueue[qidx2]);
          if (err) goto ONERR;
       }
+
+      err = free_queueiterator(&iter);
+      if (err) goto ONERR;
    }
 
    err = process_wakeup_list(srun);
@@ -769,6 +779,7 @@ ONUNPREPARE:
    return err;
 
 ONERR:
+   free_queueiterator(&iter);
    TRACEEXIT_ERRLOG(err);
    goto ONUNPREPARE;
 }
@@ -2164,7 +2175,10 @@ static int test_exec_run(void)
    sfunc[0] = nextfree_syncqueue(squeue);
    init_syncfunc(sfunc[0], &test_run_sf, optfields);
    setnextfree_syncqueue(squeue, sfunc[0]+1);
+   // test
+   s_test_runcount = 0;
    TEST(0 == run_syncrunner(&srun));
+   // check
    TEST(0 == s_test_errcount);
    TEST(1 == s_test_runcount);
    TEST(0 == srun.isrun);
@@ -2235,7 +2249,7 @@ static int test_exec_run(void)
             qidx = find_run_queue(optfields);
             size = elemsize_syncqueue(&srun.rwqueue[qidx]);
             squeue  = &srun.rwqueue[qidx];
-            for (unsigned i = 0; /*TODO: remove*/ i < 2 && i < lengthof(sfunc); ++i) {
+            for (unsigned i = 0; i < lengthof(sfunc); ++i) {
                sfunc[i] = nextfree_syncqueue(squeue);
                TEST(0 == preallocate_syncqueue(squeue));
                memset(sfunc[i], 0, size);

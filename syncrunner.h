@@ -133,7 +133,7 @@ int run_syncrunner(syncrunner_t * srun);
 
 /* function: teminate_syncrunner
  * TODO: */
-void teminate_syncrunner(syncrunner_t * srun);
+int teminate_syncrunner(syncrunner_t * srun);
 
 
 

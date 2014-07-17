@@ -131,9 +131,13 @@ int wakeupall_syncrunner(syncrunner_t * srun, struct synccond_t * scond);
  * TODO: */
 int run_syncrunner(syncrunner_t * srun);
 
-/* function: teminate_syncrunner
+/* function: run_syncrunner
  * TODO: */
-int teminate_syncrunner(syncrunner_t * srun);
+int run2_syncrunner(syncrunner_t * srun, bool runwakeup);
+
+/* function: terminate_syncrunner
+ * TODO: */
+int terminate_syncrunner(syncrunner_t * srun);
 
 
 
@@ -154,5 +158,10 @@ int teminate_syncrunner(syncrunner_t * srun);
          (0)
 
 #endif
+
+/* define: run_syncrunner
+ * Implementiert <syncrunner_t.run_syncrunner>. */
+#define run_syncrunner(srun) \
+         (run2_syncrunner((srun), true))
 
 #endif

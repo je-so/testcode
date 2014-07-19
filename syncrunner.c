@@ -247,7 +247,7 @@ size_t size_syncrunner(const syncrunner_t * srun)
 
    for (unsigned i = 1; i < lengthof(srun->rwqueue); ++i) {
       size += size_syncqueue(&srun->rwqueue[i]);
-      size -= (0 != nextfree_syncqueue(&srun->rwqueue[0]));
+      size -= (0 != nextfree_syncqueue(&srun->rwqueue[i]));
    }
 
    return size;
@@ -255,7 +255,7 @@ size_t size_syncrunner(const syncrunner_t * srun)
 
 // group: update
 
-int addasync_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
+int addfunc_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
 {
    int err;
    syncfunc_t * sf;
@@ -263,10 +263,12 @@ int addasync_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
    if (state) {
       const unsigned qidx = find_run_queue(syncfunc_opt_STATE);
 
-      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      void * oldfree = nextfree_syncqueue(&srun->rwqueue[qidx]);
       ONERROR_testerrortimer(&s_syncrunner_errtimer, &err, ONERR);
       err = preallocate_syncqueue(&srun->rwqueue[qidx]);
       if (err) goto ONERR;
+      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      setnextfree_syncqueue(&srun->rwqueue[qidx], oldfree);
 
       init_syncfunc(sf, mainfct, syncfunc_opt_STATE);
       *addrstate_syncfunc(sf, elemsize_syncqueue(&srun->rwqueue[qidx])) = state;
@@ -274,10 +276,12 @@ int addasync_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
    } else {
       const unsigned qidx = find_run_queue(syncfunc_opt_NONE);
 
-      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      void * oldfree = nextfree_syncqueue(&srun->rwqueue[qidx]);
       ONERROR_testerrortimer(&s_syncrunner_errtimer, &err, ONERR);
       err = preallocate_syncqueue(&srun->rwqueue[qidx]);
       if (err) goto ONERR;
+      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      setnextfree_syncqueue(&srun->rwqueue[qidx], oldfree);
 
       init_syncfunc(sf, mainfct, syncfunc_opt_NONE);
    }
@@ -297,10 +301,12 @@ int addcall_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
       const unsigned qidx = find_run_queue(syncfunc_opt_CALLER|syncfunc_opt_STATE);
       const uint16_t size = elemsize_syncqueue(&srun->rwqueue[qidx]);
 
-      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      void * oldfree = nextfree_syncqueue(&srun->rwqueue[qidx]);
       ONERROR_testerrortimer(&s_syncrunner_errtimer, &err, ONERR);
       err = preallocate_syncqueue(&srun->rwqueue[qidx]);
       if (err) goto ONERR;
+      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      setnextfree_syncqueue(&srun->rwqueue[qidx], oldfree);
 
       init_syncfunc(sf, mainfct, syncfunc_opt_CALLER|syncfunc_opt_STATE);
       *addrcaller_syncfunc(sf, size, true) = (synclink_t) synclink_FREE;
@@ -312,10 +318,12 @@ int addcall_syncrunner(syncrunner_t * srun, syncfunc_f mainfct, void * state)
       const unsigned qidx = find_run_queue(syncfunc_opt_CALLER);
       const uint16_t size = elemsize_syncqueue(&srun->rwqueue[qidx]);
 
-      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      void * oldfree = nextfree_syncqueue(&srun->rwqueue[qidx]);
       ONERROR_testerrortimer(&s_syncrunner_errtimer, &err, ONERR);
       err = preallocate_syncqueue(&srun->rwqueue[qidx]);
       if (err) goto ONERR;
+      sf  = nextfree_syncqueue(&srun->rwqueue[qidx]);
+      setnextfree_syncqueue(&srun->rwqueue[qidx], oldfree);
 
       init_syncfunc(sf, mainfct, syncfunc_opt_CALLER);
       *addrcaller_syncfunc(sf, size, false) = (synclink_t) synclink_FREE;
@@ -793,12 +801,17 @@ int terminate_syncrunner(syncrunner_t * srun)
       void * prev;
       bool isPrev;
       err = initlast_queueiterator(&iter, queue, size);
-      if (err) goto ONERR;
+      if (err) {
+         if (err != ENODATA) goto ONERR;
+         continue;
+      }
       isPrev = prev_queueiterator(&iter, &prev);
       while (isPrev) {
          sfunc = prev;
          isPrev = prev_queueiterator(&iter, &prev); // makes calling remove_syncqueue(squeue, sfunc) safe
          if (sfunc == nextfree_syncqueue(squeue)) continue;
+
+         unlink_syncfunc(sfunc, size);
 
          isstate = (sfunc->optfields & syncfunc_opt_STATE);
 
@@ -962,14 +975,18 @@ static int test_initfree(void)
    TEST(srun.wakeup.prev == &srun.wakeup);
    TEST(srun.wakeup.next == &srun.wakeup);
    for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-      TEST(0 == isfree_syncqueue(&srun.rwqueue[i]));
-      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
-      TEST(0 != nextfree_syncqueue(&srun.rwqueue[i]));
-      TEST(&srun.rwqueue[i] == queuefromaddr_syncqueue(nextfree_syncqueue(&srun.rwqueue[i])));
+      TEST( isfree_syncqueue(&srun.rwqueue[i]));
+      TEST(0 == size_syncqueue(&srun.rwqueue[i]));
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[i]));
       TEST(s_syncrunner_rwqsize[i] == elemsize_syncqueue(&srun.rwqueue[i]));
    }
 
    // TEST free_syncrunner: free queues
+   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+      TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
+      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
+      TEST(0 != nextfree_syncqueue(&srun.rwqueue[i]));
+   }
    for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
       TEST(0 == isfree_syncqueue(&srun.rwqueue[i]));
    }
@@ -989,6 +1006,7 @@ static int test_initfree(void)
    for (unsigned tc = 1; tc < 7; ++tc) {
       TEST(0 == init_syncrunner(&srun));
       for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
          TEST(0 == isfree_syncqueue(&srun.rwqueue[i]));
       }
       init_testerrortimer(&s_syncrunner_errtimer, tc, EINVAL);
@@ -1057,19 +1075,19 @@ static int test_queuehelper(void)
          continue; // no waitfor or no waitlist field
       }
 
+
       synclink_t     waitfor = synclink_FREE;
       synclinkd_t    waitlist = synclinkd_FREE;
       synclink_t     caller  = synclink_FREE;
       const unsigned qidx    = find_wait_queue(optfields);
       syncqueue_t *  squeue  = &srun.rwqueue[qidx];
       uint16_t       size    = elemsize_syncqueue(squeue);
-      void *         oldfree = nextfree_syncqueue(squeue);
+      TEST(0 == preallocate_syncqueue(squeue));
       syncfunc_t *   sfunc   = nextfree_syncqueue(squeue);
       TEST(0 == preallocate_syncqueue(squeue));
 
       // TEST remove_syncqueue: remove element, last element is next free element
       memset(sfunc, 255, size);
-      TEST(sfunc == last_queue(genericcast_queue(squeue), (uint16_t) (2*size)));
       TEST(nextfree_syncqueue(squeue) == last_queue(genericcast_queue(squeue), size));
       TEST(2 == size_syncqueue(squeue));
       TEST(0 == remove_syncqueue(squeue, sfunc));
@@ -1082,6 +1100,7 @@ static int test_queuehelper(void)
       }
 
       // TEST remove_syncqueue: remove element, last element is in use
+      void * oldfree = sfunc;
       TEST(0 == preallocate_syncqueue(squeue));
       sfunc = nextfree_syncqueue(squeue);
       memset(sfunc, 255, size);
@@ -1113,8 +1132,8 @@ static int test_queuehelper(void)
       // TEST remove_syncqueue: remove last element
       TEST(oldfree == nextfree_syncqueue(squeue));
       TEST(sfunc == last_queue(genericcast_queue(squeue), size));
-      memset(sfunc, 255, size);
       TEST(2 == size_syncqueue(squeue));
+      memset(sfunc, 255, size);
       TEST(0 == remove_syncqueue(squeue, sfunc));
       // check result
       TEST(1 == size_syncqueue(squeue));
@@ -1129,8 +1148,6 @@ static int test_queuehelper(void)
       TEST(0 == remove_syncqueue(squeue, oldfree));
       TEST(0 == size_syncqueue(squeue));
       TEST(ENODATA == remove_syncqueue(squeue, oldfree));
-      TEST(0 == preallocate_syncqueue(squeue));
-      TEST(1 == size_syncqueue(squeue));
    }
 
    for (unsigned optfields = syncfunc_opt_NONE; optfields <= syncfunc_opt_ALL; ++optfields) {
@@ -1144,10 +1161,10 @@ static int test_queuehelper(void)
       syncqueue_t *  squeue = &srun.rwqueue[qidx];
       syncfunc_t  *  sfunc;
       for (unsigned i = 0; i < 100; ++i) {
+         TEST(0 == preallocate_syncqueue(squeue));
          sfunc = nextfree_syncqueue(squeue);
          init_syncfunc(sfunc, 0, optfields);
          TEST(squeue == wait_queue(&srun, sfunc));
-         TEST(0 == preallocate_syncqueue(squeue));
       }
 
       // TEST wait_queue: ERROR
@@ -1176,13 +1193,29 @@ static int test_query(void)
    // prepare
    TEST(0 == init_syncrunner(&srun));
 
-   // TEST size_syncrunner: after init
+   // TEST size_syncrunner: nextfree == 0
+   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[i]));
+   }
    TEST(0 == size_syncrunner(&srun));
+
+   // TEST size_syncrunner: single nextfree != 0 counts one less
+   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+      TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
+      TEST(0 != nextfree_syncqueue(&srun.rwqueue[i]));
+      TEST(0 == size_syncrunner(&srun));
+      TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
+      TEST(1 == size_syncrunner(&srun));
+      setnextfree_syncqueue(&srun.rwqueue[i], 0);
+      TEST(2 == size_syncrunner(&srun));
+      TEST(0 == free_syncrunner(&srun));
+      TEST(0 == init_syncrunner(&srun));
+   }
 
    // TEST size_syncrunner: size of single queue
    for (unsigned size = 1; size <= 4; ++size) {
       for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-         for (unsigned s = 1; s <= size; ++s) {
+         for (unsigned s = 0; s < size; ++s) {
             TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
             TEST(s == size_syncrunner(&srun));
          }
@@ -1195,7 +1228,8 @@ static int test_query(void)
    for (unsigned size = 1; size <= 4; ++size) {
       unsigned S = 1;
       for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-         for (unsigned s = 1; s <= size+i; ++s, ++S) {
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
+         for (unsigned s = 0; s < size+i; ++s, ++S) {
             TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
             TEST(S == size_syncrunner(&srun));
          }
@@ -1216,7 +1250,6 @@ ONERR:
 static int test_addfunc(void)
 {
    syncrunner_t srun;
-   queue_t *    queue;
    uint16_t     size;
    syncfunc_t * sfunc;
 
@@ -1226,96 +1259,85 @@ static int test_addfunc(void)
    // prepare
    TEST(0 == init_syncrunner(&srun));
 
-   // TEST addasync_syncrunner
-   for (uintptr_t i = 1, s = 1; i; i <<= 1, ++s) {
-      // state != 0
-      // uses preallocated entry
-      sfunc = nextfree_syncqueue(&srun.rwqueue[1]);
-      size  = elemsize_syncqueue(&srun.rwqueue[1]);
-      queue = genericcast_queue(&srun.rwqueue[1]);
-      TEST(0 == addasync_syncrunner(&srun, &dummy_sf, (void*)i));
-      TEST(2*s-1 == size_syncrunner(&srun));
-      TEST(s+1 == size_syncqueue(&srun.rwqueue[1]));
-      TEST(sfunc->mainfct    == &dummy_sf);
-      TEST(sfunc->contoffset == 0);
-      TEST(sfunc->optfields  == syncfunc_opt_STATE);
-      TEST(*addrstate_syncfunc(sfunc, size) == (void*)i);
-      TEST(nextfree_syncqueue(&srun.rwqueue[1]) == last_queue(queue, size));
-
-      // state == 0
-      sfunc = nextfree_syncqueue(&srun.rwqueue[0]);
-      size  = elemsize_syncqueue(&srun.rwqueue[0]);
-      queue = genericcast_queue(&srun.rwqueue[0]);
-      TEST(0 == addasync_syncrunner(&srun, &dummy_sf, 0));
-      TEST(2*s == size_syncrunner(&srun));
-      TEST(s+1 == size_syncqueue(&srun.rwqueue[0]));
-      TEST(sfunc->mainfct == &dummy_sf);
-      TEST(sfunc->contoffset == 0);
-      TEST(sfunc->optfields  == syncfunc_opt_NONE);
-      TEST(nextfree_syncqueue(&srun.rwqueue[0]) == last_queue(queue, size));
+   // TEST addfunc_syncrunner: nextfree_syncqueue == 0
+   for (unsigned isprealloc = 0; isprealloc <= 1; ++isprealloc) {
+      TEST(0 == free_syncrunner(&srun));
+      TEST(0 == init_syncrunner(&srun));
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[0]));
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[1]));
+      if (isprealloc) {
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[0]));
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[1]));
+      }
+      for (uintptr_t i = 1, s = 1+isprealloc; i; i <<= 1, ++s) {
+         for (int isstate = 0; isstate <= 1; ++isstate) {
+            void * F = nextfree_syncqueue(&srun.rwqueue[isstate]);
+            TEST(0 == addfunc_syncrunner(&srun, &dummy_sf, (void*)(isstate ? i : (uintptr_t)0)));
+            TEST(s == size_syncqueue(&srun.rwqueue[isstate]));
+            TEST(F == nextfree_syncqueue(&srun.rwqueue[isstate]));
+            size  = elemsize_syncqueue(&srun.rwqueue[isstate]);
+            sfunc = last_queue(genericcast_queue(&srun.rwqueue[isstate]), size);
+            TEST(0 != sfunc)
+            TEST(sfunc->mainfct    == &dummy_sf);
+            TEST(sfunc->contoffset == 0);
+            TEST(sfunc->optfields  == (isstate ? syncfunc_opt_STATE : syncfunc_opt_NONE));
+            if (isstate) {
+               TEST(*addrstate_syncfunc(sfunc, size) == (void*)i);
+            }
+         }
+      }
    }
 
    // TEST addcall_syncrunner
-   TEST(0 == free_syncrunner(&srun));
-   TEST(0 == init_syncrunner(&srun));
-   for (uintptr_t i = 1, s = 1; i; i <<= 1, ++s) {
-      srun.caller = 0;
-      // state != 0
-      sfunc = nextfree_syncqueue(&srun.rwqueue[2]);
-      size  = elemsize_syncqueue(&srun.rwqueue[2]);
-      queue = genericcast_queue(&srun.rwqueue[2]);
-      TEST(0 == addcall_syncrunner(&srun, &dummy_sf, (void*)i));
-      TEST(2*s-1 == size_syncrunner(&srun));
-      TEST(s+1 == size_syncqueue(&srun.rwqueue[2]));
-      TEST(sfunc->mainfct    == &dummy_sf);
-      TEST(sfunc->contoffset == 0);
-      TEST(sfunc->optfields  == (syncfunc_opt_CALLER|syncfunc_opt_STATE));
-      TEST(0        == addrcaller_syncfunc(sfunc, size, true)->link);
-      TEST((void*)i == *addrstate_syncfunc(sfunc, size));
-      TEST(srun.caller == addrcaller_syncfunc(sfunc, size, true));
-      TEST(nextfree_syncqueue(&srun.rwqueue[2]) == last_queue(queue, size));
-
-      // state == 0
-      sfunc = nextfree_syncqueue(&srun.rwqueue[1]);
-      size  = elemsize_syncqueue(&srun.rwqueue[1]);
-      queue = genericcast_queue(&srun.rwqueue[1]);
-      TEST(0 == addcall_syncrunner(&srun, &dummy_sf, 0));
-      TEST(2*s == size_syncrunner(&srun));
-      TEST(s+1 == size_syncqueue(&srun.rwqueue[1]));
-      TEST(sfunc->mainfct == &dummy_sf);
-      TEST(sfunc->contoffset == 0);
-      TEST(sfunc->optfields  == syncfunc_opt_CALLER);
-      TEST(0     == addrcaller_syncfunc(sfunc, size, false)->link);
-      TEST(srun.caller == addrcaller_syncfunc(sfunc, size, false));
-      TEST(nextfree_syncqueue(&srun.rwqueue[1]) == last_queue(queue, size));
+   for (unsigned isprealloc = 0; isprealloc <= 1; ++isprealloc) {
+      TEST(0 == free_syncrunner(&srun));
+      TEST(0 == init_syncrunner(&srun));
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[1]));
+      TEST(0 == nextfree_syncqueue(&srun.rwqueue[2]));
+      if (isprealloc) {
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[1]));
+         TEST(0 == preallocate_syncqueue(&srun.rwqueue[2]));
+      }
+      for (uintptr_t i = 1, s = 1+isprealloc; i; i <<= 1, ++s) {
+         for (int isstate = 0; isstate <= 1; ++isstate) {
+            void * F = nextfree_syncqueue(&srun.rwqueue[1+isstate]);
+            TEST(0 == addcall_syncrunner(&srun, &dummy_sf, (void*)(isstate ? i : (uintptr_t)0)));
+            TEST(s == size_syncqueue(&srun.rwqueue[1+isstate]));
+            TEST(F == nextfree_syncqueue(&srun.rwqueue[1+isstate]));
+            size  = elemsize_syncqueue(&srun.rwqueue[1+isstate]);
+            sfunc = last_queue(genericcast_queue(&srun.rwqueue[1+isstate]), size);
+            TEST(0 != sfunc)
+            TEST(sfunc->mainfct    == &dummy_sf);
+            TEST(sfunc->contoffset == 0);
+            TEST(sfunc->optfields  == (isstate ? syncfunc_opt_STATE|syncfunc_opt_CALLER : syncfunc_opt_CALLER));
+            TEST(srun.caller == addrcaller_syncfunc(sfunc, size, isstate));
+            if (isstate) {
+               TEST(*addrstate_syncfunc(sfunc, size) == (void*)i);
+            }
+            TEST(0 == addrcaller_syncfunc(sfunc, size, isstate)->link);
+         }
+      }
    }
 
-   // TEST addasync_syncrunner: ERROR
+   // TEST addfunc_syncrunner: ERROR
    TEST(0 == free_syncrunner(&srun));
    TEST(0 == init_syncrunner(&srun));
-   for (unsigned i = 0; i < WAITQUEUE_OFFSET; ++i) {
-      memset(nextfree_syncqueue(&srun.rwqueue[i]), 0, elemsize_syncqueue(&srun.rwqueue[i]));
-   }
-   init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
-   TEST(ENOMEM == addasync_syncrunner(&srun, &dummy_sf, (void*)1));
-   init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
-   TEST(ENOMEM == addasync_syncrunner(&srun, &dummy_sf, (void*)0));
-   for (unsigned i = 0; i < WAITQUEUE_OFFSET; ++i) {
-      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
-      for (unsigned b = 0; b < elemsize_syncqueue(&srun.rwqueue[i]); ++b) {
-         TEST(0 == ((uint8_t*)nextfree_syncqueue(&srun.rwqueue[i]))[b]);
+   for (uintptr_t isstate = 0; isstate <= 1; ++isstate) {
+      init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
+      TEST(ENOMEM == addfunc_syncrunner(&srun, &dummy_sf, (void*)isstate));
+      for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+         TEST(0 == size_syncqueue(&srun.rwqueue[i]));
+         TEST(0 == nextfree_syncqueue(&srun.rwqueue[i]));
       }
    }
 
    // TEST addcall_syncrunner: ERROR
-   init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
-   TEST(ENOMEM == addcall_syncrunner(&srun, &dummy_sf, (void*)1));
-   init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
-   TEST(ENOMEM == addcall_syncrunner(&srun, &dummy_sf, (void*)0));
-   for (unsigned i = 0; i < WAITQUEUE_OFFSET; ++i) {
-      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
-      for (unsigned b = 0; b < elemsize_syncqueue(&srun.rwqueue[i]); ++b) {
-         TEST(0 == ((uint8_t*)nextfree_syncqueue(&srun.rwqueue[i]))[b]);
+   for (uintptr_t isstate = 0; isstate <= 1; ++isstate) {
+      init_testerrortimer(&s_syncrunner_errtimer, 1, ENOMEM);
+      TEST(ENOMEM == addcall_syncrunner(&srun, &dummy_sf, (void*)isstate));
+      for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+         TEST(0 == size_syncqueue(&srun.rwqueue[i]));
+         TEST(0 == nextfree_syncqueue(&srun.rwqueue[i]));
       }
    }
 
@@ -1421,8 +1443,8 @@ static int test_wakeup(void)
          unsigned qidx = find_wait_queue(optfields);
          for (unsigned i2 = 0; i2 < 5; ++i2, ++i) {
             TEST(i < (int)lengthof(qfunc));
-            qfunc[i] = nextfree_syncqueue(&srun.rwqueue[qidx]);
             TEST(0 == preallocate_syncqueue(&srun.rwqueue[qidx]));
+            qfunc[i] = nextfree_syncqueue(&srun.rwqueue[qidx]);
             memset(qfunc[i], 0, elemsize_syncqueue(&srun.rwqueue[qidx]));
             qfunc[i]->optfields = optfields;
          }
@@ -1554,10 +1576,12 @@ static int test_exec_helper(void)
    syncrunner_t      srun;
    syncfunc_t        sfunc;
    syncfunc_param_t  param = syncfunc_param_INIT(&srun);
+   synccond_t        scond = synccond_FREE;
 
    // prepare
    s_test_srun = &srun;
    TEST(0 == init_syncrunner(&srun));
+   TEST(0 == init_synccond(&scond));
 
    // TEST CALL_SYNCFUNC
    for (int retcode = -2; retcode <= 2; ++retcode) {
@@ -1589,14 +1613,155 @@ static int test_exec_helper(void)
       }
    }
 
-   // TEST link_waitfields
-   // TODO: link_waitfields
+   // TEST link_waitfields: wait for called function
+   param.condition = 0;
+   synclink_t dummy_caller;
+   for (int isstate2 = 0; isstate2 <= 1; ++isstate2) {
+      syncfunc_t  qfunc[10];
+      syncfunc_t  called[10];
+      memset(qfunc, 0, sizeof(qfunc));
+      memset(called, 0, sizeof(called));
+      syncfunc_opt_e optfields2 = syncfunc_opt_CALLER | (isstate2 ? syncfunc_opt_STATE : 0);
+      uint16_t       size2 = getsize_syncfunc(optfields2);
+      for (int isstate = 0; isstate <= 1; ++isstate) {
+         for (int iscaller = 0; iscaller <= 1; ++iscaller) {
+            syncfunc_opt_e optfields = syncfunc_opt_WAITFOR_CALLED | syncfunc_opt_WAITLIST
+                                     | (iscaller ? syncfunc_opt_CALLER : 0) | (isstate ? syncfunc_opt_STATE : 0);
+            uint16_t       size = getsize_syncfunc(optfields);
+            for (unsigned i = 0; i < lengthof(qfunc); ++i) {
+               init_syncfunc(&called[i], &test_call_sf, optfields2);
+               if (isstate2) *addrstate_syncfunc(&called[i], size2) = &srun;
+               init_syncfunc(&qfunc[i], &test_call_sf, optfields);
+               if (isstate) *addrstate_syncfunc(&qfunc[i], size) = &param;
+               if (iscaller) init_synclink(addrcaller_syncfunc(&qfunc[i], size, isstate), &dummy_caller);
+               initself_synclinkd(addrwaitlist_syncfunc(&qfunc[i], true));
+               srun.caller = addrcaller_syncfunc(&called[i], size2, isstate2);
+               // test link_waitfields
+               link_waitfields(&srun, &qfunc[i], &param);
+            }
+            // check result
+            TEST( isself_synclinkd(&srun.wakeup));
+            for (unsigned i = 0; i < lengthof(qfunc); ++i) {
+               TEST(qfunc[i].mainfct    == &test_call_sf);
+               TEST(qfunc[i].contoffset == 0);
+               TEST(qfunc[i].optfields  == optfields);
+               if (iscaller) {
+                  TEST(&dummy_caller == addrcaller_syncfunc(&qfunc[i], size, isstate)->link);
+               }
+               if (isstate) {
+                  TEST(&param == *addrstate_syncfunc(&qfunc[i], size));
+               }
+               TEST(addrcaller_syncfunc(&called[i], size2, isstate2) == addrwaitfor_syncfunc(&qfunc[i])->link);
+               TEST(!isvalid_synclinkd(addrwaitlist_syncfunc(&qfunc[i], true)));
+            }
+            for (unsigned i = 0; i < lengthof(called); ++i) {
+               TEST(called[i].mainfct    == &test_call_sf);
+               TEST(called[i].contoffset == 0);
+               TEST(called[i].optfields  == optfields2);
+               if (isstate2) {
+                  TEST(&srun == *addrstate_syncfunc(&called[i], size2));
+               }
+               TEST(addrwaitfor_syncfunc(&qfunc[i]) == addrcaller_syncfunc(&called[i], size2, isstate2)->link);
+            }
+         }
+      }
+   }
+
+   // TEST link_waitfields: wait for condition
+   param.condition = &scond;
+   srun.caller = 0;
+   for (int isstate2 = 0; isstate2 <= 1; ++isstate2) {
+      syncfunc_t  * qfunc[10];
+      for (int isstate = 0; isstate <= 1; ++isstate) {
+         for (int iscaller = 0; iscaller <= 1; ++iscaller) {
+            syncfunc_opt_e optfields = syncfunc_opt_WAITFOR_CALLED | syncfunc_opt_WAITLIST
+                                     | (iscaller ? syncfunc_opt_CALLER : 0) | (isstate ? syncfunc_opt_STATE : 0);
+            unsigned       qidx = find_wait_queue(optfields);
+            syncqueue_t *  squeue = &srun.rwqueue[qidx];
+            uint16_t       size = getsize_syncfunc(optfields);
+            for (unsigned i = 0; i < lengthof(qfunc); ++i) {
+               TEST(0 == preallocate_syncqueue(squeue));
+               qfunc[i] = nextfree_syncqueue(squeue);
+               init_syncfunc(qfunc[i], &test_call_sf, optfields);
+               if (isstate) *addrstate_syncfunc(qfunc[i], size) = &param;
+               if (iscaller) init_synclink(addrcaller_syncfunc(qfunc[i], size, isstate), &dummy_caller);
+               initself_synclinkd(addrwaitlist_syncfunc(qfunc[i], true));
+               // test link_waitfields
+               link_waitfields(&srun, qfunc[i], &param);
+               if (!i) {
+                  TEST(!isvalid_synclinkd(addrwaitlist_syncfunc(qfunc[i], true)));
+               }
+            }
+            // check result
+            TEST(0 == srun.caller);
+            TEST( isself_synclinkd(&srun.wakeup));
+            for (unsigned i = 0; i < lengthof(qfunc); ++i) {
+               TEST(qfunc[i]->mainfct    == &test_call_sf);
+               TEST(qfunc[i]->contoffset == 0);
+               TEST(qfunc[i]->optfields  == optfields);
+               if (iscaller) {
+                  TEST(&dummy_caller == addrcaller_syncfunc(qfunc[i], size, isstate)->link);
+               }
+               if (isstate) {
+                  TEST(&param == *addrstate_syncfunc(qfunc[i], size));
+               }
+               if (i == 0) {
+                  TEST(qfunc[i] == waitfunc_synccond(&scond));
+                  TEST(&scond.waitfunc == addrwaitfor_syncfunc(qfunc[i])->link);
+               } else {
+                  TEST(!isvalid_synclink(addrwaitfor_syncfunc(qfunc[i])));
+               }
+               synclinkd_t * wl = addrwaitlist_syncfunc(qfunc[i], true);
+               TEST(addrwaitlist_syncfunc(qfunc[i ? i-1 : lengthof(qfunc)-1], true) == wl->prev);
+               TEST(addrwaitlist_syncfunc(qfunc[i < lengthof(qfunc)-1 ? i+1 : 0], true) == wl->next);
+            }
+            unlink_synccond(&scond);
+         }
+      }
+   }
+
+   // TEST link_waitfields: ERROR (caller == 0) wait for called function
+   TEST(0 == free_syncrunner(&srun));
+   TEST(0 == init_syncrunner(&srun));
+   param.condition = 0;
+   srun.caller = 0;
+   memset(&sfunc, 0, sizeof(sfunc));
+   sfunc.optfields = syncfunc_opt_WAITFOR | syncfunc_opt_WAITLIST;
+   link_waitfields(&srun, &sfunc, &param);
+   TEST(0 == (sfunc.optfields & syncfunc_opt_WAITFOR_CALLED));
+   TEST(0 != (sfunc.optfields & syncfunc_opt_WAITFOR_CONDITION));
+   TEST(0 != (sfunc.optfields & syncfunc_opt_WAITRESULT));
+   TEST(EINVAL == *addrwaitresult_syncfunc(&sfunc));
+   TEST(srun.wakeup.prev == addrwaitlist_syncfunc(&sfunc, true));
+   TEST(srun.wakeup.next == addrwaitlist_syncfunc(&sfunc, true));
+   TEST(&srun.wakeup == addrwaitlist_syncfunc(&sfunc, true)->prev);
+   TEST(&srun.wakeup == addrwaitlist_syncfunc(&sfunc, true)->next);
+
+   // TEST link_waitfields: ERROR (func not in queue) wait for conditio
+   initself_synclinkd(&srun.wakeup);
+   param.condition = &scond;
+   syncfunc_t from_other_srun = syncfunc_FREE;
+   from_other_srun.optfields = syncfunc_opt_WAITFOR | syncfunc_opt_WAITLIST;
+   link_synccond(&scond, &from_other_srun);
+   memset(&sfunc, 0, sizeof(sfunc));
+   sfunc.optfields = syncfunc_opt_WAITFOR_CONDITION | syncfunc_opt_WAITLIST;
+   link_waitfields(&srun, &sfunc, &param);
+   TEST(0 == (sfunc.optfields & syncfunc_opt_WAITFOR_CALLED));
+   TEST(0 != (sfunc.optfields & syncfunc_opt_WAITFOR_CONDITION));
+   TEST(0 != (sfunc.optfields & syncfunc_opt_WAITRESULT));
+   TEST(EINVAL == *addrwaitresult_syncfunc(&sfunc));
+   TEST(srun.wakeup.prev == addrwaitlist_syncfunc(&sfunc, true));
+   TEST(srun.wakeup.next == addrwaitlist_syncfunc(&sfunc, true));
+   TEST(&srun.wakeup == addrwaitlist_syncfunc(&sfunc, true)->prev);
+   TEST(&srun.wakeup == addrwaitlist_syncfunc(&sfunc, true)->next);
 
    // unprepare
+   TEST(0 == free_synccond(&scond));
    TEST(0 == free_syncrunner(&srun));
 
    return 0;
 ONERR:
+   free_synccond(&scond);
    free_syncrunner(&srun);
    return EINVAL;
 }
@@ -1640,7 +1805,6 @@ static int test_exec_wakeup(void)
    syncfunc_opt_e optfields;
    unsigned       qidx;
    uint16_t       size;
-   void *         oldfree;
    syncqueue_t *  squeue;
    synclink_t     dummy_caller;
    synclink_t     dummy_called;
@@ -1657,7 +1821,7 @@ static int test_exec_wakeup(void)
    TEST(0 == process_wakeup_list(&srun));
    TEST(isself_synclinkd(&srun.wakeup));
    for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
+      TEST(0 == size_syncqueue(&srun.rwqueue[i]));
    }
 
    // TEST process_wakeup_list: synccmd_EXIT && "all possible wakeup parameter"
@@ -1669,7 +1833,7 @@ static int test_exec_wakeup(void)
                    | (isstate ? syncfunc_opt_STATE : 0) | (iscaller ? syncfunc_opt_CALLER : 0);
          qidx = find_wait_queue(optfields);
          size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-         oldfree = nextfree_syncqueue(&srun.rwqueue[qidx]);
+         TEST(0 == nextfree_syncqueue(&srun.rwqueue[qidx]));
          squeue  = &srun.rwqueue[qidx];
          for (int isresult = 0; isresult <= 1; isresult += 1) {
             for (int waitresult = 0; waitresult <= isresult*256; waitresult += 256) {
@@ -1694,7 +1858,7 @@ static int test_exec_wakeup(void)
                         if (isresult) *addrwaitresult_syncfunc(sfunc[i]) = s_test_expect_waitresult;
                         initprev_synclinkd(addrwaitlist_syncfunc(sfunc[i], true), &srun.wakeup);
                      }
-                     setnextfree_syncqueue(squeue, oldfree);
+                     setnextfree_syncqueue(squeue, 0);
 
                      // test process_wakeup_list
                      s_test_runcount = 0;
@@ -1702,8 +1866,8 @@ static int test_exec_wakeup(void)
                      // check result
                      TEST(0 == s_test_errcount);
                      TEST(lengthof(sfunc) == s_test_runcount);
-                     TEST(1 == size_syncqueue(squeue));
-                     TEST(oldfree == nextfree_syncqueue(squeue));
+                     TEST(0 == size_syncqueue(squeue));
+                     TEST(0 == nextfree_syncqueue(squeue));
                      TEST(isself_synclinkd(&srun.wakeup));
                   }
                }
@@ -1726,8 +1890,8 @@ static int test_exec_wakeup(void)
                    | (isstate ? syncfunc_opt_STATE : 0) | syncfunc_opt_CALLER;
          qidx = find_wait_queue(optfields);
          size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-         oldfree = nextfree_syncqueue(&srun.rwqueue[qidx]);
          squeue  = &srun.rwqueue[qidx];
+         TEST(0 == nextfree_syncqueue(&srun.rwqueue[qidx]));
          // squeue: free-entry, sfunc[0],  ..., sfunc[9]
          // waitlist: sfunc[0] - ...  - sfunc[9] - srun.wakeup
          for (unsigned i = 0; i < lengthof(sfunc); ++i) {
@@ -1746,7 +1910,7 @@ static int test_exec_wakeup(void)
             init_synclink(addrwaitfor_syncfunc(caller), addrcaller_syncfunc(sfunc[i], size, isstate));
             init_synclink(addrcaller_syncfunc(caller, size, isstate), &dummy_caller);
          }
-         setnextfree_syncqueue(squeue, oldfree);
+         setnextfree_syncqueue(squeue, 0);
 
          // test process_wakeup_list
          s_test_runcount = 0;
@@ -1754,9 +1918,9 @@ static int test_exec_wakeup(void)
          // check result
          TEST(0 == s_test_errcount);
          TEST(lengthof(sfunc) == s_test_runcount);
-         TEST(lengthof(sfunc)+1 == size_syncqueue(squeue));
+         TEST(lengthof(sfunc) == size_syncqueue(squeue));
          // during remove operation last entries are moved to first entries ==> caller[9] -> sfunc[0], ...
-         TEST(oldfree == nextfree_syncqueue(squeue));
+         TEST(0 == nextfree_syncqueue(squeue));
          // check caller added to wakeup
          TEST(srun.wakeup.next == &sfunc[9]->waitlist);
          TEST(&srun.wakeup     == sfunc[9]->waitlist.prev);
@@ -1802,7 +1966,7 @@ static int test_exec_wakeup(void)
                          | (iscaller ? syncfunc_opt_CALLER : 0) | (isstate ? syncfunc_opt_STATE : 0);;
                qidx = find_wait_queue(optfields);
                size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-               oldfree = nextfree_syncqueue(&srun.rwqueue[qidx]);
+               TEST(0 == nextfree_syncqueue(&srun.rwqueue[qidx]));
                squeue  = &srun.rwqueue[qidx];
                // squeue: free-entry, sfunc[0],  ..., sfunc[9]
                // waitlist: srun.wakeup - sfunc[0] - ...  - sfunc[9]
@@ -1814,16 +1978,19 @@ static int test_exec_wakeup(void)
                   if (iscaller) init_synclink(addrcaller_syncfunc(sfunc[i], size, isstate), &dummy_caller);
                   initprev_synclinkd(addrwaitlist_syncfunc(sfunc[i], true), &srun.wakeup);
                }
-               setnextfree_syncqueue(squeue, oldfree);
+               setnextfree_syncqueue(squeue, 0);
 
                // test process_wakeup_list
+               optfields = (iscaller ? syncfunc_opt_CALLER : 0) | (setstate ? syncfunc_opt_STATE : 0);
+               // make moving possible (uses nextfree)
+               TEST(0 == preallocate_syncqueue(&srun.rwqueue[find_run_queue(optfields)]));
                s_test_runcount = 0;
                TEST(0 == process_wakeup_list(&srun));
                // check result
                TEST(0 == s_test_errcount);
                TEST(lengthof(sfunc) == s_test_runcount);
-               TEST(1 == size_syncqueue(squeue));
-               TEST(oldfree == nextfree_syncqueue(squeue));
+               TEST(0 == size_syncqueue(squeue));
+               TEST(0 == nextfree_syncqueue(squeue));
                TEST(isself_synclinkd(&srun.wakeup));
                // check length of queues
                optfields = (iscaller ? syncfunc_opt_CALLER : 0) | (setstate ? syncfunc_opt_STATE : 0);
@@ -1831,7 +1998,7 @@ static int test_exec_wakeup(void)
                squeue = &srun.rwqueue[qidx];
                size   = elemsize_syncqueue(squeue);
                for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-                  TEST((i == qidx ? 1+lengthof(sfunc) : 1) == size_syncqueue(&srun.rwqueue[i]));
+                  TEST((i == qidx ? 1+lengthof(sfunc) : 0) == size_syncqueue(&srun.rwqueue[i]));
                }
                // check content of run queue
                unsigned i = 0;
@@ -1881,7 +2048,7 @@ static int test_exec_wakeup(void)
                   /* syncfunc_opt_WAITFOR_? is reversed to test for correct adaption of bits */
                   qidx = find_wait_queue(optfields);
                   size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-                  oldfree = nextfree_syncqueue(&srun.rwqueue[qidx]);
+                  TEST(0 == nextfree_syncqueue(&srun.rwqueue[qidx]));
                   squeue  = &srun.rwqueue[qidx];
                   // squeue: free-entry, sfunc[0],  ..., sfunc[9]
                   // waitlist: srun.wakeup - sfunc[0] - ...  - sfunc[9]
@@ -1893,9 +2060,11 @@ static int test_exec_wakeup(void)
                      if (iscaller) init_synclink(addrcaller_syncfunc(sfunc[i], size, isstate), &dummy_caller);
                      initprev_synclinkd(addrwaitlist_syncfunc(sfunc[i], true), &srun.wakeup);
                   }
-                  setnextfree_syncqueue(squeue, oldfree);
+                  setnextfree_syncqueue(squeue, 0);
 
                   // test process_wakeup_list
+                  unsigned qidx2 = find_wait_queue(optfields|(isstate2 ? syncfunc_opt_STATE : 0));
+                  TEST(0 == preallocate_syncqueue(&srun.rwqueue[qidx2]));
                   s_test_runcount = 0;
                   TEST(0 == process_wakeup_list(&srun));
                   // check result
@@ -1903,7 +2072,6 @@ static int test_exec_wakeup(void)
                   TEST(lengthof(sfunc) == s_test_runcount);
                   TEST(isself_synclinkd(&srun.wakeup));
                   // check length of queues
-                  unsigned qidx2 = find_wait_queue(optfields|(isstate2 ? syncfunc_opt_STATE : 0));
                   if (isstate || !setstate) {
                      TEST(qidx2 == qidx);
                   } else {
@@ -1912,7 +2080,7 @@ static int test_exec_wakeup(void)
                   squeue = &srun.rwqueue[qidx2];
                   size   = elemsize_syncqueue(squeue);
                   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-                     TEST((i == qidx2 ? 1+lengthof(sfunc) : 1) == size_syncqueue(&srun.rwqueue[i]));
+                     TEST((i == qidx2 ? 1+lengthof(sfunc) : 0) == size_syncqueue(&srun.rwqueue[i]));
                   }
                   // check content of wait queue
                   unsigned i = 0;
@@ -1990,7 +2158,7 @@ static int test_exec_wakeup(void)
                             | (iscaller ? syncfunc_opt_CALLER : 0) | (isstate ? syncfunc_opt_STATE : 0);
                   qidx = find_wait_queue(optfields);
                   size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-                  oldfree = nextfree_syncqueue(&srun.rwqueue[qidx]);
+                  TEST(0 == nextfree_syncqueue(&srun.rwqueue[qidx]));
                   squeue  = &srun.rwqueue[qidx];
                   // squeue: free-entry, sfunc[0],  ..., sfunc[9]
                   // waitlist: srun.wakeup - sfunc[0] - ...  - sfunc[9]
@@ -2002,17 +2170,17 @@ static int test_exec_wakeup(void)
                      if (iscaller) init_synclink(addrcaller_syncfunc(sfunc[i], size, isstate), &dummy_caller);
                      initprev_synclinkd(addrwaitlist_syncfunc(sfunc[i], true), &srun.wakeup);
                   }
-                  setnextfree_syncqueue(squeue, oldfree);
+                  setnextfree_syncqueue(squeue, 0);
 
                   // test process_wakeup_list
+                  unsigned qidx2 = find_wait_queue(optfields|(isstate2 ? syncfunc_opt_STATE : 0));
+                  TEST(0 == preallocate_syncqueue(&srun.rwqueue[qidx2]));
                   s_test_runcount = 0;
                   TEST(0 == process_wakeup_list(&srun));
                   // check result
                   TEST(0 == s_test_errcount);
                   TEST(lengthof(sfunc) == s_test_runcount);
-                  TEST(isvalid_synclinkd(&srun.wakeup) && ! isself_synclinkd(&srun.wakeup));
                   // check length of queues
-                  unsigned qidx2 = find_wait_queue(optfields|(isstate2 ? syncfunc_opt_STATE : 0));
                   if (isstate || !setstate) {
                      TEST(qidx2 == qidx);
                   } else {
@@ -2021,7 +2189,7 @@ static int test_exec_wakeup(void)
                   squeue = &srun.rwqueue[qidx2];
                   size   = elemsize_syncqueue(squeue);
                   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-                     TEST((i == qidx2 ? 1+lengthof(sfunc) : 1) == size_syncqueue(&srun.rwqueue[i]));
+                     TEST((i == qidx2 ? 1+lengthof(sfunc) : 0) == size_syncqueue(&srun.rwqueue[i]));
                   }
                   // check content of wakeup list
                   unsigned i = 0;
@@ -2070,28 +2238,32 @@ static int test_exec_wakeup(void)
       s_test_return = cmd ? synccmd_RUN : synccmd_EXIT;
       for (unsigned errcount = 1; errcount <= lengthof(sfunc); ++errcount) {
          optfields = syncfunc_opt_WAITFOR | syncfunc_opt_WAITLIST;
-         qidx = find_wait_queue(optfields);
-         size = elemsize_syncqueue(&srun.rwqueue[qidx]);
-         squeue  = &srun.rwqueue[qidx];
+         qidx   = find_wait_queue(optfields);
+         size   = elemsize_syncqueue(&srun.rwqueue[qidx]);
+         squeue = &srun.rwqueue[qidx];
          // build waitlist: sfunc[9] is processed first
          // last entry in queue is nextfree
          for (unsigned i = 0; i < lengthof(sfunc); ++i) {
-            sfunc[i] = nextfree_syncqueue(squeue);
             TEST(0 == preallocate_syncqueue(squeue));
+            sfunc[i] = nextfree_syncqueue(squeue);
             memset(sfunc[i], 0, size);
             init_syncfunc(sfunc[i], &test_wakeup_sf, optfields);
             initnext_synclinkd(addrwaitlist_syncfunc(sfunc[i], true), &srun.wakeup);
          }
+         TEST(0 == preallocate_syncqueue(squeue));
          // test process_wakeup_list
+         unsigned qidx2 = cmd ? find_run_queue(optfields) : qidx;
+         if (qidx2 != qidx) {
+            TEST(0 == preallocate_syncqueue(&srun.rwqueue[qidx2]));
+         }
          s_test_runcount = 0;
          init_testerrortimer(&s_syncrunner_errtimer, errcount, EINVAL);
          TEST(EINVAL == process_wakeup_list(&srun));
          // check result
          TEST(0 == s_test_errcount);
          TEST(errcount == s_test_runcount);
-         unsigned qidx2 = cmd ? find_run_queue(optfields) : qidx;
          for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-            TEST((i == qidx ? 1+lengthof(sfunc)-errcount : i == qidx2 ? errcount : 1) == size_syncqueue(&srun.rwqueue[i]));
+            TEST((i == qidx ? 1+lengthof(sfunc)-errcount : i == qidx2 ? errcount : 0) == size_syncqueue(&srun.rwqueue[i]));
          }
          if (cmd) {
             TEST(0 /*no reallocation*/ == nextfree_syncqueue(&srun.rwqueue[qidx2]));
@@ -2160,7 +2332,6 @@ static int test_exec_run(void)
 {
    syncrunner_t   srun;
    syncfunc_t   * sfunc[10];
-   syncfunc_opt_e soptfields[10];
    syncfunc_opt_e optfields;
    unsigned       qidx;
    uint16_t       size;
@@ -2182,11 +2353,11 @@ static int test_exec_run(void)
    TEST(1 == srun.isrun);
    TEST(isself_synclinkd(&srun.wakeup));
    for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
+      TEST(0 == size_syncqueue(&srun.rwqueue[i]));
    }
    srun.isrun = 0;
 
-   // TEST run_syncrunner: empty queues
+   // TEST run_syncrunner: empty queues (preallocates nextfree entry)
    TEST(0 == run_syncrunner(&srun));
    TEST(0 == s_test_errcount);
    TEST(0 == srun.isrun);
@@ -2220,50 +2391,6 @@ static int test_exec_run(void)
       TEST((i == qidx ? 0 : 1) == size_syncqueue(&srun.rwqueue[i]));
    }
 
-   // TEST run_syncrunner: preallocate
-   TEST(0 == free_syncrunner(&srun));
-   TEST(0 == init_syncrunner(&srun));
-   s_test_return = synccmd_RUN;
-   s_test_set_state = 0;
-   s_test_expect_state = 0;
-   s_test_expect_contoffset = 0;
-   s_test_expect_cmd = synccmd_RUN;
-   // set one entry per run queue (overwrite if different config map to same run queue)
-   for (int isstate = 0; isstate <= 1; ++isstate) {
-      for (int iscaller = 0; iscaller <= 1; ++iscaller) {
-         optfields = (iscaller ? syncfunc_opt_CALLER : 0) | (isstate ? syncfunc_opt_STATE : 0);
-         qidx = find_run_queue(optfields);
-         squeue =  &srun.rwqueue[qidx];
-         size = elemsize_syncqueue(squeue);
-         sfunc[qidx] = nextfree_syncqueue(squeue);
-         soptfields[qidx] = optfields;
-         memset(sfunc[qidx], 0, size);
-         init_syncfunc(sfunc[qidx], &test_run_sf,  optfields);
-      }
-   }
-   // clear all preallocated entries
-   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-      setnextfree_syncqueue(&srun.rwqueue[i], 0);
-   }
-   // test run_syncrunner
-   s_test_runcount = 0;
-   TEST(0 == run_syncrunner(&srun));
-   // check result
-   TEST(0 == s_test_errcount);
-   TEST(WAITQUEUE_OFFSET == s_test_runcount);
-   TEST(0 == srun.isrun);
-   TEST(isself_synclinkd(&srun.wakeup));
-   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
-      TEST(2 == size_syncqueue(&srun.rwqueue[i]));
-      TEST(0 != nextfree_syncqueue(&srun.rwqueue[i]));
-   }
-   for (unsigned i = 0; i < WAITQUEUE_OFFSET; ++i) {
-      TEST(sfunc[i] == first_queue(genericcast_queue(&srun.rwqueue[i]), elemsize_syncqueue(&srun.rwqueue[i])));
-      TEST(sfunc[i]->mainfct    == &test_run_sf);
-      TEST(sfunc[i]->contoffset == 0);
-      TEST(sfunc[i]->optfields  == soptfields[i]);
-   }
-
    // TEST run_syncrunner: synccmd_EXIT && "all possible run parameter""
    TEST(0 == free_syncrunner(&srun));
    TEST(0 == init_syncrunner(&srun));
@@ -2283,6 +2410,9 @@ static int test_exec_run(void)
             qidx = find_run_queue(optfields);
             size = elemsize_syncqueue(&srun.rwqueue[qidx]);
             squeue  = &srun.rwqueue[qidx];
+            if (! nextfree_syncqueue(squeue)) {
+               TEST(0 == preallocate_syncqueue(squeue));
+            }
             for (unsigned i = 0; i < lengthof(sfunc); ++i) {
                sfunc[i] = nextfree_syncqueue(squeue);
                TEST(0 == preallocate_syncqueue(squeue));
@@ -2390,6 +2520,7 @@ static int test_exec_run(void)
                // prepare for next run
                TEST(0 == free_syncqueue(squeue));
                TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+               TEST(0 == preallocate_syncqueue(squeue));
                initself_synclinkd(&srun.wakeup);
             }
          }
@@ -2461,6 +2592,7 @@ static int test_exec_run(void)
                // prepare for next run
                TEST(0 == free_syncqueue(squeue));
                TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+               TEST(0 == preallocate_syncqueue(squeue));
             }
          }
       }
@@ -2550,6 +2682,7 @@ static int test_exec_run(void)
                   unlink_synccond(&scond);
                   TEST(0 == free_syncqueue(squeue));
                   TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+                  TEST(0 == preallocate_syncqueue(squeue));
                }
             }
          }
@@ -2623,6 +2756,7 @@ static int test_exec_run(void)
                   // prepare for next run
                   TEST(0 == free_syncqueue(squeue));
                   TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+                  TEST(0 == preallocate_syncqueue(squeue));
                   initself_synclinkd(&srun.wakeup);
                }
             }
@@ -2680,12 +2814,14 @@ static int test_exec_run(void)
          // prepare for next run
          TEST(0 == free_syncqueue(squeue));
          TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+         TEST(0 == preallocate_syncqueue(squeue));
          initself_synclinkd(&srun.wakeup);
          if (cmd) {
             squeue = &srun.rwqueue[qidx2];
             size = elemsize_syncqueue(squeue);
             TEST(0 == free_syncqueue(squeue));
             TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx2));
+            TEST(0 == preallocate_syncqueue(squeue));
          }
       }
    }
@@ -2701,9 +2837,22 @@ ONERR:
    return EINVAL;
 }
 
+static int wait_sf(syncfunc_param_t * param, uint32_t cmd)
+{
+   syncfunc_START: ;
+
+   if (cmd == synccmd_RUN) {
+      int err = wait_syncfunc(param, state_syncfunc(param));
+      exit_syncfunc(param, err);
+   }
+
+   exit_syncfunc(param, EINVAL);
+}
+
 static int test_exec_terminate(void)
 {
-   syncrunner_t   srun;
+   syncrunner_t   srun  = syncrunner_FREE;
+   synccond_t     scond = synccond_FREE;
    syncfunc_opt_e optfields;
    unsigned       qidx;
    uint16_t       size;
@@ -2714,6 +2863,14 @@ static int test_exec_terminate(void)
    s_test_srun = &srun;
    s_test_errcount = 0;
    TEST(0 == init_syncrunner(&srun));
+   TEST(0 == init_synccond(&scond));
+
+   // TEST terminate_syncrunner: nextfree is skipped
+   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+      TEST(0 == preallocate_syncqueue(&srun.rwqueue[i]));
+      memset(nextfree_syncqueue(&srun.rwqueue[i]), 0, elemsize_syncqueue(&srun.rwqueue[i]));
+   }
+   TEST(0 == terminate_syncrunner(&srun));
 
    // TEST terminate_syncrunner: 1 wait and 1 run queue
    s_test_return = synccmd_EXIT;
@@ -2817,6 +2974,25 @@ static int test_exec_terminate(void)
       TEST(last == nextfree_syncqueue(&srun.rwqueue[i]));
    }
 
+   // TEST terminate_syncrunner: unlink from condition
+   for (unsigned i = 0; i < MAX_PER_QUEUE; ++i) {
+      TEST(0 == addfunc_syncrunner(&srun, &wait_sf, &scond));
+   }
+   TEST(MAX_PER_QUEUE == size_syncrunner(&srun));
+   TEST(! iswaiting_synccond(&scond));
+   TEST(0 == run_syncrunner(&srun));
+   TEST(MAX_PER_QUEUE == size_syncrunner(&srun));
+   TEST(  iswaiting_synccond(&scond));
+   TEST(0 == terminate_syncrunner(&srun));
+   TEST(! iswaiting_synccond(&scond));
+   TEST(isself_synclinkd(&srun.wakeup));
+   for (unsigned i = 0; i < lengthof(srun.rwqueue); ++i) {
+      void * last = last_queue(genericcast_queue(&srun.rwqueue[i]), elemsize_syncqueue(&srun.rwqueue[i]));
+      TEST(1 == size_syncqueue(&srun.rwqueue[i]));
+      TEST(0 != last);
+      TEST(last == nextfree_syncqueue(&srun.rwqueue[i]));
+   }
+
    // TEST terminate_syncrunner: EINVAL (remove_queue)
    s_test_return = synccmd_EXIT;
    s_test_expect_cmd = synccmd_EXIT;
@@ -2853,46 +3029,195 @@ static int test_exec_terminate(void)
                // prepare for next run
                TEST(0 == free_syncqueue(squeue));
                TEST(0 == init_syncqueue(squeue, size, (uint8_t) qidx));
+               TEST(0 == preallocate_syncqueue(squeue));
             }
          }
       }
    }
 
    // unprepare
+   TEST(0 == free_synccond(&scond));
    TEST(0 == free_syncrunner(&srun));
 
    return 0;
 ONERR:
+   free_synccond(&scond);
    free_syncrunner(&srun);
    return EINVAL;
 }
 
+typedef struct example_state_t example_state_t;
+
+struct example_state_t {
+   int inuse;
+   int error;
+   unsigned runcount;
+   unsigned expect;
+   synccond_t * cond;
+};
+
+static example_state_t s_example_state[100] = { {0,0,0,0,0} };
+
+static int example_sf1(syncfunc_param_t * param, uint32_t cmd)
+{
+   unsigned id = (unsigned) state_syncfunc(param);
+   example_state_t * state = &s_example_state[id];
+   ++ state->runcount;
+   start_syncfunc(param, cmd, ONRUN, ONEXIT);
+
+ONRUN:
+   // allocate resource
+   if (state->inuse || state->runcount != 1) goto ONEXIT;
+   state->inuse = 1;
+
+   do {
+      state->expect = state->runcount + 1;
+      yield_syncfunc(param);
+      if (state->expect != state->runcount) goto ONEXIT;
+   } while (state->expect < 100);
+
+   if (id < lengthof(s_example_state)/2) {
+      if (0 != addcall_syncrunner(param->syncrun, &example_sf1, (void*)(intptr_t)(id + lengthof(s_example_state)/2))) goto ONEXIT;
+      int retcode;
+      if (0 != waitexit_syncfunc(param, &retcode)) goto ONEXIT;
+      if (retcode != 0) goto ONEXIT;
+      if (101 != state->runcount) goto ONEXIT;
+   }
+
+   state->inuse = 0;
+   exit_syncfunc(param, 0);
+
+ONEXIT:
+   // mark as free
+   state->inuse = 0;
+   state->error = 1;
+   exit_syncfunc(param, EINTR);
+}
+
+static int example_sf2(syncfunc_param_t * param, uint32_t cmd)
+{
+   unsigned id = (unsigned) state_syncfunc(param);
+   example_state_t * state = &s_example_state[id];
+   ++ state->runcount;
+   start_syncfunc(param, cmd, ONRUN, ONEXIT);
+
+ONRUN:
+   if (state->inuse || state->runcount != 1) goto ONEXIT;
+   state->inuse = 1;
+
+   if (wait_syncfunc(param, state->cond)) goto ONEXIT;
+
+   if (2 != state->runcount) goto ONEXIT;
+
+   state->inuse = 0;
+   exit_syncfunc(param, 0);
+
+ONEXIT:
+   state->inuse = 0;
+   state->error = 1;
+   exit_syncfunc(param, EINTR);
+}
+
 static int test_examples(void)
 {
-   syncrunner_t   srun;
+   syncrunner_t   srun = syncrunner_FREE;
+   synccond_t     cond = synccond_FREE;
 
    // prepare
-   s_test_srun = &srun;
    s_test_errcount = 0;
    TEST(0 == init_syncrunner(&srun));
+   TEST(0 == init_synccond(&cond));
 
-   // test functions calling functions
-   // test waiting on condition
-   // test terminating
+   // TEST run_syncrunner: functions calling other functions
+   memset(s_example_state, 0, sizeof(s_example_state));
+   for (uintptr_t i = 0; i < lengthof(s_example_state)/2; ++i) {
+      TEST(0 == addfunc_syncrunner(&srun, example_sf1, (void*)i));
+   }
+   // run 100 times
+   for (unsigned i = 1; i <= 100; ++i) {
+      TEST(lengthof(s_example_state)/2 == size_syncrunner(&srun));
+      TEST(0 == run_syncrunner(&srun));
+      for (uintptr_t e = 0; e < lengthof(s_example_state)/2; ++e) {
+         TEST(1 == s_example_state[e].inuse)
+         TEST(i == s_example_state[e].runcount);
+      }
+   }
+   // run newly created functions 99 times
+   TEST(lengthof(s_example_state) == size_syncrunner(&srun));
+   for (unsigned i = 1; i <= 99; ++i) {
+      TEST(lengthof(s_example_state) == size_syncrunner(&srun));
+      TEST(0 == run_syncrunner(&srun));
+      for (uintptr_t e = 0; e < lengthof(s_example_state)/2; ++e) {
+         TEST(1 == s_example_state[e].inuse)
+         TEST(100 == s_example_state[e].runcount);
+         TEST(1 == s_example_state[e+lengthof(s_example_state)/2].inuse)
+         TEST(i == s_example_state[e+lengthof(s_example_state)/2].runcount);
+      }
+   }
+   // exit called functions + wakeup and exit callers
+   TEST(0 == run_syncrunner(&srun));
+   TEST(0 == size_syncrunner(&srun));
+   for (unsigned i = 1; i < lengthof(s_example_state); ++i) {
+      TEST(0 == s_example_state[i].inuse);
+      TEST(0 == s_example_state[i].error);
+      TEST(100 == s_example_state[i].runcount - (i < lengthof(s_example_state)/2 ? 1u : 0u));
+   }
 
-   // TEST run_syncrunner
-   // TODO: TEST run_syncrunner
-
+   // TEST run_syncrunner: functions waiting on condition
+   memset(s_example_state, 0, sizeof(s_example_state));
+   for (uintptr_t i = 0; i < lengthof(s_example_state); ++i) {
+      TEST(0 == addfunc_syncrunner(&srun, example_sf2, (void*)i));
+      s_example_state[i].cond = &cond;
+   }
+   for (unsigned i = 0; i < 10; ++i) {
+      // after first run all are waiting for condition
+      TEST(0 == run_syncrunner(&srun));
+      TEST(iswaiting_synccond(&cond));
+      TEST(lengthof(s_example_state) == size_syncrunner(&srun));
+      for (unsigned e = 1; e < lengthof(s_example_state); ++e) {
+         TEST(1 == s_example_state[e].inuse);
+         TEST(1 == s_example_state[e].runcount);
+      }
+   }
+   TEST(0 == wakeupall_syncrunner(&srun, &cond));
+   TEST(0 == run_syncrunner(&srun));
+   for (unsigned i = 1; i < lengthof(s_example_state); ++i) {
+      TEST(0 == s_example_state[i].inuse);
+      TEST(2 == s_example_state[i].runcount);
+      TEST(0 == s_example_state[i].error);
+   }
 
    // TEST terminate_syncrunner
-   // TODO: TEST terminate_syncrunner
-
+   memset(s_example_state, 0, sizeof(s_example_state));
+   for (uintptr_t i = 0; i < lengthof(s_example_state); ++i) {
+      TEST(0 == addfunc_syncrunner(&srun, example_sf2, (void*)i));
+      s_example_state[i].cond = &cond;
+   }
+   // after first run all are waiting for condition
+   TEST(0 == run_syncrunner(&srun));
+   TEST(  iswaiting_synccond(&cond));
+   TEST(lengthof(s_example_state) == size_syncrunner(&srun));
+   for (unsigned e = 1; e < lengthof(s_example_state); ++e) {
+      TEST(1 == s_example_state[e].inuse);
+      TEST(1 == s_example_state[e].runcount);
+      TEST(0 == s_example_state[e].error);
+   }
+   TEST(0 == terminate_syncrunner(&srun));
+   TEST(! iswaiting_synccond(&cond));
+   TEST(0 == size_syncrunner(&srun));
+   for (unsigned e = 1; e < lengthof(s_example_state); ++e) {
+      TEST(0 == s_example_state[e].inuse);
+      TEST(2 == s_example_state[e].runcount);
+      TEST(1 == s_example_state[e].error);
+   }
 
    // unprepare
+   TEST(0 == free_synccond(&cond));
    TEST(0 == free_syncrunner(&srun));
 
    return 0;
 ONERR:
+   free_synccond(&cond);
    free_syncrunner(&srun);
    return EINVAL;
 }

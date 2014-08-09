@@ -1,7 +1,7 @@
 Testcode
 ========
 
-This repository contains unrelated stuff I worked on.
+This repository contains unrelated stuff.
 
 License
 -------

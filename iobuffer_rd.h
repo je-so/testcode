@@ -49,39 +49,34 @@ int unittest_io_buffer_iobuffer_rd(void);
 
 /* struct: iobuffer_rd_t
  * Dieser IOBuffer unterstützt den lesenden Zugriff.
+ * Zu diesem Zweck unterhält er einen Ringbuffer von IOBlöcken.
  *
- * TODO: redraw with utf8 chars !!
+ * Ringbuffer:
  *
- * >  geblockter Dateiinhalt im Speicher (cached IOBlocks)
- * >
- * > ------<----------------------<----------------------<---------------------<---------------------<-
- * > |  --------------------    --------------------    --------------------    --------------------  |
- * > -> |                  | -> |                  | -> |                  | -> |                  | -|
- * >    --------------------    --------------------    --------------------    --------------------
- * >                            ^         ^             ^    ^
- * >                            |         (data)        |    (data)
- * >                            |         windowstart   |    windowend
- * >                            fileoffset              (fileoffset + blocksize)
+ * > |<- blocksize ->|
+ * > ---------------------------------------------------------------------------------
+ * > |   IO block    |   IO block    |   IO block    |   IO block    |   IO block    |
+ * > |   (unread)    |   (valid)     |   (valid)     |   (valid)     |   (unread)    |
+ * > ---------------------------------------------------------------------------------
+ * >                 ^     ^ (data)        ^  (data)
+ * >                 |     windowstart     windowend
+ * >                 |
+ * >                 fileoffset
  *
  * TODO: describe type
  *
- * TODO: extend vmblock_t // (no more split, verschiedene dateioffsets – pro page einen !)
- * TODO: erweitere commit Dokumentation !!
+ * Änderung der Dateilänge:
+ * Wenn sich die Dateilänge kürzer wird, nachdem der Reader
+ * initialisiert wurde, dann werden weniger Bytes gelesen
+ * als (filesize-fileoffset) Bytes (siehe <init_iobufferrd>).
  *
- * TODO: Beschreibe per Zeichnung das Sliding Window
+ * O-DIRECT IO:
+ * Der Reader verwendet immer read/write und unterstützt das Lesen
+ * von durch open( ..., O_DIRECT ) geöffneten Dateien.
+ * Dies erlaubt eine »Zero-Copy« Implementierung, wobei Probleme mit
+ * mmap-IO vermieden werden.
  *
- * Dateilänge – undefiniertes Verhalten:
- * Wenn sich die Dateilänge ändert, nachdem der Reader
- * initialisiert wurde, dann ist das Verhalten undefiniert.
- * Selbst bei Anpassung von <filesize> kann dies nicht vermieden werden.
- *
- * Grund:
- * Der Reader verwendet - wenn möglich - »memory mapped« IO.
- * Wird die Länge der Datei daher kleiner, nachdem sie in den Speicher
- * gemappt wurde, kann es beim Lesen des Speichers zu einem
- * »Segmentation Fault« kommen (hängt von dem darunter liegenden OS ab).
- * Da Längenänderung der Datei genau zum selben Zeitpunkt von einem anderen
- * Prozess durchgeführt werden kann, ist dieses Problem mit mmap-IO nicht zu umgehen.
+ * TODO: Ersetze die naive Implementiere mit read durch asynchrone IO-Worker-Threads !!
  *
  * */
 struct iobuffer_rd_t {
@@ -90,6 +85,7 @@ struct iobuffer_rd_t {
    uint16_t    windowend;
    uint16_t    blocksize;
    uint16_t    nrblock;
+   sys_iochannel_t iofile;
    /* variable: buffer
     * Ein einziger großer Speicherblock, der <nrblock> Blöcke der Größe <blocksize> enthält. */
    memblock_t  buffer;
@@ -113,7 +109,7 @@ struct iobuffer_rd_t {
 
 /* function: init_iobufferrd
  * TODO: Describe Initializes object. */
-int init_iobufferrd(/*out*/iobuffer_rd_t * iobuf, uint16_t maxwindowsize);
+int init_iobufferrd(/*out*/iobuffer_rd_t * iobuf, uint16_t maxwindowsize, sys_iochannel_t file, off_t fileoffset, off_t filesize);
 
 /* function: free_iobufferrd
  * TODO: Describe Frees all associated resources. */
@@ -126,6 +122,10 @@ int free_iobufferrd(iobuffer_rd_t * iobuf);
 const struct memblocklist_t * windowdata_iobufferrd(const iobuffer_rd_t * iobuf);
 
 // group: update
+
+/* function: reset_iobufferrd
+ * TODO: Describe */
+int reset_iobufferrd(iobuffer_rd_t * iobuf, sys_iochannel_t file, off_t fileoffset, off_t filesize);
 
 /* function: markunread_iobufferrd
  * TODO: Describe */

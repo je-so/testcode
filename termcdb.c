@@ -530,6 +530,7 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
       nr += (next - '0');
       if (size < 5) return ENODATA;
       next = keycodes->next[4];
+      codelen = 5;
       if (';' == next) {
          QUERYMOD(5)
       }
@@ -537,8 +538,8 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
       // matched \e[10~ ... \e[39~ || \e[10;X~ ... \e[39;X~
       if (nr <= 24) {
          if (nr < 15 || nr == 16 || nr == 22) return EILSEQ;
-         *key = (termcdb_key_t) termcdb_key_INIT((termcdb_keynr_e) (termcdb_keynr_F5 + nr - 15 - (nr > 16) - (nr > 22)), termcdb_keymod_NONE);
-         skip_memstream(keycodes, 5);
+         *key = (termcdb_key_t) termcdb_key_INIT((termcdb_keynr_e) (termcdb_keynr_F5 + nr - 15 - (nr > 16) - (nr > 22)), mod);
+         skip_memstream(keycodes, codelen);
          return 0;
       }
       if (mod/*linux supports no mod*/ || nr > 34 || nr == 27 || nr == 30) return EILSEQ;
@@ -1038,9 +1039,11 @@ static int test_keycodes(void)
       for (unsigned tk = 0; tk < lengthof(testkeycodes); ++tk) {
          termcdb_keynr_e K = testkeycodes[tk].key;
          for (unsigned ci = 0; testkeycodes[tk].codes[ci]; ++ci) {
-            const void *   end      = testkeycodes[tk].codes[ci] + strlen(testkeycodes[tk].codes[ci]);
-            memstream_ro_t keycodes = memstream_INIT((const uint8_t*)testkeycodes[tk].codes[ci], end);
+            const uint8_t* start    = (const uint8_t*) testkeycodes[tk].codes[ci];
+            const uint8_t* end      = start + strlen(testkeycodes[tk].codes[ci]);
+            memstream_ro_t keycodes = memstream_INIT(start, end);
 
+            // test OK
             memset(&key, 255, sizeof(key));
             TEST(0 == querykey_termcdb(termcdb, &keycodes, &key));
             TEST(K == key.nr);
@@ -1048,8 +1051,13 @@ static int test_keycodes(void)
             TEST(end == keycodes.next);
             TEST(end == keycodes.end);
 
-            // ENODATA
-            // TODO:
+            // test ENODATA
+            for (const uint8_t * end2 = start+1; end2 != end; ++end2) {
+               keycodes = (memstream_ro_t) memstream_INIT(start, end2);
+               TEST(ENODATA == querykey_termcdb(termcdb, &keycodes, &key));
+               TEST(start == keycodes.next);
+               TEST(end2  == keycodes.end);
+            }
 
          }
       }
@@ -1058,9 +1066,11 @@ static int test_keycodes(void)
       for (unsigned tk = 0; tk < lengthof(testshiftkeycodes); ++tk) {
          termcdb_keynr_e K = testshiftkeycodes[tk].key;
          for (unsigned ci = 0; testshiftkeycodes[tk].codes[ci]; ++ci) {
-            const void *   end      = testshiftkeycodes[tk].codes[ci] + strlen(testshiftkeycodes[tk].codes[ci]);
-            memstream_ro_t keycodes = memstream_INIT((const uint8_t*)testshiftkeycodes[tk].codes[ci], end);
+            const uint8_t* start    = (const uint8_t*) testshiftkeycodes[tk].codes[ci];
+            const uint8_t* end      = start + strlen(testshiftkeycodes[tk].codes[ci]);
+            memstream_ro_t keycodes = memstream_INIT(start, end);
 
+            // test OK
             memset(&key, 255, sizeof(key));
             TEST(0 == querykey_termcdb(termcdb, &keycodes, &key));
             TEST(K == key.nr);
@@ -1068,9 +1078,13 @@ static int test_keycodes(void)
             TEST(end == keycodes.next);
             TEST(end == keycodes.end);
 
-            // ENODATA
-            // TODO:
-
+            // test ENODATA
+            for (const uint8_t * end2 = start+1; end2 != end; ++end2) {
+               keycodes = (memstream_ro_t) memstream_INIT(start, end2);
+               TEST(ENODATA == querykey_termcdb(termcdb, &keycodes, &key));
+               TEST(start == keycodes.next);
+               TEST(end2  == keycodes.end);
+            }
          }
       }
 
@@ -1080,8 +1094,8 @@ static int test_keycodes(void)
          for (unsigned ci = 0; testkeycodes[tk].codes[ci]; ++ci) {
             size_t len = strlen(testkeycodes[tk].codes[ci]);
 
-            if (len == 4 && 0 == memcmp(testkeycodes[tk].codes[ci], "\x1b[[", 3)) { // skip linux F1-F5
-               printf("SKIP: tk=%d ci=%d (\\x%x%s)\n", tk, ci, testkeycodes[tk].codes[ci][0], testkeycodes[tk].codes[ci]+1);
+            if (  (len < 3) // BACKSPACE
+                  || (len == 4 && 0 == memcmp(testkeycodes[tk].codes[ci], "\x1b[[", 3))/*skip linux F1-F5*/) {
                continue;
             }
 
@@ -1089,23 +1103,26 @@ static int test_keycodes(void)
             for (termcdb_keymod_e mi = termcdb_keymod_SHIFT; mi <= miMAX; ++mi) {
                uint8_t        buffer[100];
                size_t         len2     = len + 2 + (mi > 8) + (len == 3);
-               const void *   end      = buffer + len2;
+               const uint8_t* end      = buffer + len2;
                memstream_ro_t keycodes = memstream_INIT(buffer, end);
 
+               // test OK
                memcpy(buffer, testkeycodes[tk].codes[ci], len-1);
                sprintf((char*)buffer+len-1, "%s;%d%c", (len == 3) ? "1" : "", mi+1, testkeycodes[tk].codes[ci][len-1]);
                memset(&key, 255, sizeof(key));
-               printf("tk=%d ci=%d mi=%d (\\x%x%s)\n", tk, ci, mi, buffer[0], buffer+1);
-               if (tk == 4 && ci == 1 && mi == 1)
-                  printf("\n");
                TEST(0 == querykey_termcdb(termcdb, &keycodes, &key));
                TEST(K == key.nr);
                TEST(mi == key.mod);
                TEST(end == keycodes.next);
                TEST(end == keycodes.end);
 
-               // ENODATA
-               // TODO:
+               // test ENODATA
+               for (uint8_t * end2 = buffer+1; end2 != end; ++end2) {
+                  keycodes = (memstream_ro_t) memstream_INIT(buffer, end2);
+                  TEST(ENODATA == querykey_termcdb(termcdb, &keycodes, &key));
+                  TEST(buffer == keycodes.next);
+                  TEST(end2   == keycodes.end);
+               }
 
             }
          }
@@ -1117,7 +1134,6 @@ static int test_keycodes(void)
       // unprepare
       TEST(0 == delete_termcdb(&termcdb));
    }
-
 
    return 0;
 ONERR:

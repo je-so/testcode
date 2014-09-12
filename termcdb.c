@@ -103,9 +103,12 @@ int startedit_termcdb(const termcdb_t * termcdb, /*ret*/memstream_t * ctrlcodes)
    if (termcdb->termid == termcdb_id_LINUXCONSOLE) {
       // save current state (cursor coordinates, attributes, character sets pointed at by G0, G1).
       COPY_CODE_SEQUENCE("\x1b""7")
+
    } else {    // assume XTERM
-      // save current state and switch alternate screen
-      COPY_CODE_SEQUENCE("\x1b[?1049h");
+      // Save current state and switch alternate screen
+      // Normal Cursor Keys \e[?1l
+      // Normal Keypad \e>
+      COPY_CODE_SEQUENCE("\x1b[?1049h\x1b[?1l\x1b>");
    }
 
    return 0;
@@ -121,17 +124,6 @@ int endedit_termcdb(const termcdb_t * termcdb, /*ret*/memstream_t * ctrlcodes)
    } else {
       // restore state most recently saved by startedit_termcdb
       COPY_CODE_SEQUENCE("\x1b[?1049l");
-   }
-
-   return 0;
-}
-
-int setnormkeys_termcdb(const termcdb_t * termcdb, /*ret*/memstream_t * ctrlcodes)
-{
-   if (termcdb->termid == termcdb_id_XTERM) {
-      // Normal Cursor Keys \e[?1l
-      // Normal Keypad \e>
-      COPY_CODE_SEQUENCE("\x1b[?1l\x1b>");
    }
 
    return 0;
@@ -426,11 +418,12 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
    } else if (next == 0x1b) {
       termcdb_keymod_e mod = termcdb_keymod_NONE;
       unsigned codelen;
-      if (size < 3) return ENODATA;
+      if (size < 2) return ENODATA;
       next = keycodes->next[1];
 
       if (next == 'O') {
          // matched SS3: '\eO'
+         if (size < 3) return ENODATA;
          next = keycodes->next[2];
          codelen = 3;
          if (next == '1' /*mod key pressed*/) {
@@ -449,7 +442,7 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
             *key = (termcdb_key_t) termcdb_key_INIT(termcdb_keynr_END, mod);
             skip_memstream(keycodes, codelen);
             return 0;
-         } else if (next >= 'P' || next <= 'S') {
+         } else if ('P' <= next && next <= 'S') {
             *key = (termcdb_key_t) termcdb_key_INIT((termcdb_keynr_e) (termcdb_keynr_F1 + next - 'P'), mod);
             skip_memstream(keycodes, codelen);
             return 0;
@@ -460,6 +453,7 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
 
       if (next != '[') return EILSEQ;
       // matched CSI: '\e['
+      if (size < 3) return ENODATA;
       next = keycodes->next[2];
 
       if (next == '[') {
@@ -528,21 +522,21 @@ int querykey_termcdb(const termcdb_t * termcdb, memstream_ro_t * keycodes, /*out
       nr *= 10;
       if (next < '0' || next > '9') return EILSEQ;
       nr += (next - '0');
+      if (nr < 15 || nr > 34) return EILSEQ;
+      if (nr == 16 || nr == 22 || nr == 27 || nr == 30) return EILSEQ;
       if (size < 5) return ENODATA;
       next = keycodes->next[4];
       codelen = 5;
-      if (';' == next) {
+      if (';' == next && nr <= 24/*linux supports no mod*/) {
          QUERYMOD(5)
       }
       if ('~' != next) return EILSEQ;
       // matched \e[10~ ... \e[39~ || \e[10;X~ ... \e[39;X~
       if (nr <= 24) {
-         if (nr < 15 || nr == 16 || nr == 22) return EILSEQ;
          *key = (termcdb_key_t) termcdb_key_INIT((termcdb_keynr_e) (termcdb_keynr_F5 + nr - 15 - (nr > 16) - (nr > 22)), mod);
          skip_memstream(keycodes, codelen);
          return 0;
       }
-      if (mod/*linux supports no mod*/ || nr > 34 || nr == 27 || nr == 30) return EILSEQ;
 
       // linux shift F1-F8 (F13-F20)
       *key = (termcdb_key_t) termcdb_key_INIT((termcdb_keynr_e) (termcdb_keynr_F1 + nr - 25 - (nr > 27) - (nr > 30)), termcdb_keymod_SHIFT);
@@ -621,13 +615,10 @@ static int test_controlcodes0(void)
    termcdb_t * termcdb = 0;
    INIT_TYPES // const uint8_t * types[] = { ... }
    const char * codes_startedit[lengthof(types)] = {
-      "\x1b""7", "\x1b[?1049h"
+      "\x1b""7", "\x1b[?1049h\x1b[?1l\x1b>"
    };
    const char * codes_endedit[lengthof(types)] = {
       "\x1b""8", "\x1b[?1049l"
-   };
-   const char * codes_setnormkeys[lengthof(types)] = {
-      "", "\x1b[?1l\x1b>"
    };
    const char * codes_clearline = "\x1b[1K\x1b[K";
    const char * codes_clearscreen = "\x1b[H\x1b[J";
@@ -674,21 +665,6 @@ static int test_controlcodes0(void)
       init_memstream(&strbuf, zerobuf, zerobuf+codelen-1);
       TEST(ENOBUFS == endedit_termcdb(termcdb, &strbuf));
       TEST(0 == memcmp(zerobuf, zerobuf2, sizeof(zerobuf))); // not changed
-
-      // TEST setnormkeys_termcdb
-      codelen = strlen(codes_setnormkeys[i]);
-      init_memstream(&strbuf, buffer, buffer+codelen);
-      TEST(0 == setnormkeys_termcdb(termcdb, &strbuf));
-      TEST(buffer+codelen == strbuf.next);
-      TEST(buffer+codelen == strbuf.end);
-      TEST(0 == memcmp(buffer, codes_setnormkeys[i], codelen));
-
-      // TEST setnormkeys_termcdb: ENOBUFS
-      if (codelen > 0) {
-         init_memstream(&strbuf, zerobuf, zerobuf+codelen-1);
-         TEST(ENOBUFS == setnormkeys_termcdb(termcdb, &strbuf));
-         TEST(0 == memcmp(zerobuf, zerobuf2, sizeof(zerobuf))); // not changed
-      }
 
       // TEST clearline_termcdb
       codelen = strlen(codes_clearline);
@@ -977,6 +953,19 @@ ONERR:
    return EINVAL;
 }
 
+static int testhelper_EILSEQ(termcdb_t * termcdb, const uint8_t * str, const uint8_t * end)
+{
+   termcdb_key_t  key;
+   memstream_ro_t keycodes = memstream_INIT(str, end);
+   TEST(EILSEQ == querykey_termcdb(termcdb, &keycodes, &key));
+   TEST(str == keycodes.next);
+   TEST(end == keycodes.end);
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
 static int test_keycodes(void)
 {
    INIT_TYPES // const uint8_t * types[] = { ... }
@@ -1129,7 +1118,69 @@ static int test_keycodes(void)
       }
 
       // TEST querykey_termcdb: EILSEQ
-      // TODO:
+      for (uint16_t ch = 1; ch <= 255; ++ch) {
+
+         if (ch != 0x7f && ch != 0x1b) {
+            uint8_t str[1] = { (uint8_t)ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+1));
+         }
+
+         if (ch != '[' && ch != 'O') {
+            uint8_t str[2] = { '\x1b', (uint8_t)ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+2));
+         }
+
+         if (! ('A' <= ch && ch <= 'E')) {
+            uint8_t str[4] = { '\x1b', '[', '[', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (  ! ('P' <= ch && ch <= 'S') && ! ('A' <= ch && ch <= 'F')
+               && 'H' != ch && '1' != ch){
+            uint8_t str[3] = { '\x1b', 'O', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+3));
+         }
+
+         if (  ! ('A' <= ch && ch <= 'H')
+               && ch != '[' && ! ('1' <= ch && ch <= '6')){
+            uint8_t str[3] = { '\x1b', '[', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+3));
+         }
+
+         if (  ! ('7' <= ch && ch <= '9')
+               && ch != '5' && ch != ';' && ch != '~') {
+            uint8_t str[4] = { '\x1b', '[', '1', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (  ! ('0' <= ch && ch <= '6')
+               && ch != '8' && ch != '9' && ch != '~' && ch != ';') {
+            uint8_t str[4] = { '\x1b', '[', '2', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (  ! ('1' <= ch && ch <= '4')
+               && ch != '~' && ch != ';') {
+            uint8_t str[4] = { '\x1b', '[', '3', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (ch != ';' && ch != '~') {
+            uint8_t str[4] = { '\x1b', '[', '4', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (ch != ';' && ch != '~') {
+            uint8_t str[4] = { '\x1b', '[', '5', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+         if (ch != ';' && ch != '~') {
+            uint8_t str[4] = { '\x1b', '[', '6', (uint8_t) ch };
+            TEST(0 == testhelper_EILSEQ(termcdb, str, str+4));
+         }
+
+      }
 
       // unprepare
       TEST(0 == delete_termcdb(&termcdb));

@@ -1,23 +1,8 @@
 /* title: Terminal
 
-   Erlaubt die Konfiguration und die Abfrage der Anzahl Zeilen und
-   Zeichen pro Zeile des Terminals.
-
-----
-   TODO: extract in extre module (terminal_codedb_t)
-   Anhand des Terminaltyps entscheidet das Modul, welche Steuersequenzen
-   an das Terminal zu senden sind und welche Funktionstasten welche Tastenkodes
-   zurücksenden.
-   Escape Sequenzen einbinden. (terminfo)
-         (Eigene statische Datenbank während des Compilierens einbinden.)
-
-   TODO: Maskieren von Control Sequenzen.
-
-   Aktuelle Einschränkung:
-   In der aktuellen Fassung werden nur »xterm« und »linux« Terminals unterstützt.
-   In einer weiteren Ausbaustufe ist die Ansteuerung des Terminals mittels
-   termcap/terminfo Datenbank oder gleichwertiger Technik vorgesehen.
-----
+   Erlaubt die Konfiguration des Terminalmodus
+   und die Abfrage von Informationen wie die Anzahl der
+   Zeilen und Zeichen pro Zeile.
 
    about: Copyright
    This program is free software.
@@ -61,16 +46,26 @@ int unittest_io_terminal_terminal(void);
 
 
 /* struct: terminal_t
+ * Dient zur Ermittlung und Konfiguration des »controlling Terminals«.
+ * Mit der Funktion <configrawedit_terminal> wird in den Modus zur zeichenweisen
+ * Tastaturverarbeitung umgeschalten, mit <configrestore_terminal> wird wieder
+ * in den zeilenweisen Eingabemodus (siehe auch <input_terminal>) umgeschalten.
  *
- * TODO: describe type
- * --------------------
- * --- ?? Erlaubt die Konfiguration und die Abfrage der Anzahl Zeilen und
- * --- ?? Zeichen pro Zeile des Terminals.
- * --------------------
+ * Der zeilenweise Eingabemodus erlaubt auch das Senden von Signalen (CTRL-C, CTRL-Z, ...)
+ * an den Vordergrundprozess und er unterstützt rudimentäre Editierfunktionen.
  *
+ * Mit dem zeichenweisen (raw edit) Eingabemodus werden die Sondertasten zur Signalerzeugung
+ * abgeschalten und die Tastendrücke werden vom Terminal direkt an den Prozess weitergereicht.
+ * Der Prozess muss dann alle nötigen Editierfunktionen implementieren.
  *
+ * Da manche Sondertasten auf der Tastatur, etwa F1 bis F12, als Esacpesequenzen kodiert werden
+ * und es sein könnte, daß nicht alle Bytes gelesen wurden, gibt es die Funktion <tryread_terminal>.
+ * Diese wartet bis zu 1/10 Sekunde auf noch einzulesendes Bytes, um alle Zeichen einer Escapesequenz
+ * zu lesen. Da der Benutzer diese Sequenzen manuell eingeben könnte, ist die Wartezeit auf 1/10
+ * Sekunde voreingestellt um eine manuelle Eingabe einer Zeichenfolge von einer zusammengehörenden
+ * Escapesequenz zu unterscheiden.
  *
- * Änderung der Größe eines Terminal:
+ * Änderung der Fenstergröße eines Terminal:
  * Ein vom Terminal im Vordergrund gestarteter Prozess wird zu der Vordergrundprozessgruppe des
  * Terminals zugeordnet und bekommt Änderung der Fenstergröße vom Terminal in der Folge gemeldet.
  *
@@ -78,10 +73,14 @@ int unittest_io_terminal_terminal(void);
  * Vordergrundprozessgrupee des Terminal geändert (siehe tcgetpgrp(3) und tcsetpgrp(3)),
  * dann bekommt er keine Änderungen mehr mitgeteilt.
  *
+ * Mit <issizechange_terminal> kann eine änderung abgefragt werden.
+ *
  * Weitere Terminals:
  * Mittels open können von diesem Prozess aus weitere Terminals geöffnet wurden, diese
  * teilen aber nicht die Änderung der Fenstergröße mit und der Prozess teilt sich die
  * Ein- und Ausgabe möglicherweise mit Prozessen, die einer anderen Session und Prozessgruppe angehören.
+ * Dabei würden mögliche Eingaben byteweise zerhackt an verschiedene Prozesse weitergereicht werden,
+ * was eine sinnvolle Verarbeitung unmöglich machte.
  *
  * Controlling Terminal:
  * Das Terminal, welches diesen Prozess startet wird auch als »controlling Terminal« vermerkt.
@@ -192,6 +191,19 @@ int init_terminal(/*out*/terminal_t * terml);
 int free_terminal(terminal_t * terml);
 
 // group: query
+
+/* function: input_terminal
+ * Gibt den Eingabekanal vom Terminal terml zurück.
+ * Eingelesene Bytes sind die UTF8-Codes der Zeichen plus als Esacpesequenzen kodierte Sondertasten.
+ * Mit der Funktion <querykey_termcdb> können diese Sondertasten dekodiert werden. */
+sys_iochannel_t input_terminal(terminal_t * terml);
+
+/* function: output_terminal
+ * Gibt den Ausgabekanal vom Terminal terml zurück.
+ * Geschriebene Bytes sollten in UTF8 kodierte Zeichen sein plus als Esacpesequenzen kodierte Sonderfunktionen.
+ * Die Typ <termcdb_t> bietet Funktionen wie <movecursor_termcdb> und weitere, welche diese Escapesequenzen
+ * dem Typ des Terminals entsprechend erzeugen. */
+sys_iochannel_t output_terminal(terminal_t * terml);
 
 /* function: hascontrolling_terminal
  * Gibt true zurück, falls der Prozess mit einem »controlling Terminal« verbunden ist.
@@ -306,7 +318,7 @@ int readsize_terminal(terminal_t * terml, uint16_t * rowsize, uint16_t * colsize
  * */
 int removecontrolling_terminal(void);
 
-// group: config line displine
+// group: config line discipline
 
 /* function: configstore_terminal
  * Merkt sich die aktuellen Terminaleinstellungen.
@@ -340,6 +352,16 @@ int configrawedit_terminal(terminal_t * terml);
  * Implements <terminal_t.ctrlsusp_terminal>. */
 #define ctrlsusp_terminal(terml) \
          ((terml)->ctrl_susp)
+
+/* define: input_terminal
+ * Implements <terminal_t.input_terminal>. */
+#define input_terminal(terml) \
+         ((sys_iochannel_t) (terml)->input)
+
+/* define: output_terminal
+ * Implements <terminal_t.output_terminal>. */
+#define output_terminal(terml) \
+         ((sys_iochannel_t) (terml)->output)
 
 
 #endif

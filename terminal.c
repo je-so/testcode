@@ -2,17 +2,8 @@
 
    Implements <Terminal>.
 
-   about: Copyright
-   This program is free software.
-   You can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+   Copyright:
+   This program is free software. See accompanying LICENSE file.
 
    Author:
    (C) 2014 Jörg Seebohn
@@ -321,8 +312,6 @@ size_t tryread_terminal(terminal_t * terml, size_t len, /*out*/uint8_t keys[len]
    return (nrbytes < 0) ? 0 : (size_t) nrbytes;
 }
 
-// group: update
-
 int readsize_terminal(terminal_t * terml, uint16_t * rowsize, uint16_t * colsize)
 {
    int err;
@@ -339,6 +328,8 @@ ONERR:
    TRACEEXIT_ERRLOG(err);
    return err;
 }
+
+// group: update
 
 int removecontrolling_terminal(void)
 {
@@ -368,7 +359,7 @@ ONERR:
    return err;
 }
 
-// group: config line displine
+// group: config line discipline
 
 int configstore_terminal(terminal_t * terml)
 {
@@ -460,13 +451,17 @@ static int test_helper(void)
 {
    struct termios tconf;
    struct termios tconf2;
+   struct termios oldconf;
    struct winsize size;
    struct winsize size2 = { 0 };
    terminal_t     terml;
    terminal_t     terml2;
    file_t         file = file_FREE;
+   bool           isoldconf = false;
 
    // prepare
+   TEST(0 == readconfig(&oldconf, sys_iochannel_STDIN));
+   isoldconf = true;
    memset(&tconf, 0, sizeof(tconf));
    memset(&tconf2, 0, sizeof(tconf2));
    memset(&terml, 0, sizeof(terml));
@@ -543,6 +538,7 @@ static int test_helper(void)
          TEST(terml.oldconf_onlcr  == (0 != (tconf2.c_oflag & ONLCR)));
       }
    }
+   TEST(0 == writeconfig(&tconf, sys_iochannel_STDIN));
 
    // TEST configstore: ENOTTY
    memset(&terml, 0, sizeof(terml));
@@ -556,9 +552,13 @@ static int test_helper(void)
    // unprepare
    TEST(0 == free_file(&file));
    TEST(0 == remove_file("./xxx", 0));
+   TEST(0 == writeconfig(&oldconf, sys_iochannel_STDIN));
 
    return 0;
 ONERR:
+   if (isoldconf) {
+      writeconfig(&oldconf, sys_iochannel_STDIN);
+   }
    free_file(&file);
    remove_file("./xxx", 0);
    return EINVAL;
@@ -745,6 +745,20 @@ static int test_query(void)
    sigev.sigev_value.sival_int = 0;
    TEST(0 == timer_create(CLOCK_MONOTONIC, &sigev, &timerid));
    istimer = true;
+
+   // TEST input_terminal
+   TEST(sys_iochannel_STDIN == input_terminal(&terml));
+   for (sys_iochannel_t i = 1; i; i = i << 1) {
+      terminal_t tx = { .input = i };
+      TEST(i == input_terminal(&tx));
+   }
+
+   // TEST input_terminal
+   TEST(sys_iochannel_STDOUT == output_terminal(&terml));
+   for (sys_iochannel_t i = 1; i; i = i << 1) {
+      terminal_t tx = { .output = i };
+      TEST(i == output_terminal(&tx));
+   }
 
    // TEST isutf8_terminal
    TEST(0 != isutf8_terminal(&terml));
@@ -1287,41 +1301,9 @@ ONERR:
    return EINVAL;
 }
 
+
 int unittest_io_terminal_terminal()
 {
-   extern bool isclosed_iochannel(int ioc);
-   terminal_t term;
-   init_terminal(&term);
-   configrawedit_terminal(&term);
-   // sigset_t ss;
-   // sigfillset(&ss);
-   // sigprocmask(SIG_BLOCK, &ss, 0);
-   for (int i = 0; i < 50; ++i) {
-      size_t  sizeread;
-      uint8_t keys[10];
-      int err;
-      struct pollfd pfd;
-      pfd.events = POLLIN;
-      pfd.fd  = term.input;
-      poll(&pfd,1,-1);
-      sizeread = tryread_terminal(&term, sizeof(keys), keys);
-      printf("[size: %d]:", sizeread);
-      for (unsigned i = 0; i < sizeread; ++i) {
-            printf("%x", keys[i]);
-      }
-      printf(";;", keys[i]);
-      for (unsigned i = 0; i < sizeread; ++i) {
-         if (keys[i] < 32 || keys[i] == 127)
-            printf("^%c", 64^keys[i]);
-         else
-            printf("%c", keys[i]);
-      }
-      printf("\r\n");
-      if (keys[0] == 'q') break;
-   }
-   configrestore_terminal(&term);
-   exit(0);
-
    if (test_helper())         goto ONERR;
    if (test_initfree())       goto ONERR;
    if (test_query())          goto ONERR;

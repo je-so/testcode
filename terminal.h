@@ -4,17 +4,8 @@
    und die Abfrage von Informationen wie die Anzahl der
    Zeilen und Zeichen pro Zeile.
 
-   about: Copyright
-   This program is free software.
-   You can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+   Copyright:
+   This program is free software. See accompanying LICENSE file.
 
    Author:
    (C) 2014 Jörg Seebohn
@@ -280,25 +271,22 @@ uint8_t ctrllnext_terminal(const terminal_t * terml);
 
 /* function: tryread_terminal
  * Liest maximal len Datenbytes von der Terminaleingabe.
- * Falls <configrawedit_terminal> aufgerufen wurde, dann
- * wartet diese Funktion maximal 1/10 Sekunde zwischen den einzelnen Datenbytes.
+ * Sie wartet immer ca. 50 ms (Millisekunden) auf ankommende Daten, auch wenn schon welche vorhanden sind.
  * Diese Funktion kann zum Lesen für Spezialtasten, die 2 und mehr Bytes pro Taste (etwa "\033""OC") übertragen,
- * aufgerufen werden, wenn am Ende des gelesenen Buffer das Prefix einer unvollständigen Spezialtaste vorliegt.
- * Falls <configrawedit_terminal> nicht oder danach <configrestore_terminal> aufgerufen wurde,
- * wartet diese Funktion solange, bis der Benutzer eine Eingabezeile eingegben hat.
+ * aufgerufen werden, wenn am Ende des gelesenen Buffer das Präfix einer unvollständigen Spezialtaste vorliegt.
  *
  * Return:
- * 0      - Keine Daten innerhalb von 1/10 Sekunde gelesen (<configrawedit_terminal> wurde aufgerufen).
+ * 0      - Fehler oder keine Daten innerhalb von 50 ms Sekunde gelesen.
  * != 0   - Anzahl an Bytes, die nach keys gelesen wurden. Der Wert ist immer <= len. */
 size_t tryread_terminal(terminal_t * terml, size_t len, /*out*/uint8_t keys[len]);
 
-/* function: readsize_terminal
+/* function: size_terminal
  * Liest die aktuelle Höhe und Breite des Terminals in Zeichen.
  * Ändert sich die Terminalgröße, kann mittels <waitsizechange_terminal>
  * bzw. <issizechange_terminal> die Änderung ermittelt werden.
- * Meldet eine der beiden Funktionen eine Änderung, muss die Funktion <readsize_terminal>
+ * Meldet eine der beiden Funktionen eine Änderung, muss die Funktion <size_terminal>
  * aufgerufen werden, um die Größe auf den neuesten Stand zu bringen. */
-int readsize_terminal(terminal_t * terml, uint16_t * rowsize, uint16_t * colsize);
+int size_terminal(terminal_t * terml, uint16_t * nrcolsX, uint16_t * nrrowsY);
 
 // group: update
 

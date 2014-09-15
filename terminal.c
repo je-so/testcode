@@ -308,11 +308,25 @@ int type_terminal(uint16_t len, /*out*/uint8_t type[len])
 
 size_t tryread_terminal(terminal_t * terml, size_t len, /*out*/uint8_t keys[len])
 {
-   ssize_t nrbytes = read(terml->input, keys, len);
-   return (nrbytes < 0) ? 0 : (size_t) nrbytes;
+   size_t        nrbytes = 0;
+   struct pollfd pfd = { .events = POLLIN, .fd = terml->input };
+
+   for (unsigned i = 0; i < 5 && nrbytes < len; ++i) {
+      int nr = poll(&pfd, 1, 10);
+      if (1 == nr) {
+         if (! (pfd.revents & POLLIN)) break;
+         ssize_t bytes;
+         do {
+            bytes = read(terml->input, keys+nrbytes, len+nrbytes);
+         } while (bytes == -1 && errno == EINTR);
+         if (bytes > 0) nrbytes += (size_t) bytes;
+      }
+   }
+
+   return nrbytes;
 }
 
-int readsize_terminal(terminal_t * terml, uint16_t * rowsize, uint16_t * colsize)
+int size_terminal(terminal_t * terml, uint16_t * nrcolsX, uint16_t * nrrowsY)
 {
    int err;
    struct winsize size;
@@ -320,8 +334,8 @@ int readsize_terminal(terminal_t * terml, uint16_t * rowsize, uint16_t * colsize
    err = readwinsize(&size, terml->input);
    if (err) goto ONERR;
 
-   *colsize = size.ws_col;
-   *rowsize = size.ws_row;
+   *nrcolsX = size.ws_col;
+   *nrrowsY = size.ws_row;
 
    return 0;
 ONERR:
@@ -426,8 +440,8 @@ int configrawedit_terminal(terminal_t * terml)
    tconf.c_iflag &= (unsigned) ~(ICRNL|IXON);
    tconf.c_oflag &= (unsigned) ~ONLCR;
    tconf.c_lflag &= (unsigned) ~(ICANON/*char mode*/ | ECHO/*echo off*/ | ISIG/*no signals*/);
-   tconf.c_cc[VMIN]  = 0;
-   tconf.c_cc[VTIME] = 1;
+   tconf.c_cc[VMIN]  = 1;
+   tconf.c_cc[VTIME] = 0;
 
    err = writeconfig(&tconf, terml->input);
    if (err) goto ONERR;
@@ -886,29 +900,40 @@ ONERR:
    return EINVAL;
 }
 
+static void sigalarm_signalhandler(int nr)
+{
+   (void) nr;
+   // interrupts systemcalls with EINTR
+}
+
 static int test_read(void)
 {
    terminal_t     terml = terminal_FREE;
    struct winsize oldsize;
-   uint16_t       colsize;
-   uint16_t       rowsize;
+   uint16_t       nrcols;
+   uint16_t       nrrows;
    systimer_t     timer = systimer_FREE;
    uint64_t       duration_ms;
    int            fd[2];
    uint8_t        buf[10];
+   struct sigaction sigact;
+   struct sigaction old_sigact;
+   sigset_t       sigset;
+   sigset_t       old_sigset;
 
    // prepare
    TEST(0 == init_systimer(&timer, sysclock_MONOTONIC));
-   TEST(0 == init_terminal(&terml));
-   TEST(0 == configrawedit_terminal(&terml));
+   // TEST(0 == init_terminal(&terml));
+   terml.input = 0;
+   terml.output = 1;
    TEST(0 == ioctl(terml.input, TIOCGWINSZ, &oldsize));
    tcflush(terml.input, TCIFLUSH); // discards any pressed keys
 
-   // TEST tryread_terminal: waits 1/10th of a second
+   // TEST tryread_terminal: waits 50ms
    TEST(0 == startinterval_systimer(timer, &(timevalue_t) { .seconds = 0, .nanosec = 1000000 }));
    TEST(0 == tryread_terminal(&terml, sizeof(buf), buf));
    TEST(0 == expirationcount_systimer(timer, &duration_ms));
-   TESTP(50 <= duration_ms && duration_ms <= 250, "diration=%" PRIu64, duration_ms);
+   TESTP(40 <= duration_ms && duration_ms <= 100, "duration=%" PRIu64, duration_ms);
 
    // TEST tryread_terminal: EBADF
    terminal_t terml2 = terminal_FREE;
@@ -922,38 +947,94 @@ static int test_read(void)
    TEST(0 == tryread_terminal(&terml2, sizeof(buf), buf));
    TEST(0 == close(fd[0]));
 
-   // TEST readsize_terminal
-   colsize = 0;
-   rowsize = 0;
-   TEST(0 == readsize_terminal(&terml, &rowsize, &colsize));
-   TEST(2 < colsize);
-   TEST(2 < rowsize);
-   TEST(oldsize.ws_col == colsize);
-   TEST(oldsize.ws_row == rowsize);
+   // TEST tryread_terminal: read bytes from pipe
+   TEST(0 == pipe2(fd, O_CLOEXEC));
+   terml2 = terml;
+   terml2.input = fd[0];
+   TEST(10 == write(fd[1], "1234567890", 10));
+   memset(buf, 0, sizeof(buf));
+   TEST(10 == tryread_terminal(&terml2, sizeof(buf), buf));
+   TEST(0 == memcmp(buf, "1234567890", 10));
 
-   // TEST readsize_terminal: read changed size
+   // TEST tryread_terminal: EINTR (!!ignored in tryread!!)
+   // ----------------------------
+   // prepare
+   sigact.sa_flags   = 0;
+   sigact.sa_handler = &sigalarm_signalhandler;
+   sigemptyset(&sigact.sa_mask);
+   TEST(0 == sigaction(SIGALRM, &sigact, &old_sigact));
+   sigemptyset(&sigset);
+   sigaddset(&sigset, SIGALRM);
+   TEST(0 == sigprocmask(SIG_UNBLOCK, &sigset, &old_sigset));
+   struct itimerval itime = { .it_interval = { .tv_usec = 100 }, .it_value = { .tv_usec = 100 } };
+   TEST(0 == setitimer(ITIMER_REAL, &itime, 0));
+
+   // test interrupt is working
+   for (int i = 0; i < 3; ++i) {
+      struct pollfd pfd = { .events = POLLIN, .fd = terml.input };
+      TEST(-1 == poll(&pfd, 1, -1));
+      TEST(EINTR == errno);
+   }
+
+   // test (no input)
+   for (int i = 0; i < 2; ++i) {
+      TEST(0 == tryread_terminal(&terml2, sizeof(buf), buf));
+   }
+
+   // test with input
+   for (int i = 0; i < 5000; ++i) {
+      int err;
+      do {
+         err = write(fd[1], "1234567890", 10);
+      } while (err == -1 && errno == EINTR);
+      TEST(10 == err);
+      memset(buf, 0, sizeof(buf));
+      TEST(10 == tryread_terminal(&terml2, sizeof(buf), buf));
+      TEST(0 == memcmp(buf, "1234567890", 10));
+   }
+
+   // unprepare
+   itime.it_interval.tv_usec = 0;
+   itime.it_value.tv_usec    = 0;
+   TEST(0 == setitimer(ITIMER_REAL, &itime, 0));
+   TEST(0 == sigprocmask(SIG_SETMASK, &old_sigset, 0));
+   TEST(0 == sigaction(SIGALRM, &old_sigact, 0));
+   TEST(0 == close(fd[0]));
+   TEST(0 == close(fd[1]));
+   // ----------------------------
+
+   // TEST size_terminal
+   nrcols = 0;
+   nrrows = 0;
+   TEST(0 == size_terminal(&terml, &nrcols, &nrrows));
+   TEST(2 < nrcols);
+   TEST(2 < nrrows);
+   TEST(oldsize.ws_col == nrcols);
+   TEST(oldsize.ws_row == nrrows);
+
+   // TEST size_terminal: read changed size
    tcdrain(terml.input);
    struct winsize newsize = oldsize;
    newsize.ws_col = (unsigned short) (newsize.ws_col - 2);
    newsize.ws_row = (unsigned short) (newsize.ws_row - 2);
    TEST(0 == ioctl(terml.input, TIOCSWINSZ, &newsize)); // change size
    TEST(0 != issizechange_terminal()); // we received notification
-   TEST(0 == readsize_terminal(&terml, &rowsize, &colsize));
-   TEST(newsize.ws_col == colsize);
-   TEST(newsize.ws_row == rowsize);
+   TEST(0 == size_terminal(&terml, &nrcols, &nrrows));
+   TEST(newsize.ws_col == nrcols);
+   TEST(newsize.ws_row == nrrows);
    TEST(0 == ioctl(terml.input, TIOCSWINSZ, &oldsize)); // change size
    TEST(0 != issizechange_terminal()); // we received notification
-   TEST(0 == readsize_terminal(&terml, &rowsize, &colsize));
-   TEST(oldsize.ws_col == colsize);
-   TEST(oldsize.ws_row == rowsize);
+   TEST(0 == size_terminal(&terml, &nrcols, &nrrows));
+   TEST(oldsize.ws_col == nrcols);
+   TEST(oldsize.ws_row == nrrows);
 
    // unprepare
    TEST(0 == configrestore_terminal(&terml));
    TEST(0 == free_terminal(&terml));
    TEST(0 == free_systimer(&timer));
 
-   // TEST readsize_terminal: EBADF
-   TEST(EBADF == readsize_terminal(&terml, &rowsize, &colsize));
+   // TEST size_terminal: EBADF
+   TEST(EBADF == size_terminal(&terml, &nrcols, &nrrows));
 
    return 0;
 ONERR:
@@ -1012,8 +1093,8 @@ static int test_config(void)
    TEST(0 == (tconf.c_lflag & ICANON));
    TEST(0 == (tconf.c_lflag & ECHO));
    TEST(0 == (tconf.c_lflag & ISIG));
-   TEST(0 == tconf.c_cc[VMIN]);
-   TEST(1 == tconf.c_cc[VTIME]);
+   TEST(1 == tconf.c_cc[VMIN]);
+   TEST(0 == tconf.c_cc[VTIME]);
    TEST(oldconf.c_cc[VLNEXT] == tconf.c_cc[VLNEXT]);
    TEST(oldconf.c_cc[VSUSP]  == tconf.c_cc[VSUSP]);
 
@@ -1025,8 +1106,8 @@ static int test_config(void)
       TEST(0 == configstore_terminal(&terml2));
       TEST(terml2.ctrl_lnext     == oldconf.c_cc[VLNEXT]);
       TEST(terml2.ctrl_susp      == oldconf.c_cc[VSUSP]);
-      TEST(terml2.oldconf_vmin   == 0);
-      TEST(terml2.oldconf_vtime  == 1);
+      TEST(terml2.oldconf_vmin   == 1);
+      TEST(terml2.oldconf_vtime  == 0);
       TEST(terml2.oldconf_echo   == 0);
       TEST(terml2.oldconf_icanon == 0);
       TEST(terml2.oldconf_icrnl  == 0);
@@ -1044,14 +1125,14 @@ static int test_config(void)
    TEST(0 == memcmp(oldconf.c_cc, tconf.c_cc, sizeof(tconf.c_cc)))
 
    // TEST configrawedit_terminal, configrestore_terminal: VMIN
-   if (0 == tconf.c_cc[VMIN]) {
-      tconf.c_cc[VMIN] = 1;
+   if (tconf.c_cc[VMIN]) {
+      tconf.c_cc[VMIN] = 0;
       TEST(0 == writeconfig(&tconf, terml.input));
    }
-   // sets VMIN to 0
+   // sets VMIN to 1
    TEST(0 == configrawedit_terminal(&terml));
    TEST(0 == readconfig(&tconf, terml.input));
-   TEST(0 == tconf.c_cc[VMIN]);
+   TEST(1 == tconf.c_cc[VMIN]);
    for (int i = 2; i >= 0; --i) {
       terml.oldconf_vmin = (uint8_t) i;
       TEST(0 == configrestore_terminal(&terml));
@@ -1060,14 +1141,14 @@ static int test_config(void)
    }
 
    // TEST configrawedit_terminal, configrestore_terminal: VTIME
-   if (tconf.c_cc[VTIME]) {
-      tconf.c_cc[VTIME] = 0;
+   if (0 == tconf.c_cc[VTIME]) {
+      tconf.c_cc[VTIME] = 1;
       TEST(0 == writeconfig(&tconf, terml.input));
    }
-   // sets VTIME to 1
+   // sets VTIME to 0
    TEST(0 == configrawedit_terminal(&terml));
    TEST(0 == readconfig(&tconf, terml.input));
-   TEST(1 == tconf.c_cc[VTIME]);
+   TEST(0 == tconf.c_cc[VTIME]);
    for (int i = 2; i >= 0; --i) {
       terml.oldconf_vtime = (uint8_t) i;
       TEST(0 == configrestore_terminal(&terml));

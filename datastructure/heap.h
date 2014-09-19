@@ -30,17 +30,8 @@
 
    For a description of a heap see http://en.wikipedia.org/wiki/Heap_%28data_structure%29
 
-   about: Copyright
-   This program is free software.
-   You can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+   Copyright:
+   This program is free software. See accompanying LICENSE file.
 
    Author:
    (C) 2014 Jörg Seebohn
@@ -59,7 +50,7 @@
 typedef struct heap_t heap_t;
 
 /* typedef: heap_compare_f
- * Define compare function for objects stored in the heap.
+ * Define compare function for objects stored on the heap.
  * The first parameter cmpstate is a variable which
  * points to additional shared compare state beyond
  * the two objects left and right.
@@ -90,17 +81,39 @@ int unittest_ds_inmem_heap(void);
  * Manages an array of elements of size elemsize
  * with the lowest or highest priority element stored at index 0.
  *
+ * Memory Alignment:
+ * The implementation copies elements long by long if possible.
+ * If your <elemsize> is set to a multiple of sizeof(long)
+ * long copy is chosen else byte copy.
+ * Make sure your element are aligned to a long boundary to make
+ * this work. x86 does not generate an exception if elements are
+ * not alignment other processors will do.
+ *
+ * In case elemsize is a multiple of sizeof(long):
+ * 1. The array parameter in <init_heap> should be aligned.
+ * 2. The elem parameter in <insert_heap> and <remove_heap> should be aligned.
  */
 struct heap_t {
+   // group: private fields
+   /* variable: cmp
+    * The function pointer pointing to the comparison function (see <heap_compare_f>). */
    heap_compare_f cmp;
+   /* variable: cmpstate
+    * Additional state given as first parameter to the comparison function. */
    void    * cmpstate;
+   /* variable: elemsize
+    * The size of stored elements in bytes. */
    uint8_t   elemsize;
-   /* variable: isminheap
-    * If true array[0..elemsize-1] contains the lowest
-    * priority element else the highest. */
-   uint8_t   isminheap;
+   /* variable: array
+    * The start address of the heap memory (lowest address).
+    * The array is static and given as parameter in one of the init
+    * functions. So do not free it as long as heap is in use. */
    uint8_t * array;
+   /* variable: nrofelem
+    * The number of elements stored on the heap memory. */
    size_t    nrofelem;
+   /* variable: maxnrofelem
+    * The maximum number of elements which could be stored on the heap. */
    size_t    maxnrofelem;
 };
 
@@ -109,9 +122,13 @@ struct heap_t {
 /* define: heap_FREE
  * Static initializer. */
 #define heap_FREE \
-         { 0, 0, 0, 0, 0, 0, 0 }
+         { 0, 0, 0, 0, 0, 0 }
 
-/* function: initmin_heap
+/* function: free_heap
+ * Does nothing at the moment (except for setting maxnrofelem to 0). */
+int free_heap(heap_t * heap);
+
+/* function: init_heap
  * Builds heap stucture in existing array.
  * The provided must have a size of elemsize * maxnrofelem bytes.
  * Every element occupies elemsize bytes and nrofelem elements are stored
@@ -124,14 +141,10 @@ struct heap_t {
  *
  * Time O(n):
  * The building of a heap structure from an existing set of elements costs O(nrofelem).
- * This is much faster than calling <initmin_heap> or <initmax_heap> with nrofelem=0 and
- * calling <insert_heap> nrofelem times which is of time complexity O(nrofelem log nrofelem).
- */
-int initmin_heap(/*out*/heap_t * heap, uint8_t elemsize, size_t nrofelem, size_t maxnrofelem, void * array/*[maxnrofelem*elemsize]*/, heap_compare_f cmp, void * cmpstate);
-
-/* function: initmax_heap
- * Same as <initmin_heap> except ((uint8_t*)array)[0..elemsize-1] contains element with the highest priority. */
-int initmax_heap(/*out*/heap_t * heap, uint8_t elemsize, size_t nrofelem, size_t maxnrofelem, void * array/*[maxnrofelem*elemsize]*/, heap_compare_f cmp, void * cmpstate);
+ *
+ * This is much faster than calling <init_heap> with nrofelem=0 and <insert_heap>.
+ * Calling <insert_heap> nrofelem times is of time complexity O(nrofelem log nrofelem). */
+int init_heap(/*out*/heap_t * heap, uint8_t elemsize, size_t nrofelem, size_t maxnrofelem, void * array/*[maxnrofelem*elemsize]*/, heap_compare_f cmp, void * cmpstate);
 
 /* function: free_heap
  * Does nothing at the moment (except for setting maxnrofelem to 0). */
@@ -154,26 +167,73 @@ size_t nrofelem_heap(const heap_t * heap);
 
 /* function: invariant_heap
  * Checks the heap condition.
- * It states that every parent i has a lower (bigger)
- * priority than its childs (2*i+1) and (2*i+2).
- * Root parent node has index 0. */
+ * It states that every parent with index i has a higher
+ * priority than its left (2*i+1) and right (2*i+2) child.
+ * Root node has index 0 and the last node index <nrofelem_heap>-1. */
 int invariant_heap(const heap_t * heap);
+
+// group: foreach-support
+
+/* function: foreach_heap
+ * Macro which allows iterating over the whole heap.
+ * The first element is always the largest. Following
+ * elements are not iterated in any specific order.
+ *
+ * Changing Heap:
+ * It is *not allowed* to change the heap during iteration.
+ *
+ * Parameter:
+ * heap    - Pointer to heap which is iterated over.
+ *           This parameter is evaluated more than once !
+ *           So something like: heap_t*x=&heap_array[0]; foreach_heap(x++, elem)
+ *           does not work. Use foreach_heap(x, elem)...;++x instead.
+ * loopvar - is the name of the loop variable which has type void *.
+ *           It points to the next element with size <elemsize_heap>.
+ * */
+void foreach_heap(const heap_t * heap, IDNAME loopvar);
 
 // group: update
 
-// TODO:
-int insert_heap(heap_t * heap, const void * new_elem/*[elemsize]*/);
+/* function: insert_heap
+ * Insert elem of size elemsize into the heap.
+ * elemsize bytes starting at elem are copied into an internal array.
+ * The size of the element (elemsize) was set during the initialization
+ * of the heap (see <init_heap>).
+ *
+ * The value returned by <nrofelem_heap> is incremented in case of success.
+ * Returns ENOMEM in case <nrofelem_heap> is equal to <maxnrofelem_heap> and this
+ * error is not logged into the error log. */
+int insert_heap(heap_t * heap, const void * elem/*[elemsize]*/);
 
-// TODO:
-int remove_heap(heap_t * heap, /*out*/void * removed_elem/*[elemsize]*/);
+/* function: remove_heap
+ * Remove maximum element of heap and copy it into elem.
+ * elemsize bytes are copied from the heap to the memory starting
+ * at elem. The size of the element (elemsize) was set during the initialization
+ * of the heap (see <init_heap>).
+ *
+ * Equal elements could be returned in any order.
+ *
+ * The value returned by <nrofelem_heap> is decremented in case of success.
+ * Returns ENODATA in case <nrofelem_heap> is already 0 and this
+ * error is not logged into the error log. */
+int remove_heap(heap_t * heap, /*out*/void * elem/*[elemsize]*/);
 
 
 // section: inline implementation
+
+// group: heap_t
 
 /* define: elemsize_heap
  * Implements <heap_t.elemsize_heap>. */
 #define elemsize_heap(heap) \
          ((heap)->elemsize)
+
+/* define: foreach_heap
+ * Implements <heap_t.foreach_heap>. */
+#define foreach_heap(heap, loopvar) \
+         for (void * loopvar = (heap)->array,                                                \
+                   * loopvar ## _end = (heap)->array + (heap)->nrofelem * (heap)->elemsize;  \
+              loopvar != loopvar ## _end; loopvar = (uint8_t*)loopvar + (heap)->elemsize)
 
 /* define: free_heap
  * Implements <heap_t.free_heap>. */
@@ -189,6 +249,5 @@ int remove_heap(heap_t * heap, /*out*/void * removed_elem/*[elemsize]*/);
  * Implements <heap_t.nrofelem_heap>. */
 #define nrofelem_heap(heap) \
          ((heap)->nrofelem)
-
 
 #endif

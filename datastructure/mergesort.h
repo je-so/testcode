@@ -9,7 +9,7 @@
    by one criterion first and after that by another.
 
    If you know that your data set contains large blocks
-   of persorted data, this implementation is very fast,
+   of presorted data, this implementation is very fast,
    meaning O(n) complexity in the best case.
 
    If additional memory of up to (nr_of_elements * element_size / 2)
@@ -19,29 +19,20 @@
    So if you know your data is random, and do not need a stable algorithm,
    and want to conserve memory, use quicksort.
 
-   about: Copyright
-   This program is free software.
-   You can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+   Copyright:
+   This program is free software. See accompanying LICENSE file.
 
    Author:
    (C) 2014 Jörg Seebohn
 
-   file: C-kern/api/sort/mergesort.h
+   file: C-kern/api/ds/sort/mergesort.h
     Header file <MergeSort>.
 
-   file: C-kern/sort/mergesort.c
+   file: C-kern/ds/sort/mergesort.c
     Implementation file <MergeSort impl>.
 */
-#ifndef CKERN_SORT_MERGESORT_HEADER
-#define CKERN_SORT_MERGESORT_HEADER
+#ifndef CKERN_DS_SORT_MERGESORT_HEADER
+#define CKERN_DS_SORT_MERGESORT_HEADER
 
 /* typedef: sort_compare_f
  * Define compare function for arbitrary objects.
@@ -69,9 +60,9 @@ typedef struct mergesort_t mergesort_t;
 // group: test
 
 #ifdef KONFIG_UNITTEST
-/* function: unittest_sort_mergesort
+/* function: unittest_ds_sort_mergesort
  * Test <mergesort_t> functionality. */
-int unittest_sort_mergesort(void);
+int unittest_ds_sort_mergesort(void);
 #endif
 
 
@@ -102,8 +93,8 @@ struct mergesort_sortedslice_t {
  * Slices with descending order are reversed.
  *
  * If a slice contains less than compute_minslicelen() presorted elements
- * x unsorted additional elements are added until compute_minslicelen()
- * is reached. The extended slice is sorted with a stable insertsort.
+ * additional elements are added until compute_minslicelen() number of elements
+ * are reached. The extended slice is sorted with a stable insertsort.
  *
  * The reference to already scanned and sorted slices are pushed on a stack.
  * The length of the pushed slices must satisfy an invariant.
@@ -117,8 +108,8 @@ struct mergesort_sortedslice_t {
  * so that the length of the whole array divided by minlen is close to
  * a power of two. This ensures also balanced merges.
  *
- * The invariant of stack is established by merging adjacent slices together
- * during the scan of the whole array for presorted slices.
+ * The stack invariant is established by merging adjacent slices together
+ * during the whole array scan.
  *
  * Once the whole array has been scanned all slices on the stack are merged
  * from top to bottom.
@@ -147,9 +138,18 @@ struct mergesort_t {
    /* variable: stack
     * A stack of stacksize sorted slices (see <mergesort_sortedslice_t>) waiting to be merged.
     *
-    * Invariant:
+    * Invariants:
     * For all 0 <= i && i < stacksize-1:
     * > stack[i].base + elemsize * stack[i].len == stack[i+1].base
+    * > && stack[0].base == a
+    * Value a is the array given int eh call to <sortptr_mergesort> or <sortblob_mergesort>.
+    *
+    * The slice length grow at least as fast as the Fibonacci sequence;
+    * for all 0 <= i && i < stacksize-1:
+    *
+    * For all 0 <= i && i < stacksize-2:
+    * > stack[i].len > stack[i+1].len + stack[i+2].len
+    * > && stack[stacksize-2].len > stack[stacksize-1].len
     *
     */
    struct mergesort_sortedslice_t stack[85/*big enough to sort arrays of size (uint64_t)-1*/];
@@ -172,7 +172,7 @@ struct mergesort_t {
          { 0, 0, 0, 0, 0, { { 0, 0 } }, 0, { 0 } }
 
 /* function: init_mergesort
- * Initializes sort so that calling <sortblob_mergesort> or <sortblob_mergesort> will work. */
+ * Initializes sort so that calling <sortptr_mergesort> or <sortblob_mergesort> will work. */
 void init_mergesort(/*out*/mergesort_t * sort);
 
 /* function: free_mergesort
@@ -185,7 +185,7 @@ int free_mergesort(mergesort_t * sort);
 // group: sort
 
 /* function: sortptr_mergesort
- * Sorts the array a which contains len pointers.
+ * Sort array a which contains len pointers.
  * The sorting is done in ascending order.
  * Returns 0 on success, ENOMEM (or another value) on error.
  * The array contains pointer to objects and the comparison function cmp

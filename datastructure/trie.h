@@ -31,17 +31,8 @@
    > n7: "cx"
    > n8: "cy"
 
-   about: Copyright
-   This program is free software.
-   You can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
+   Copyright:
+   This program is free software. See accompanying LICENSE file.
 
    Author:
    (C) 2014 Jörg Seebohn
@@ -75,7 +66,7 @@ int unittest_ds_inmem_trie(void);
 
 
 /* struct: trie_t
- * Manages an index which associates  abinary key with a user defined pointer.
+ * Manages an index which associates a binary key with a user defined pointer.
  * The index is implemented as a trie.
  * The data structure contains a single pointer to the root node.
  *
@@ -87,13 +78,15 @@ int unittest_ds_inmem_trie(void);
  * If the found child node contains a stored user value it is returned.
  *
  * Level Compression (LC):
- * A single node consumes more than nrbit > 1 bits and
+ * A single node consumes more nrbit > 1 bits and
  * has exactly pow(2,nrbits) possible child nodes.
  *
  * Path Compression (PC):
- * A node which has only 1 valid child stores a
- * the bit of the key as prefix and removes the child.
- * This is repeated until a node has at least two childs.
+ * A node which has only 1 valid child stores nrbit
+ * bits of the key which are used to select the child node
+ * as prefix and removes the child. This is repeated until
+ * a node has at least two childs or the node can not grow
+ * any larger.
  *
  * */
 struct trie_t {
@@ -127,17 +120,21 @@ int init_trie(/*out*/trie_t * trie);
  * you have to iterate over the stored pointers and free them before calling <free_trie>. */
 int free_trie(trie_t * trie);
 
-// group: foreach-support
-
-// TODO: add iterator support
-
 // group: query
 
 /* function: at_trie
- * TODO: describe
- * During trie traversal two nodes are merged into one if this saves space. Therefore trie is not declared as const.
- * */
-void ** at_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen]);
+ * Returns memory address of value of a previously stored (key, value) pair.
+ * As long as trie is not changed the returned address is valid. It is allowed
+ * to write a new value with *at_trie(...)=new_value;
+ *
+ * If there is no stored value the memory address 0 is returned. */
+void ** at_trie(const trie_t * trie, uint16_t keylen, const uint8_t key[keylen]);
+
+// group: foreach-support
+
+void foreach_trie(trie_t * trie, IDNAME loopvar);
+
+// TODO: add iterator support
 
 // group: update
 
@@ -163,11 +160,16 @@ int tryinsert_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], vo
 /* function: remove_trie
  * Remove a (key, value) pair from the trie.
  * Calls <remove2_trie> for its implementation with parameter islog set to true.
- * */
+ * The parameter contains the removed value after return.
+ *
+ * Returns:
+ * 0 - Remove was successful.
+ * ESRCH  - There is no value value associated with the given key. */
 int remove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** value);
 
 /* function: tryremove_trie
- * TODO: describe */
+ * Remove a (key, value) pair from the trie.
+ * Same as <remove_trie> except that ESRCH is not logged. */
 int tryremove_trie(trie_t * trie, uint16_t keylen, const uint8_t key[keylen], /*out*/void ** value);
 
 // group: private-update

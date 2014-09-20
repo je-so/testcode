@@ -18,7 +18,7 @@ static volatile unsigned s_maxwait = 0;
 #if 1
 #   define LOCK()   lock_cmpswap()
 #   define UNLOCK() unlock_cmpswap()
-#else 
+#else // 20% faster
 #   define LOCK()   lock_xadd()
 #   define UNLOCK() unlock_xadd()
 #endif

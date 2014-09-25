@@ -220,8 +220,10 @@ bool iscontrolling_terminal(sys_iochannel_t fd);
 bool issizechange_terminal(void);
 
 /* function: waitsizechange_terminal
- * Gibt 0 zurück, falls sich die Fenstergröße des Terminal, von dem aus der Prozes gestartet wurde, geändert hat.
- * Das Warten kann durch das Signal SIGINT unterbrochen werden.  Siehe auch <issizechange_terminal>.
+ * Gibt 0 zurück, falls sich die Fenstergröße des Terminals, von dem aus der Prozes gestartet wurde, geändert hat.
+ * Das Warten wird durch einen ausgeführten Signalhandler unterbrochen oder durch Empfangen eines SIGSTOP
+ * (Prozess wird angehalten) und daurauffolgendem SIGCONT (Prozess wird fortgeführt).
+ * Siehe auch <issizechange_terminal>.
  *
  * Return:
  * 0     - Windowgröße des »controlling Terminal« hat sich geändert.
@@ -286,7 +288,7 @@ size_t tryread_terminal(terminal_t * terml, size_t len, /*out*/uint8_t keys[len]
  * bzw. <issizechange_terminal> die Änderung ermittelt werden.
  * Meldet eine der beiden Funktionen eine Änderung, muss die Funktion <size_terminal>
  * aufgerufen werden, um die Größe auf den neuesten Stand zu bringen. */
-int size_terminal(terminal_t * terml, uint16_t * nrcolsX, uint16_t * nrrowsY);
+int size_terminal(terminal_t * terml, unsigned * nrcolsX, unsigned * nrrowsY);
 
 // group: update
 

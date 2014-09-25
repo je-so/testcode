@@ -23,9 +23,9 @@
 #include "C-kern/api/test/unittest.h"
 #endif
 
-// SWITCH FOR RUNNING a USERTEST
+// REMOVE COMMENT == for starting usertest in unittest_io_terminal_termadapt ==
 // #define KONFIG_USERTEST_INPUT  // let user press key and tries to determine it
-#define KONFIG_USERTEST_EDIT   // let user edit dummy text in memory
+// #define KONFIG_USERTEST_EDIT   // let user edit dummy text in memory
 
 
 // section: termadapt_t
@@ -56,13 +56,14 @@ int new_termadapt(/*out*/termadapt_t ** termadapt, const termid_e termid)
    VALIDATE_INPARAM_TEST(termid < lengthof(s_termadapt_builtin), ONERR, );
 
    *termadapt = &s_termadapt_builtin[termid];
+
    return 0;
 ONERR:
    TRACEEXIT_ERRLOG(err);
    return err;
 }
 
-int newfromtype_termadapt(/*out*/termadapt_t ** termadapt, const uint8_t * type)
+int newPtype_termadapt(/*out*/termadapt_t ** termadapt, const uint8_t * type)
 {
    size_t tlen = strlen((const char*)type);
    for (unsigned i = 0; i < lengthof(s_termadapt_builtin); ++i) {
@@ -80,39 +81,50 @@ int newfromtype_termadapt(/*out*/termadapt_t ** termadapt, const uint8_t * type)
 // group: write helper
 
 /* define: COPY_CODE_SEQUENCE
- * TODO: */
+ * Macro copies static string CODESEQ ("abc...") to ctrlcodes of type memstream_t.
+ * Returns wirh ENOBUFS if there is not enough space in ctrlcodes. */
 #define COPY_CODE_SEQUENCE(CODESEQ) \
          const unsigned size = sizeof(CODESEQ)-1;  \
          CHECK_SIZE(size);                         \
          write_memstream(ctrlcodes, size, CODESEQ);
 
 /* define: WRITEDECIMAL
- * TODO: */
+ * Writes decimal number to ctrlcodes with up to 3 digits.
+ * At least one digit is written. The caller ensures
+ * that ctrlcodes has enough free space. */
 #define WRITEDECIMAL(NR) \
          if (NR > 99) writebyte_memstream(ctrlcodes, (uint8_t) ('0' + NR/100)); \
          if (NR > 9)  writebyte_memstream(ctrlcodes, (uint8_t) ('0' + (NR/10)%10)); \
          writebyte_memstream(ctrlcodes, (uint8_t) ('0' + NR%10))
 
 /* define: CHECK_PARAM
- * TODO: */
+ * Macro checks boolean condition COND.
+ * In case of false EINVAL is returned. */
 #define CHECK_PARAM(COND) \
          if (!(COND)) return EINVAL
 
 /* define: CHECK_PARAM_MAX
- * TODO: */
+ * Macro checks PARAM <= MAX_VALUE.
+ * In case of false EINVAL is returned. */
 #define CHECK_PARAM_MAX(PARAM, MAX_VALUE) \
          if ((PARAM) > (MAX_VALUE)) return EINVAL
 
 /* define: CHECK_PARAM_RANGE
- * TODO: */
+ * Macro checks MIN_VALUE <= PARAM && PARAM <= MAX_VALUE.
+ * In case of false EINVAL is returned. */
 #define CHECK_PARAM_RANGE(PARAM, MIN_VALUE, MAX_VALUE) \
          if ((PARAM) < (MIN_VALUE) || (PARAM) > (MAX_VALUE)) return EINVAL
 
 /* define: SIZEDECIMAL
- * TODO: */
+ * Macro returns the number of decimal digits of number PARAM.
+ * The returned value is in the range [1..3]. Numbers greater 999
+ * are not supported. */
 #define SIZEDECIMAL(PARAM) \
          1u + ((unsigned)((PARAM)>9)) + ((unsigned)((PARAM)>99))
 
+/* define: CHECK_SIZE
+ * Macro checks that size of ctrlcodes is at least SIZE.
+ * In case of false ENOBUFS is returned. */
 #define CHECK_SIZE(SIZE) \
          if ((SIZE) > size_memstream(ctrlcodes)) return ENOBUFS
 
@@ -158,27 +170,18 @@ int endedit_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlco
    return 0;
 }
 
-int clearline_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
+int replacemode_termadapt(const termadapt_t * termadapt, /*ret*/struct memstream_t * ctrlcodes)
 {
    (void) termadapt;
-   COPY_CODE_SEQUENCE("\x1b[2K")
+   COPY_CODE_SEQUENCE("\x1b[4l")
 
    return 0;
 }
 
-int clearendofline_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
+int insertmode_termadapt(const termadapt_t * termadapt, /*ret*/struct memstream_t * ctrlcodes)
 {
    (void) termadapt;
-   COPY_CODE_SEQUENCE("\x1b[K")
-
-   return 0;
-}
-
-
-int clearscreen_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
-{
-   (void) termadapt;
-   COPY_CODE_SEQUENCE("\x1b[H\x1b[J")
+   COPY_CODE_SEQUENCE("\x1b[4h")
 
    return 0;
 }
@@ -218,6 +221,31 @@ int cursoron_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlc
 {
    (void) termadapt;
    COPY_CODE_SEQUENCE("\x1b[?12l\x1b[?25h")
+
+   return 0;
+}
+
+int clearline_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
+{
+   (void) termadapt;
+   COPY_CODE_SEQUENCE("\x1b[2K")
+
+   return 0;
+}
+
+int clearendofline_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
+{
+   (void) termadapt;
+   COPY_CODE_SEQUENCE("\x1b[K")
+
+   return 0;
+}
+
+
+int clearscreen_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlcodes)
+{
+   (void) termadapt;
+   COPY_CODE_SEQUENCE("\x1b[H\x1b[J")
 
    return 0;
 }
@@ -379,7 +407,7 @@ int inslines_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlc
  * - keycodes->next[CODELEN] ist gültig, d.h. size > CODELEN
  * - keycodes->next[CODELEN-1] == ';'
  *
- * Zuordnung:
+ * Mögliche Werte von X (eEinstellig bzw. zweistellig):
  * 2 - Shift
  * 3 - Alt
  * 4 - Alt + Shift
@@ -401,22 +429,22 @@ int inslines_termadapt(const termadapt_t * termadapt, /*ret*/memstream_t * ctrlc
                                              \
    if (next == '1') {                        \
       next = keycodes->next[CODELEN+1];      \
-      if (next < '0' || next > '6') return EILSEQ;    \
-      if (size < CODELEN+3u) return ENODATA;          \
-      mod  = (termmodkey_e) (next - ('0' - 9));   \
-      next = keycodes->next[CODELEN+2u];              \
-      codelen = CODELEN+3u;                           \
-                                                      \
-   } else {                                           \
-      if (next < '1' || next > '9') return EILSEQ;    \
-      mod  = (termmodkey_e) (next - '1');         \
-      next = keycodes->next[CODELEN+1u];              \
-      codelen = CODELEN+2u;                           \
+      if (next < '0' || next > '6') return EILSEQ; \
+      if (size < CODELEN+3u) return ENODATA;       \
+      mod  = (term_modkey_e) (next - ('0' - 9));   \
+      next = keycodes->next[CODELEN+2u];           \
+      codelen = CODELEN+3u;                        \
+                                                   \
+   } else {                                        \
+      if (next < '1' || next > '9') return EILSEQ; \
+      mod  = (term_modkey_e) (next - '1');         \
+      next = keycodes->next[CODELEN+1u];           \
+      codelen = CODELEN+2u;                        \
    }
 
 int key_termadapt(const termadapt_t * termadapt, memstream_ro_t * keycodes, /*out*/termkey_t * key)
 {
-   (void) termadapt; // handle linux / xterm at the same (most codes are equal)
+   (void) termadapt; // handle linux/xterm at the same time (most escape codes are equal)
 
    size_t size = size_memstream(keycodes);
 
@@ -425,12 +453,12 @@ int key_termadapt(const termadapt_t * termadapt, memstream_ro_t * keycodes, /*ou
    uint8_t next = keycodes->next[0];
 
    if (next == 0x7f) {
-      *key = (termkey_t) termkey_INIT(termkey_BS, termmodkey_NONE);
+      *key = (termkey_t) termkey_INIT(termkey_BS, term_modkey_NONE);
       skip_memstream(keycodes, 1);
       return 0;
 
    } else if (next == 0x1b) {
-      termmodkey_e mod = termmodkey_NONE;
+      term_modkey_e mod = term_modkey_NONE;
       unsigned codelen;
       if (size < 2) return ENODATA;
       next = keycodes->next[1];
@@ -475,7 +503,7 @@ int key_termadapt(const termadapt_t * termadapt, memstream_ro_t * keycodes, /*ou
          if (size < 4) return ENODATA;
          next = keycodes->next[3];
          if (next < 'A' || next > 'E') return EILSEQ;
-         *key = (termkey_t) termkey_INIT((termkey_e) (termkey_F1 + next - 'A'), termmodkey_NONE);
+         *key = (termkey_t) termkey_INIT((termkey_e) (termkey_F1 + next - 'A'), term_modkey_NONE);
          skip_memstream(keycodes, 4);
          return 0;
       }
@@ -553,7 +581,7 @@ int key_termadapt(const termadapt_t * termadapt, memstream_ro_t * keycodes, /*ou
       }
 
       // linux shift F1-F8 (F13-F20)
-      *key = (termkey_t) termkey_INIT((termkey_e) (termkey_F1 + nr - 25 - (nr > 27) - (nr > 30)), termmodkey_SHIFT);
+      *key = (termkey_t) termkey_INIT((termkey_e) (termkey_F1 + nr - 25 - (nr > 27) - (nr > 30)), term_modkey_SHIFT);
       skip_memstream(keycodes, 5);
       return 0;
    }
@@ -577,12 +605,12 @@ static int test_initfree(void)
    } terminaltypes[] = {
       {
          termid_LINUXCONSOLE, (const uint8_t*[]) {
-            (const uint8_t*) "linux", (const uint8_t*) "linux console", 0
+            (const uint8_t*) u8"linux", (const uint8_t*) u8"linux console", 0
          }
       },
       {
          termid_XTERM, (const uint8_t*[]) {
-            (const uint8_t*) "xterm", (const uint8_t*) "xterm-debian", (const uint8_t*) "X11 terminal emulator", 0
+            (const uint8_t*) u8"xterm", (const uint8_t*) u8"xterm-debian", (const uint8_t*) u8"X11 terminal emulator", 0
          }
       }
    };
@@ -601,8 +629,8 @@ static int test_initfree(void)
 
       for (unsigned ti = 0; terminaltypes[i].types[ti]; ++ti) {
 
-         // TEST newfromtype_termadapt
-         TEST(0 == newfromtype_termadapt(&termadapt, terminaltypes[i].types[ti]));
+         // TEST newPtype_termadapt
+         TEST(0 == newPtype_termadapt(&termadapt, terminaltypes[i].types[ti]));
          TEST(0 != termadapt);
          TEST(termadapt == &s_termadapt_builtin[terminaltypes[i].id]);
          TEST(termadapt->termid == terminaltypes[i].id);
@@ -694,11 +722,13 @@ static int test_controlcodes0(void)
    const char * codes_endedit[lengthof(types)] = {
       "\x1b[?7h" "\x1b[H\x1b[J" "\x1b""8" , "\x1b[?7h" "\x1b[?1049l"
    };
+   const char * codes_replacemode = "\x1b[4l";
+   const char * codes_insertmode = "\x1b[4h";
+   const char * codes_cursoroff = "\x1b[?25l";
+   const char * codes_cursoron  = "\x1b[?12l\x1b[?25h";
    const char * codes_clearline = "\x1b[2K";
    const char * codes_clearendofline = "\x1b[K";
    const char * codes_clearscreen = "\x1b[H\x1b[J";
-   const char * codes_cursoroff = "\x1b[?25l";
-   const char * codes_cursoron  = "\x1b[?12l\x1b[?25h";
    const char * codes_setbold    = "\x1b[1m";
    const char * codes_normtext = "\x1b[m";
    const char * codes_scrolloff  = "\x1b[r";
@@ -719,6 +749,18 @@ static int test_controlcodes0(void)
       // TEST endedit_termadapt: OK, ENOBUFS
       TEST(0 == testhelper_CODES0(termadapt, codes_endedit[i], &endedit_termadapt));
 
+      // TEST replacemode_termadapt: OK, ENOBUFS
+      TEST(0 == testhelper_CODES0(termadapt, codes_replacemode, &replacemode_termadapt));
+
+      // TEST insertmode_termadapt: OK, ENOBUFS
+      TEST(0 == testhelper_CODES0(termadapt, codes_insertmode, &insertmode_termadapt));
+
+      // TEST cursoroff_termadapt: OK, ENOBUFS
+      TEST(0 == testhelper_CODES0(termadapt, codes_cursoroff, &cursoroff_termadapt));
+
+      // TEST cursoron_termadapt: OK, ENOBUFS
+      TEST(0 == testhelper_CODES0(termadapt, codes_cursoron, &cursoron_termadapt));
+
       // TEST clearline_termadapt: OK, ENOBUFS
       TEST(0 == testhelper_CODES0(termadapt, codes_clearline, &clearline_termadapt));
 
@@ -727,12 +769,6 @@ static int test_controlcodes0(void)
 
       // TEST clearscreen_termadapt: OK, ENOBUFS
       TEST(0 == testhelper_CODES0(termadapt, codes_clearscreen, &clearscreen_termadapt));
-
-      // TEST cursoroff_termadapt: OK, ENOBUFS
-      TEST(0 == testhelper_CODES0(termadapt, codes_cursoroff, &cursoroff_termadapt));
-
-      // TEST cursoron_termadapt: OK, ENOBUFS
-      TEST(0 == testhelper_CODES0(termadapt, codes_cursoron, &cursoron_termadapt));
 
       // TEST bold_termadapt: OK, ENOBUFS
       TEST(0 == testhelper_CODES0(termadapt, codes_setbold, &bold_termadapt));
@@ -1064,7 +1100,7 @@ static int test_keycodes(void)
             memset(&key, 255, sizeof(key));
             TEST(0 == key_termadapt(termadapt, &keycodes, &key));
             TEST(K == key.nr);
-            TEST(termmodkey_SHIFT == key.mod);
+            TEST(term_modkey_SHIFT == key.mod);
             TEST(end == keycodes.next);
             TEST(end == keycodes.end);
 
@@ -1084,12 +1120,12 @@ static int test_keycodes(void)
          for (unsigned ci = 0; testkeycodes[tk].codes[ci]; ++ci) {
             size_t len = strlen(testkeycodes[tk].codes[ci]);
 
-            if (  (len < 3) // BACKSPACE
+            if (  (len == 1) // BACKSPACE
                   || (len == 4 && 0 == memcmp(testkeycodes[tk].codes[ci], "\x1b[[", 3))/*skip linux F1-F5*/) {
                continue;
             }
 
-            for (termmodkey_e mi = termmodkey_NONE+1; mi <= termmodkey_MASK; ++mi) {
+            for (term_modkey_e mi = term_modkey_NONE+1; mi <= term_modkey_MASK; ++mi) {
                uint8_t        buffer[100];
                size_t         len2     = len + 2 + (mi > 8) + (len == 3);
                const uint8_t* end      = buffer + len2;
@@ -1207,7 +1243,7 @@ static int usertest_input(void)
    // prepare
    TEST(0 == init_terminal(&term));
    TEST(0 == type_terminal(sizeof(buffer), buffer));
-   TEST(0 == newfromtype_termadapt(&tcdb, buffer));
+   TEST(0 == newPtype_termadapt(&tcdb, buffer));
 
    // start edit mode
    TEST(0 == configrawedit_terminal(&term));
@@ -1349,7 +1385,7 @@ static int usertest_edit(void)
    // prepare
    TEST(0 == init_terminal(&term));
    TEST(0 == type_terminal(sizeof(buffer), buffer));
-   TEST(0 == newfromtype_termadapt(&state.termadapt, buffer));
+   TEST(0 == newPtype_termadapt(&state.termadapt, buffer));
    TEST(0 == size_terminal(&term, &state.width, &state.height));
    screenbytes = state.height * state.width;
    TEST(0 == ALLOC_MM(state.height*state.width, &state.lines));
@@ -1471,11 +1507,11 @@ static int usertest_edit(void)
 
             } else {
                nroflines = 0;
-               write_memstream(&state.codes, 4, "\x1b[4h"); // enter_insert_mode
+               insertmode_termadapt(state.termadapt, &state.codes);
                bold_termadapt(state.termadapt, &state.codes);
                writebyte_memstream(&state.codes, keys[0]);
                normtext_termadapt(state.termadapt, &state.codes);
-               write_memstream(&state.codes, 4, "\x1b[4l"); // exit_insert_mode
+               replacemode_termadapt(state.termadapt, &state.codes);
                ++ state.cx;
                if (state.cx == state.width) {
                   movecursor_termadapt(state.termadapt, &state.codes, -- state.cx, state.cy);

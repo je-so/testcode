@@ -24,6 +24,7 @@
 #include "C-kern/api/test/resourceusage.h"
 #include "C-kern/api/io/accessmode.h"
 #include "C-kern/api/io/filesystem/file.h"
+#include "C-kern/api/platform/task/thread.h"
 #include "C-kern/api/time/systimer.h"
 #include "C-kern/api/time/timevalue.h"
 #endif
@@ -281,13 +282,12 @@ ONERR:
 
 int waitsizechange_terminal()
 {
-   sigset_t signset;
+   sigset_t sigset;
    siginfo_t info;
-   sigemptyset(&signset);
-   sigaddset(&signset, SIGWINCH);
-   sigaddset(&signset, SIGINT);
+   sigemptyset(&sigset);
+   sigaddset(&sigset, SIGWINCH);
 
-   return (SIGWINCH == sigwaitinfo(&signset, &info)) ? 0 : EINTR;
+   return (SIGWINCH == sigwaitinfo(&sigset, &info)) ? 0 : EINTR;
 }
 
 int type_terminal(uint16_t len, /*out*/uint8_t type[len])
@@ -326,7 +326,7 @@ size_t tryread_terminal(terminal_t * terml, size_t len, /*out*/uint8_t keys[len]
    return nrbytes;
 }
 
-int size_terminal(terminal_t * terml, uint16_t * nrcolsX, uint16_t * nrrowsY)
+int size_terminal(terminal_t * terml, unsigned * nrcolsX, unsigned * nrrowsY)
 {
    int err;
    struct winsize size;
@@ -733,6 +733,27 @@ ONERR:
    return EINVAL;
 }
 
+static void test_sighandler(int signr)
+{
+   (void) signr;
+}
+
+static int thread_callwaitsize(void * arg)
+{
+   sigset_t sigmask;
+   TEST(0 == sigemptyset(&sigmask));
+   TEST(0 == sigaddset(&sigmask, SIGINT));
+   TEST(1 == write((int)arg, "S", 1));
+
+   int err = waitsizechange_terminal();
+   TEST(0 == sigprocmask(SIG_BLOCK, &sigmask, 0));
+   TEST(1 == write((int)arg, "E", 1));
+
+   return err;
+ONERR:
+   return -1;
+}
+
 static int test_query(void)
 {
    terminal_t     terml  = terminal_FREE;
@@ -747,6 +768,11 @@ static int test_query(void)
    itimerspec     exptime;
    timer_t        timerid;
    bool           istimer = false;
+   thread_t     * thread = 0;
+   sigset_t       sigmask;
+   sigset_t       oldmask;
+   struct sigaction act;
+   struct sigaction oldact;
 
    // prepare
    file = dup(sys_iochannel_STDERR);
@@ -755,7 +781,7 @@ static int test_query(void)
    TEST(0 == init_terminal(&terml));
    sigevent_t sigev;
    sigev.sigev_notify = SIGEV_SIGNAL;
-   sigev.sigev_signo  = SIGINT;
+   sigev.sigev_signo  = SIGWINCH;
    sigev.sigev_value.sival_int = 0;
    TEST(0 == timer_create(CLOCK_MONOTONIC, &sigev, &timerid));
    istimer = true;
@@ -825,27 +851,62 @@ static int test_query(void)
 
    // TEST waitsizechange_terminal: return 0 (signal received)
    raise(SIGWINCH);
-   TEST(0 == waitsizechange_terminal()); // removes signal from queue
-   TEST(0 == issizechange_terminal());
-
-   // TEST waitsizechange_terminal: return EINTR
-   raise(SIGINT);
    sigset_t pending;
    TEST(0 == sigpending(&pending));
-   TEST(1 == sigismember(&pending, SIGINT));
-   TEST(EINTR == waitsizechange_terminal()); // removes signal from queue
+   TEST(1 == sigismember(&pending, SIGWINCH));
+   TEST(0 == waitsizechange_terminal()); // removes signal from queue
+   TEST(0 == issizechange_terminal());
    TEST(0 == sigpending(&pending));
-   TEST(0 == sigismember(&pending, SIGINT));
+   TEST(0 == sigismember(&pending, SIGWINCH));
 
    // TEST waitsizechange_terminal: test waiting
    memset(&exptime, 0, sizeof(exptime));
    exptime.it_value.tv_nsec = 1000000000/10;    // 10th of a second
-   TEST(0 == timer_settime(timerid, 0, &exptime, 0)); // generate SIGINT after timeout
+   TEST(0 == timer_settime(timerid, 0, &exptime, 0)); // generate SIGWINCH after timeout
    TEST(0 == gettimeofday(&starttime, 0));
-   TEST(EINTR == waitsizechange_terminal());
+   TEST(0 == waitsizechange_terminal());
    TEST(0 == gettimeofday(&endtime, 0));
    unsigned elapsedms = (unsigned) (1000 * (endtime.tv_sec - starttime.tv_sec) + endtime.tv_usec / 1000 - starttime.tv_usec / 1000);
    TESTP(50 < elapsedms && elapsedms < 500, "elapsedms=%d", elapsedms);
+
+   // TEST waitsizechange_terminal: EINTR (SIGINT)
+   TEST(0 == sigemptyset(&sigmask));
+   TEST(0 == sigaddset(&sigmask, SIGINT));
+   TEST(0 == sigprocmask(SIG_UNBLOCK, &sigmask, &oldmask));
+   TEST(0 == sigemptyset(&act.sa_mask));
+   act.sa_handler = &test_sighandler;
+   act.sa_flags = SA_RESTART; // does not work (sigwaitinfo is aborted !)
+   TEST(0 == sigaction(SIGINT, &act, &oldact));
+   TEST(0 == new_thread(&thread, &thread_callwaitsize, (void*)pfd[1]));
+   TEST(0 == sigprocmask(SIG_SETMASK, &oldmask, 0));
+   TEST(1 == read(pfd[0], name, 1)); // wait for thread_callwaitsize
+   for (int i = 0; i < 100; ++i) {
+      sleepms_thread(1);
+      pthread_kill(thread->sys_thread, SIGINT);
+      struct pollfd fds = { .events = POLLIN, .fd = pfd[0] };
+      if (1 == poll(&fds, 1, 0)) break;
+   }
+   TEST(0 == sigaction(SIGINT, &oldact, 0));
+   TEST(0 == join_thread(thread));
+   TEST(EINTR == returncode_thread(thread)); // execution of handler interrupted waitsizechange
+   TEST(0 == delete_thread(&thread));
+
+   // TEST waitsizechange_terminal: EINTR (SIGSTOP / SIGCONT)
+   TEST(0 == new_thread(&thread, &thread_callwaitsize, (void*)pfd[1]));
+   TEST(0 == sigprocmask(SIG_SETMASK, &oldmask, 0));
+   TEST(1 == read(pfd[0], name, 1)); // wait for thread_callwaitsize
+   for (int i = 0; i < 100; ++i) {
+      sleepms_thread(1);
+      pthread_kill(thread->sys_thread, SIGSTOP);
+      pthread_kill(thread->sys_thread, SIGCONT);
+      struct pollfd fds = { .events = POLLIN, .fd = pfd[0] };
+      if (1 == poll(&fds, 1, 0)) break;
+   }
+   TEST(0 == sigaction(SIGINT, &oldact, 0));
+   TEST(0 == join_thread(thread));
+   TEST(EINTR == returncode_thread(thread)); // execution of handler interrupted waitsizechange
+   TEST(0 == delete_thread(&thread));
+
 
    // TEST type_terminal
    memset(type, 255, sizeof(type));
@@ -910,8 +971,8 @@ static int test_read(void)
 {
    terminal_t     terml = terminal_FREE;
    struct winsize oldsize;
-   uint16_t       nrcols;
-   uint16_t       nrrows;
+   unsigned       nrcols;
+   unsigned       nrrows;
    systimer_t     timer = systimer_FREE;
    uint64_t       duration_ms;
    int            fd[2];

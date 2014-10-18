@@ -79,16 +79,6 @@ uint8_t* searchstr(size_t size, const uint8_t data[size], uint8_t substrsize, co
       return substrsize ? memchr(data, substr[0], size) : 0;
    }
 
-   // copied from rsearchstr (KMP index helper array)
-   uint8_t sidx[substrsize];
-   sidx2[substrsize-1] = substrsize;    // 0 length match
-   for (int i = substrsize-1, i2 = substrsize; i; ) {
-      while (i2 < substrsize && substr[i] != substr[i2]) {
-         i2 = sidx[i2];
-      }
-      sidx[--i] = (uint8_t) (--i2);
-   }
-
    // nr of pos substr is to shift right 
    // array is indexed by nr of matched positions starting from end
    uint8_t shift[substrsize];
@@ -96,24 +86,37 @@ uint8_t* searchstr(size_t size, const uint8_t data[size], uint8_t substrsize, co
    uint8_t* pos = memrchr(substr, substr[substrsize-1], substrsize-1);
    int lastoff = (int) (pos ? 1 + (pos - substr) : 0);
    shift[1] = (uint8_t) (substrsize - lastoff);
-   for (int nrmatched = 2; nrmatched < substrsize; ++nrmatched) {
-      if (lastoff >= nrmatched) {
-         int dpos = lastoff-nrmatched+1;
-         int spos = substrsize-nrmatched+1;
-         while (dpos > 0) {
-            --dpos;
-            --spos;
-            if (substr[spos] != substr[dpos]) {
-               spos = sidx[spos];
-	             while (spos < substrsize && substr[spos] != substr[dpos]) {
-	                spos = sidx[spos];
-	             } 
-	          }
-            if (nrmatched == substrsize-spos) break;
+
+   {
+      // copied from rsearchstr (KMP index helper array)
+      uint8_t sidx[substrsize];
+      sidx2[substrsize-1] = substrsize;    // 0 length match
+      for (int i = substrsize-1, i2 = substrsize; i; ) {
+         while (i2 < substrsize && substr[i] != substr[i2]) {
+            i2 = sidx[i2];
          }
-         lastoff = (spos < substrsize ? 1+dpos : 0);
+         sidx[--i] = (uint8_t) (--i2);
       }
-      shift[nrmatched] = (uint8_t) (substrsize - lastoff);
+
+      for (int nrmatched = 2; nrmatched < substrsize; ++nrmatched) {
+         if (lastoff >= nrmatched) {
+            int dpos = lastoff-nrmatched+1;
+            int spos = substrsize-nrmatched+1;
+            while (dpos > 0) {
+               --dpos;
+               --spos;
+               if (substr[spos] != substr[dpos]) {
+                  spos = sidx[spos];
+   	          while (spos < substrsize && substr[spos] != substr[dpos]) {
+	             spos = sidx[spos];
+	          } 
+               }
+               if (nrmatched == substrsize-spos) break;
+            }
+            lastoff = (spos < substrsize ? 1+dpos : 0);
+         }
+         shift[nrmatched] = (uint8_t) (substrsize - lastoff);
+      }
    }
 
    // TODO: 
@@ -129,5 +132,6 @@ int main()
    printf("rchr %s\n", rsearchstr(strlen(s), s, strlen(p), p));
    printf("rchr %s\n", rsearchstr(strlen(s)-1, s, strlen(p), p));
 
+   printf("memchr %p\n", memchr(s, 'a', 0));   
    return 0;
 }

@@ -1,5 +1,14 @@
 // Proof of Concept Go-Routines + Go-Channels
 // Compile with: gcc -O3 -std=gnu99 -ogochan gochan.c -lpthread
+// Measures time of msg transfers between 3 clients and 3 servers in one system thread
+// The number of system threads is doubled in every loop (up to 128 system threads).
+// Every client or server is mapped to a single gofunc_t.
+// Result on my (1-2GHZ) machine:
+// (for 1 system thread): gochan: 1*30000 send/recv time in ms: 1 (30000 msg/msec)
+// (for 32 system threads): gochan: 32*30000 send/recv time in ms: 51 (18823 msg/msec)
+// (for 64 system threads): gochan: 64*30000 send/recv time in ms: 122 (15737 msg/msec)
+// (for 128 system threads): gochan: 128*30000 send/recv time in ms: 156 (24615 msg/msec)
+
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -327,7 +336,8 @@ int main()
    struct timeval starttime;
    struct timeval endtime;
 
-   for (int nrthreads = 32; nrthreads <= 128; nrthreads *= 2) {
+   for (int nrthreads = 1; nrthreads <= 128; nrthreads *= 2) {
+      if (nrthreads == 2) nrthreads = 32;
       memset(msgcount, 0, sizeof(msgcount));
       goexec = goexec_new(nrthreads);
       gochan = gochan_new(goexec); 

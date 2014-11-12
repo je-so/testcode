@@ -1,183 +1,358 @@
-// Compile with: gcc -std=gnu99 -ogochan gochan.c
+// Proof of Concept Go-Routines + Go-Channels
+// Compile with: gcc -O3 -std=gnu99 -ogochan gochan.c -lpthread
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
-typedef struct goroutine_t {
-   int   id;
-   void* state;
-   void* chan_msg;
-   void* continue_label;
-   void (* mainfct) (struct goroutine_t* gofunc);
-} goroutine_t;
+struct goexec_t;
+struct gofunc_t;
+struct gofunc_param_t;
 
-#define start_goroutine(gofunc) \
-         if ((gofunc)->continue_label) { \
-            goto *(gofunc)->continue_label; \
+typedef struct gofunc_param_t {
+   int threadid;
+   struct goexec_t* goexec;
+   struct gofunc_t* gofunc;
+} gofunc_param_t;
+
+typedef struct goexec_thread_t {
+   gofunc_param_t param;
+   pthread_t      thr;
+   struct gofunc_t* funclist_tail;
+} goexec_thread_t;
+
+typedef struct goexec_t {
+   int nrthreads;
+   volatile int isstop;
+   volatile int nrready;
+   pthread_mutex_t lock;
+   pthread_cond_t run;
+   pthread_cond_t done;
+   goexec_thread_t threads[/*nrthreads*/];
+} goexec_t;
+
+typedef struct gofunc_t {
+   void (* fct) (struct gofunc_param_t* goparam);
+   void* state; // stores state of local variables of fct
+   void* continue_label;
+   void* gochan_msg;
+   struct gofunc_t* waitlist_next;
+   struct gofunc_t* funclist_next;
+   struct gofunc_t* funclist_prev;
+} gofunc_t;
+
+typedef struct gochan_t {
+   struct goexec_t* goexec;
+   struct gofunc_t* waitlist_tail[/*nrthreads*/];
+} gochan_t;
+
+// === implement gofunc_t ===
+
+#define gofunc_start(goparam) \
+         if ((goparam)->gofunc->continue_label) { \
+            goto *(goparam)->gofunc->continue_label; \
          }
 
-#define end_goroutine(gofunc) \
-         remove_goroutine(gofunc)
+#define gofunc_end(goparam) \
+         goexec_delfunc(goparam)
 
-static int         s_goroutines_size = 0;
-static goroutine_t s_goroutines[100];
+// === implement goexecutor_t ===
 
-void goexecutor()
+void goexec_delfunc(gofunc_param_t* goparam)
 {
-   while (s_goroutines_size) {
-      // printf("--goexecutor--\n");
-      for (int i = s_goroutines_size; i > 0; ) {
-         --i;
-         // printf("exec:%p id:%d i:%d size:%d\n", s_goroutines[i].mainfct, s_goroutines[i].id, i, s_goroutines_size);
-         s_goroutines[i].mainfct(&s_goroutines[i]);
+   int tid = goparam->threadid;
+
+   if (goparam->goexec->threads[tid].funclist_tail == goparam->gofunc) {
+      if (goparam->gofunc == goparam->gofunc->funclist_prev) {
+         goparam->goexec->threads[tid].funclist_tail = 0;
+      } else {
+         goparam->goexec->threads[tid].funclist_tail = goparam->gofunc->funclist_prev;
+      }
+   } 
+
+   goparam->gofunc->funclist_next->funclist_prev = goparam->gofunc->funclist_prev;
+   goparam->gofunc->funclist_prev->funclist_next = goparam->gofunc->funclist_next;
+   goparam->gofunc = 0;
+
+   free(goparam->gofunc);
+}
+
+int goexec_newfunc(goexec_t* goexec, int threadid, void (* fct) (gofunc_param_t* goparam))
+{
+   if (threadid < 0 || threadid >= goexec->nrthreads) {
+      return EINVAL;
+   }
+   gofunc_t* gofunc = malloc(sizeof(gofunc_t));
+   if (!gofunc) {
+      return ENOMEM;
+   }
+   gofunc->state = 0;
+   gofunc->gochan_msg = 0;
+   gofunc->continue_label = 0;
+   gofunc->fct = fct;
+   gofunc->waitlist_next = 0;
+   if (goexec->threads[threadid].funclist_tail) {
+      gofunc->funclist_next = goexec->threads[threadid].funclist_tail->funclist_next;
+      gofunc->funclist_next->funclist_prev = gofunc;
+      gofunc->funclist_prev = goexec->threads[threadid].funclist_tail;
+      gofunc->funclist_prev->funclist_next = gofunc;
+   } else {
+      gofunc->funclist_next = gofunc;
+      gofunc->funclist_prev = gofunc;
+   }
+   goexec->threads[threadid].funclist_tail = gofunc;
+   return 0;
+}
+
+void* goexec_threadmain(void* param)
+{
+   gofunc_param_t* goparam = param;
+   goexec_t* goexec = goparam->goexec;
+   int tid = goparam->threadid;
+
+   //printf("Start id:%d exec:%p\n", tid, goparam->goexec);
+
+   while (! goexec->isstop) {
+      if (tid) {
+         pthread_mutex_lock(&goexec->lock);
+         ++ goparam->goexec->nrready;
+         pthread_cond_signal(&goexec->done);
+         pthread_cond_wait(&goexec->run, &goexec->lock);
+         pthread_mutex_unlock(&goexec->lock);
+      }
+      // printf("Run id:%d %p\n", tid, goexec->threads[tid].funclist_tail);
+      while (goexec->threads[tid].funclist_tail) {
+         gofunc_t* next = goexec->threads[tid].funclist_tail->funclist_next;
+         for (gofunc_t* gofunc; (gofunc = next); ) {
+            next = (next == goexec->threads[tid].funclist_tail) ? 0 : next->funclist_next;
+            goparam->gofunc = gofunc;
+            gofunc->fct(goparam);
+         }
+      }
+      if (tid == 0) break;
+   }
+
+   //printf("End id:%d exec:%p\n", tid, goparam->goexec);
+}
+
+void goexec_run(goexec_t* goexec)
+{
+   pthread_mutex_lock(&goexec->lock);
+   goexec->nrready = 0;
+   pthread_cond_broadcast(&goexec->run);
+   pthread_mutex_unlock(&goexec->lock);
+   goexec_threadmain(&goexec->threads[0].param);
+   for (int isdone = 0; !isdone;) {
+      pthread_mutex_lock(&goexec->lock);
+      isdone = (goexec->nrready == goexec->nrthreads-1);
+      if (!isdone) {
+         pthread_cond_wait(&goexec->done, &goexec->lock);
+      }
+      pthread_mutex_unlock(&goexec->lock);
+   }
+}
+
+goexec_t* goexec_new(int nrthreads)
+{
+   if (nrthreads <= 0 || nrthreads > 256) {
+      return 0; /*EINVAL*/
+   }
+
+   size_t arraysize = sizeof(goexec_thread_t) * nrthreads;
+   goexec_t* goexec = malloc(sizeof(goexec_t) + arraysize);
+   if (!goexec) {
+      return 0; /*ENOMEM*/
+   }
+
+   goexec->nrthreads = nrthreads;
+   goexec->isstop = 0;
+   goexec->nrready = 0;
+   pthread_mutex_init(&goexec->lock, 0);
+   pthread_cond_init(&goexec->run, 0);
+   pthread_cond_init(&goexec->done, 0);
+   memset(goexec->threads, 0, arraysize);
+   for (int i = 0; i < nrthreads; ++i) {
+      goexec->threads[i].param.threadid = i;
+      goexec->threads[i].param.goexec = goexec;
+      if (i) {
+         int err = pthread_create(&goexec->threads[i].thr, 0, &goexec_threadmain, &goexec->threads[i].param);
+         assert(err == 0);
       }
    }
-}
 
-void remove_goroutine(goroutine_t* gofunc)
-{
-   assert(gofunc->id > 0);
-   assert(s_goroutines_size >= gofunc->id);
-   // printf("remove %p id=%d size=%d\n", gofunc->mainfct, gofunc->id, s_goroutines_size);
-   if (gofunc->id != s_goroutines_size) {
-      s_goroutines[s_goroutines_size-1].id = gofunc->id;
-      s_goroutines[gofunc->id-1] = s_goroutines[s_goroutines_size-1];
+   for (int isdone = 0; !isdone;) {
+      pthread_mutex_lock(&goexec->lock);
+      isdone = (goexec->nrready == goexec->nrthreads-1);
+      if (!isdone) {
+         pthread_cond_wait(&goexec->done, &goexec->lock);
+      }
+      pthread_mutex_unlock(&goexec->lock);
    }
-   --s_goroutines_size;
+
+   return goexec;
 }
 
-void add_goroutine(goroutine_t* gofunc)
+void goexec_delete(goexec_t** goexec)
 {
-   assert(s_goroutines_size < 100);
-   gofunc->id = ++s_goroutines_size;
-   s_goroutines[s_goroutines_size-1] = *gofunc;
-   // printf("add %p id=%d size=%d\n", gofunc->mainfct, gofunc->id, s_goroutines_size);
+   if (! *goexec) return ;
+   pthread_mutex_lock(&(*goexec)->lock);
+   (*goexec)->isstop = 1;
+   pthread_cond_broadcast(&(*goexec)->run);
+   pthread_mutex_unlock(&(*goexec)->lock);
+   for (int i = 1; i < (*goexec)->nrthreads; ++i) {
+      pthread_join((*goexec)->threads[i].thr, 0);
+   }
+   free(*goexec);
+   *goexec = 0;
 }
 
-void new_goroutine(void (* mainfct) (goroutine_t* gofunc))
+// === implement gochan_t ===
+
+gochan_t* gochan_new(goexec_t* goexec)
 {
-   goroutine_t gofunc;
-   gofunc.id = 0;
-   gofunc.state = 0;
-   gofunc.chan_msg = 0;
-   gofunc.continue_label = 0;
-   gofunc.mainfct = mainfct;
-   add_goroutine(&gofunc);
+   size_t arraysize = sizeof(gofunc_t*) * goexec->nrthreads;
+   gochan_t* gochan = malloc(sizeof(gochan_t) + arraysize);
+   if (!gochan) {
+      return 0; /*ENOMEM*/
+   }
+   
+   gochan->goexec = goexec;
+   memset(gochan->waitlist_tail, 0, arraysize);
+
+   return gochan;
 }
 
-
-typedef struct gochannel_t {
-   goroutine_t reader;
-   goroutine_t writer;
-} gochannel_t;
-
-int _chan_recv(gochannel_t* gochan, goroutine_t* gofunc)
+void gochan_delete(gochan_t** gochan)
 {
-   if (gochan->writer.id > 0) {
-      // printf("recv msg = %d\n", (int)gochan->writer.chan_msg);
-      gofunc->chan_msg = gochan->writer.chan_msg;
-      add_goroutine(&gochan->writer);
-      gochan->writer.id = 0;
-      return 0;
+   free(*gochan);
+   *gochan = 0;
+}
+
+int _gochan_send(gochan_t* gochan, gofunc_param_t* goparam)
+{
+   int tid = goparam->threadid;
+   if (! gochan->waitlist_tail[tid]) return EAGAIN;
+
+   gofunc_t* reader = gochan->waitlist_tail[tid]->waitlist_next;
+
+   if (reader->waitlist_next == reader) {
+      gochan->waitlist_tail[tid] = 0;
    } else {
-      assert(gofunc->id > 0);
-      assert(gochan->reader.id == 0);
-      // printf("recv wait\n");
-      gochan->reader = *gofunc;
-      remove_goroutine(gofunc);
-      return EAGAIN;
+      gochan->waitlist_tail[tid] = reader->waitlist_next;
    }
+   reader->waitlist_next = 0;
+
+   reader->gochan_msg = goparam->gofunc->gochan_msg;
+
+   return 0;
 }
 
-int _chan_send(gochannel_t* gochan, goroutine_t* gofunc, void* msg)
+void gochan_addwaitlist(gochan_t* gochan, gofunc_param_t* goparam)
 {
-   if (gochan->reader.id > 0) {
-      // printf("send msg = %d\n", (int)msg);
-      gochan->reader.chan_msg = msg;
-      add_goroutine(&gochan->reader);
-      gochan->reader.id = 0;
-      return 0;
-   } else {
-      assert(gofunc->id > 0);
-      assert(gochan->writer.id == 0);
-      // printf("send wait msg = %d\n", (int)msg);
-      gofunc->chan_msg = msg;
-      gochan->writer = *gofunc;
-      remove_goroutine(gofunc);
-      return EAGAIN;
+   int tid = goparam->threadid;
+   if (! goparam->gofunc->waitlist_next) {
+      if (gochan->waitlist_tail[tid]) {
+         goparam->gofunc->waitlist_next = gochan->waitlist_tail[tid]->waitlist_next;
+         gochan->waitlist_tail[tid]->waitlist_next = goparam->gofunc;
+      } else {
+         goparam->gofunc->waitlist_next = goparam->gofunc;
+      }
+      gochan->waitlist_tail[tid] = goparam->gofunc;
    }
 }
 
-#define chan_send(gochan, gofunc, msg) \
-         (gofunc)->continue_label = &&SEND_CONTINUE; \
-         if (_chan_send(gochan, gofunc, msg)) { \
-            return; \
-         } \
-         SEND_CONTINUE: ; 
+int _gochan_recv(gochan_t* gochan, gofunc_param_t* goparam, void** msg)
+{
+   if (goparam->gofunc->waitlist_next) return EAGAIN;
 
+   *msg = goparam->gofunc->gochan_msg;
 
-#define chan_recv(gochan, gofunc, msg) \
-         (gofunc)->continue_label = &&RECV_CONTINUE; \
-         if (_chan_recv(gochan, gofunc)) { \
-            return; \
-         } \
+   return 0;
+}
+
+#define gochan_send(gochan, goparam, msg) \
+         (goparam)->gofunc->continue_label = &&SEND_CONTINUE; \
+         (goparam)->gofunc->gochan_msg = (msg); \
+         SEND_CONTINUE: \
+         if (_gochan_send(gochan, goparam)) return;
+
+#define gochan_recv(gochan, goparam, msg) \
+         (goparam)->gofunc->continue_label = &&RECV_CONTINUE; \
+         gochan_addwaitlist(gochan, goparam); \
+         return; \
          RECV_CONTINUE: \
-         *(msg) = (gofunc)->chan_msg;
-
-void init_gochannel(gochannel_t* chan)
-{
-   memset(chan, 0, sizeof(*chan));
-}
+         if (_gochan_recv(gochan, goparam, msg)) return;
 
 // ===== client/server test =====
 
-gochannel_t chan;
+gochan_t* gochan;
+int msgcount[16];
 
-void server(goroutine_t* gofunc)
+void server(gofunc_param_t* goparam)
 {
-   start_goroutine(gofunc);
+   gofunc_start(goparam);
 
-   for (gofunc->state = 0; (int)gofunc->state < 1000000; gofunc->state = (void*) (1 + (int)gofunc->state)) {
-      // printf("try recv %d\n", (int)gofunc->state);
+   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 10000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
+      //printf("try recv %d\n", (int)goparam->gofunc->state);
       void* msg;
-      chan_recv(&chan, gofunc, &msg);
-      // printf("received = %d\n", (int)msg);
-      assert(msg == gofunc->state);
+      gochan_recv(gochan, goparam, &msg);
+      //printf("received = %d\n", (int)msg);
+      assert(msg == goparam->gofunc->state);
+      //++msgcount[goparam->threadid];
    }
 
-   end_goroutine(gofunc);
+   gofunc_end(goparam);
 }
 
-void client(goroutine_t* gofunc)
+void client(gofunc_param_t* goparam)
 {
-   start_goroutine(gofunc);
+   gofunc_start(goparam);
 
-   for (gofunc->state = 0; (int)gofunc->state < 1000000; gofunc->state = (void*) (1 + (int)gofunc->state)) {
-      // printf("try send %d\n", (int)gofunc->state);
-      chan_send(&chan, gofunc, gofunc->state);
-      // printf("sended %d\n", (int)gofunc->state);
+   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 10000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
+      //printf("try send %d\n", (int)goparam->gofunc->state);
+      gochan_send(gochan, goparam, goparam->gofunc->state);
+      //printf("sended %d\n", (int)goparam->gofunc->state);
+      //++msgcount[goparam->threadid];
    }
 
-   end_goroutine(gofunc);
+   gofunc_end(goparam);
 }
 
 int main()
 {
+   goexec_t* goexec;
    struct timeval starttime;
    struct timeval endtime;
-   gettimeofday(&starttime, 0);
-   init_gochannel(&chan);
-   new_goroutine(&server);
-   new_goroutine(&client);
-   goexecutor();
-   gettimeofday(&endtime, 0);
 
-   time_t sec = endtime.tv_sec - starttime.tv_sec;
-   long usec = endtime.tv_usec - starttime.tv_usec;
-   long msec = 1000 * (long)sec + usec / 1000;
-   printf("gochan: 1000000 send/recv time in ms: %ld (%ld msg/msec)\n", msec, 1000000/msec);
+   for (int nrthreads = 32; nrthreads <= 128; nrthreads *= 2) {
+      memset(msgcount, 0, sizeof(msgcount));
+      goexec = goexec_new(nrthreads);
+      gochan = gochan_new(goexec); 
+
+      for (int i = 0; i < nrthreads; ++i) {
+         goexec_newfunc(goexec, i, &server);
+         goexec_newfunc(goexec, i, &client);
+         goexec_newfunc(goexec, i, &server);
+         goexec_newfunc(goexec, i, &client);
+         goexec_newfunc(goexec, i, &server);
+         goexec_newfunc(goexec, i, &client);
+      }
+      gettimeofday(&starttime, 0);
+      goexec_run(goexec);
+      gettimeofday(&endtime, 0);
+
+      time_t sec = endtime.tv_sec - starttime.tv_sec;
+      long usec = endtime.tv_usec - starttime.tv_usec;
+      long msec = 1000 * (long)sec + usec / 1000;
+      if (msec == 0) msec = 1;
+      printf("gochan: %d*30000 send/recv time in ms: %ld (%ld msg/msec)\n", nrthreads, msec, nrthreads*3*10000/msec);
+
+      gochan_delete(&gochan);
+      goexec_delete(&goexec);
+   }
 
    return 0;
 }

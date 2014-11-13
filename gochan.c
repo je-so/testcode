@@ -4,10 +4,11 @@
 // The number of system threads is doubled in every loop (up to 128 system threads).
 // Every client or server is mapped to a single gofunc_t.
 // Result on my (1-2GHZ) machine:
-// (for 1 system thread): gochan: 1*30000 send/recv time in ms: 1 (30000 msg/msec)
-// (for 32 system threads): gochan: 32*30000 send/recv time in ms: 51 (18823 msg/msec)
-// (for 64 system threads): gochan: 64*30000 send/recv time in ms: 122 (15737 msg/msec)
-// (for 128 system threads): gochan: 128*30000 send/recv time in ms: 156 (24615 msg/msec)
+// gochan: 1*150000 send/recv time in ms: 9 (16666 msg/msec)
+// gochan: 32*150000 send/recv time in ms: 166 (28915 msg/msec)
+// gochan: 64*150000 send/recv time in ms: 280 (34285 msg/msec)
+// gochan: 128*150000 send/recv time in ms: 329 (58358 msg/msec)
+//         ^ first number gives the number of system threads
 
 #include <assert.h>
 #include <errno.h>
@@ -19,7 +20,6 @@
 
 struct goexec_t;
 struct gofunc_t;
-struct gofunc_param_t;
 
 typedef struct gofunc_param_t {
    int threadid;
@@ -62,7 +62,7 @@ typedef struct gochan_t {
 
 #define gofunc_start(goparam) \
          if ((goparam)->gofunc->continue_label) { \
-            goto *(goparam)->gofunc->continue_label; \
+            __extension__ ({ goto *(goparam)->gofunc->continue_label; }); \
          }
 
 #define gofunc_end(goparam) \
@@ -283,23 +283,23 @@ int _gochan_recv(gochan_t* gochan, gofunc_param_t* goparam, void** msg)
 }
 
 #define gochan_send(gochan, goparam, msg) \
-         do { \
+         do { __extension__ ({ \
             __label__ SEND_CONTINUE; \
             (goparam)->gofunc->continue_label = &&SEND_CONTINUE; \
             (goparam)->gofunc->gochan_msg = (msg); \
             SEND_CONTINUE: \
             if (_gochan_send(gochan, goparam)) return; \
-         } while (0)
+         }); } while (0)
 
 #define gochan_recv(gochan, goparam, msg) \
-         do { \
+         do { __extension__ ({ \
             __label__ RECV_CONTINUE; \
             (goparam)->gofunc->continue_label = &&RECV_CONTINUE; \
             gochan_addwaitlist(gochan, goparam); \
             return; \
             RECV_CONTINUE: \
             if (_gochan_recv(gochan, goparam, msg)) return; \
-         } while (0)
+         }); } while (0)
 
 // ===== client/server test =====
 

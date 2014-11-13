@@ -283,17 +283,23 @@ int _gochan_recv(gochan_t* gochan, gofunc_param_t* goparam, void** msg)
 }
 
 #define gochan_send(gochan, goparam, msg) \
-         (goparam)->gofunc->continue_label = &&SEND_CONTINUE; \
-         (goparam)->gofunc->gochan_msg = (msg); \
-         SEND_CONTINUE: \
-         if (_gochan_send(gochan, goparam)) return;
+         do { \
+            __label__ SEND_CONTINUE; \
+            (goparam)->gofunc->continue_label = &&SEND_CONTINUE; \
+            (goparam)->gofunc->gochan_msg = (msg); \
+            SEND_CONTINUE: \
+            if (_gochan_send(gochan, goparam)) return; \
+         } while (0)
 
 #define gochan_recv(gochan, goparam, msg) \
-         (goparam)->gofunc->continue_label = &&RECV_CONTINUE; \
-         gochan_addwaitlist(gochan, goparam); \
-         return; \
-         RECV_CONTINUE: \
-         if (_gochan_recv(gochan, goparam, msg)) return;
+         do { \
+            __label__ RECV_CONTINUE; \
+            (goparam)->gofunc->continue_label = &&RECV_CONTINUE; \
+            gochan_addwaitlist(gochan, goparam); \
+            return; \
+            RECV_CONTINUE: \
+            if (_gochan_recv(gochan, goparam, msg)) return; \
+         } while (0)
 
 // ===== client/server test =====
 
@@ -304,7 +310,7 @@ void server(gofunc_param_t* goparam)
 {
    gofunc_start(goparam);
 
-   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 10000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
+   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 50000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
       //printf("try recv %d\n", (int)goparam->gofunc->state);
       void* msg;
       gochan_recv(gochan, goparam, &msg);
@@ -320,7 +326,7 @@ void client(gofunc_param_t* goparam)
 {
    gofunc_start(goparam);
 
-   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 10000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
+   for (goparam->gofunc->state = 0; (int)goparam->gofunc->state < 50000; goparam->gofunc->state = (void*) (1 + (int)goparam->gofunc->state)) {
       //printf("try send %d\n", (int)goparam->gofunc->state);
       gochan_send(gochan, goparam, goparam->gofunc->state);
       //printf("sended %d\n", (int)goparam->gofunc->state);
@@ -358,7 +364,7 @@ int main()
       long usec = endtime.tv_usec - starttime.tv_usec;
       long msec = 1000 * (long)sec + usec / 1000;
       if (msec == 0) msec = 1;
-      printf("gochan: %d*30000 send/recv time in ms: %ld (%ld msg/msec)\n", nrthreads, msec, nrthreads*3*10000/msec);
+      printf("gochan: %d*150000 send/recv time in ms: %ld (%ld msg/msec)\n", nrthreads, msec, nrthreads*3*50000/msec);
 
       gochan_delete(&gochan);
       goexec_delete(&goexec);

@@ -68,7 +68,7 @@ static void* instance_main(void* _param)
       abort_test(param->param.tid, EIO);
    }
 
-   // iwait for start signal
+   // wait for start signal
    char dummy;
    bytes = read(param->startfd, &dummy, 1);
    if (bytes != 1) {
@@ -165,9 +165,9 @@ static void run_instances(/*out*/long long* nrops_total)
       }
       int nrops = 0;
       long long sec = 0;
-      long long usec = 0;
+      long long usec = -1;
       sscanf(result, "%d %lld %lld", &nrops, &sec, &usec);
-      if (usec == 0) {
+      if (usec == -1) {
          abort_test(-1, EINVAL);
       }
       if ( tid == 0

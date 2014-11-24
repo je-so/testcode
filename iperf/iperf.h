@@ -19,6 +19,7 @@
 
 typedef struct iperf_param_t {
    int    tid; // threadid or processid of test instance (0,1,2,...)
+   int    nrinstance; // > 0: nr of all running test instances (threads or processes)
    int    isthread; // 0: started as process; 1: started as thread
    int    nrops; // initially set to 1; should be overwritten by prepare
                  // reflects the number of performaned "operations"

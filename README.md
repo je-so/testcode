@@ -3,6 +3,13 @@ Testcode
 
 This repository contains unrelated stuff.
 
+iperf
+-----
+**Measure performance of multiple threads/processes.**
+
+See directory [iperf/](iperf/).
+
+
 License
 -------
 

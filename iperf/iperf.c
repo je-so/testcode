@@ -107,6 +107,7 @@ static void prepare_instances(void)
    // start all instances
    for (int tid = 0; tid < nrinstance; ++tid) {
       instance[tid].param.tid = tid;
+      instance[tid].param.nrinstance = nrinstance;
       instance[tid].param.isthread = isthread;
       instance[tid].param.nrops = 1;
       instance[tid].param.addr = 0;

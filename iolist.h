@@ -2,6 +2,8 @@
 
    _SHARED_
 
+   Manage list or sequence of I/O operations.
+   I/O operations are performed by special I/O threads (<iothread_t>).
 
    Copyright:
    This program is free software. See accompanying LICENSE file.

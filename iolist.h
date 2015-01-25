@@ -21,7 +21,6 @@
 #define CKERN_IO_SUBSYS_IOLIST_HEADER
 
 // forward
-struct slist_node_t;
 struct iothread_t;
 
 /* typedef: struct iolist_t
@@ -92,16 +91,17 @@ struct ioop_t {
     * Gibt die auszuführende Operation an: Lesen oder Schreiben. Wird mit Wert aus <ioop_e> belegt. */
    uint8_t  op;
    /* variable: state
-    * Der Zustand der Operation. */
+    * Der Zustand der Operation.
+    * TODO: Beschreibung + Werte <iostate_e> einführen. */
    uint8_t  state;
-   /* variable: err
-    * Der Fehlercode einer nicht ausgeführten oder nur teilweise ausgeführten Operation. */
-   int      err;
-   /* variable: bytesrw
-    * Die Anzahl fehlerfrei übertragener Daten. Ist im Fehlerfall immer kleiner als bufsize.
-    * Kann aber trotz err == 0 kleiner als bufsize sein, falls weniger Daten im (Netzwerk-/Pipe-)
-    * Puffer vorlagen oder Platz hatten. */
-   size_t   bytesrw;
+   union {
+      /* variable: err
+       * Der Fehlercode einer fehlerhaft ausgeführten Operation. Nur gültig, falls <state> einen Fehler anzeigt. */
+      int      err;
+      /* variable: bytesrw
+       * Die Anzahl fehlerfrei übertragener Daten. Nur gültig, falls <state> keinen Fehler anzeigt. */
+      size_t   bytesrw;
+   };
 };
 
 // group: lifetime
@@ -109,7 +109,7 @@ struct ioop_t {
 /* define: ioop_FREE
  * Statischer Initialisierer. */
 #define ioop_FREE \
-         { 0, 0, 0, sys_iochannel_FREE, ioop_NOOP, 0, 0, 0 }
+         { 0, 0, 0, sys_iochannel_FREE, ioop_NOOP, 0, { 0 } }
 
 // group: query
 
@@ -127,10 +127,10 @@ static inline int isvalid_ioop(const ioop_t* ioop);
  * */
 struct ioseq_t {
    // public fields
-   struct slist_node_t* iolist_next; // managed by <iolist_t>
-   // struct dlist_node_t* iolist_prev; // managed by <iolist_t>
-   struct slist_node_t* caller_next; // managed by calling thread which has its own list of <ioseq_t>
-   // struct dlist_node_t* caller_prev; // managed by calling thread which has its own list of <ioseq_t>
+   ioseq_t* owner_next; // managed by calling thread which has its own list of <ioseq_t>
+   // TODO: describe fields
+   ioseq_t* iolist_next; // managed by <iolist_t>
+   uint8_t  state;
    uint16_t nrio;
    ioop_t   ioop[/*nrio*/];
 };
@@ -168,22 +168,16 @@ struct ioseq_t {
  * */
 struct iolist_t {
    // group: private fields
+   // TODO: lock
+   uint8_t  lock;
+   // TODO: size
+   size_t   size;
    /* variable: last
-    * Single linked - lineare - Liste von <ioseq_t>. Verlinkt wird über <ioseq_t.iolist_next>.
-    * last->next ist 0 und zeigt nicht auf first. last wird nur von den schreibenden Threads
+    * Single linked Liste von <ioseq_t>. Verlinkt wird über <ioseq_t.iolist_next>.
+    * last->next zeigt auf first. last wird nur von den schreibenden Threads
     * verwendet, so daß auf einen Lock verzichtet werden kann. last wird nur dann vom lesenden
     * <iothread_t> auf 0 gesetzt, dann nämlich, wenn <first> == 0. */
-   struct slist_node_t* last;
-   /* variable: first
-    * Single linked Liste von <ioseq_t>. Verlinkt wird über <ioseq_t.iolist_next>.
-    * first wird nur vom die <ioseq_t> bearbeitenden <iothread_t> verwendet.
-    * Im Spezialfall <last> == 0 und deshalb auch <first> == 0, wird vom neuen Aufträge
-    * schreibenden Thread auch first auf den Wert von last gesetzt. */
-   struct slist_node_t* first;
-   /* variable: iothread
-    * Zeigt auf den die I/O Liste bearbeitenden <iothread_t>. Falls last == 0 && first == 0
-    * und ein neuer Eintrag geschrieben wird, dann wird <iothread_t.resume_iothread> aufgerufen. */
-   struct iothread_t* iothread;
+   ioseq_t* last;
 };
 
 // group: lifetime
@@ -195,16 +189,41 @@ struct iolist_t {
 
 /* function: init_iolist
  * TODO: Describe Initializes object. */
-int init_iolist(/*out*/iolist_t* iolist);
+void init_iolist(/*out*/iolist_t* iolist);
 
 /* function: free_iolist
- * TODO: Describe Frees all associated resources. */
+ * TODO: Describe Frees all associated resources.
+ * Diese Funktion darf nur dann aufgerufen werden, wenn garantiert ist, daß kein
+ * anderer Thread mehr Zugriff auf iolist hat. */
 int free_iolist(iolist_t* iolist);
 
 // group: query
 
 // group: update
 
+/* function: insertlast_iolist
+ * TODO:
+ * Solange ios noch nicht bearbeitet wurde, darf das Objekt nicht gelöscht werden.
+ * Nachdem alle Einträge bearbeitet wurden (<ioseq_t.state>), wird der Besitz implizit
+ * wieder an den Aufrufer transferiert, wobei der Eintrag mittels <ioseq_t.owner_next>
+ * immer in der Eigentumsliste des Owners verbleibt, auch während der Bearbeitung
+ * durch iolist.
+ *
+ * Der Parameter iothr dient dazu, <iothread_t.resume_iothread> aufzufrufen, falls
+ * die Liste vor dem Einfügen leer war. */
+void insertlast_iolist(iolist_t* iolist, /*own*/ioseq_t* ios, struct iothread_t* iothr);
+
+/* function: removefirst_iolist
+ * Entfernt das erste Elemente aus der Liste und gibt es in ios zurück.
+ * Ist die Liste leer, wird der Fehler ENODATA zurückgegeben.
+ * Nachdem der Aufrufer (<iothread_t>) das Element bearbeitet hat,
+ * geht es automatisch an den Eigentümer zurück.
+ * Das Feld <ioseq_t.state> dokumentiert, wann *ios komplett bearbeitet ist.
+ *
+ * Returncode:
+ * 0 - *ios zeigt auf ehemals erstes Element.
+ * ENODATA - Die Liste war leer. */
+int tryremovefirst_iolist(iolist_t* iolist, /*out*/ioseq_t** ios);
 
 
 // section: inline implementation
@@ -222,7 +241,8 @@ static inline int isvalid_ioop(const ioop_t* ioop)
 
 /* define: init_iolist
  * Implementiert <iolist_t.init_iolist>. */
-// TODO: #define init_iolist(obj)
+#define init_iolist(iolist) \
+         ((void)(*(iolist) = (iolist_t) iolist_FREE))
 
 
 #endif

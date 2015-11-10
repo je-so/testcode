@@ -2,7 +2,7 @@
  * https://github.com/orangeduck/mpc/blob/master/examples/doge.c
  * 
  * Compile with
- * > gcc -odoge -std=gnu99 doge.c
+ * > gcc -O3 -odoge -std=gnu99 doge.c
  *
  * run with 
  * > doge filename
@@ -10,11 +10,11 @@
  * where filename contains a lot of "so c so c"
  *
  * Result:
- * Hard coded parser runs +/- 150 times faster than interpreted parser 
+ * Hard coded parser runs +/- 430 times faster than interpreted parser 
  * (mpc is configured to use LL(1) parsing without backtracking)
  *
  * mpc builds AST but this small parser does not !! 
- * so 50 times faster should be more realisitic.
+ * so 100 times faster should be more realisitic.
  *
  */
 

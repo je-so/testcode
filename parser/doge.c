@@ -8,6 +8,14 @@
  * > doge filename
  *
  * where filename contains a lot of "so c so c"
+ *
+ * Result:
+ * Hard coded parser runs +/- 150 times faster than interpreted parser 
+ * (mpc is configured to use LL(1) parsing without backtracking)
+ *
+ * mpc builds AST but this small parser does not !! 
+ * so 50 times faster should be more realisitic.
+ *
  */
 
 #include <errno.h>

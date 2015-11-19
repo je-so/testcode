@@ -6,8 +6,8 @@
  * The text (linear representation of an idea) is read from left to right
  * and transformed into a structured representation (usage of C structs).
  *
- * The structured data represents the already read text.
- * Newly read text adds new data to the data model or transforms it.
+ * The structured data represents the already read text and is considered
+ * the context. Newly read text adds new data to the data model or transforms it.
  *
  * This simple prototype parses simple expressions with operator precedence.
  *

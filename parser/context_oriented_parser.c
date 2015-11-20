@@ -75,6 +75,7 @@
  * */
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,18 +87,19 @@
 typedef struct memblock memblock_t;
 typedef struct mman mman_t;
 
-#define memblock_ALIGN(size) (((size) + 7u) & ~(size_t)7)
-
-#define memblock_DATASIZE memblock_ALIGN(65536 - sizeof(memblock_t*) - 32/*used by malloc?*/)
+#define memblock_SIZE        ((size_t)65536 - 8u/*malloc admin size?*/)
+#define memblock_DATASIZE    (memblock_SIZE - offsetof(memblock_t, data))
+/* align to 8 bytes */
+#define memblock_ALIGN(size) (((size)+7u) & ~(size_t)7)
 
 struct memblock {
    memblock_t* next;
-   char        data[memblock_DATASIZE];
+   char        data[1];
 };
 
 int new_memblock(/*out*/memblock_t** block)
 {
-   *block = malloc(sizeof(memblock_t));
+   *block = malloc(memblock_SIZE);
    if (!*block) {
       return ENOMEM;
    }
@@ -125,7 +127,9 @@ void free_mman(mman_t* mm)
    if (mm->last) {
       memblock_t* block = mm->last;
       do {
-         free_memblock(block);
+         memblock_t* freeblock = block;
+         block = block->next;
+         free_memblock(freeblock);
       } while (block != mm->last);
    }
 
@@ -137,7 +141,6 @@ void* alloc_mman(mman_t* mm, size_t size)
    int err;
    size_t off;
 
-   // align to 8 btes
    size_t aligned_size = memblock_ALIGN(size);
 
    if (aligned_size < size || aligned_size > memblock_DATASIZE) {
@@ -163,7 +166,7 @@ void* alloc_mman(mman_t* mm, size_t size)
    }
 
    off = memblock_DATASIZE - mm->free_bytes;
-   mm->free_bytes += aligned_size;
+   mm->free_bytes -= aligned_size;
 
    return mm->last->data + off;
 }
@@ -352,6 +355,8 @@ int main(int argc, const char * argv[])
    err = parse_expression(&parser);
 
    free_parser(&parser);
+
+   malloc_stats(); /* TODO: remove ! */
 
    return err ? EXIT_FAILURE : EXIT_SUCCESS;
 }

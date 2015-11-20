@@ -19,7 +19,7 @@
  * Supported C Operators              | Associativity | Precedence
  * ---------------------------------------------------------------
  * () [] -> .                         | left to right | 15
- * ! ~ ++ -- + - * & sizeof           | right to left | 14
+ * ! ~ + -                            | right to left | 14
  * * / %                              | left to right | 13
  * + -                                | left to right | 12
  * << >>                              | left to right | 11
@@ -50,7 +50,7 @@
  *
  * struct value_prefixop_t {
  *    char prefix_op[2];
- *    value_t* argument;
+ *    value_t* arg1;
  * };
  *
  * struct value_t {
@@ -264,15 +264,36 @@ static inline /*char*/int peekchar(buffer_t * buffer)
    return c;
 }
 
+/* ====================
+ *  precedence_stack_t
+ * ==================== */
+
+typedef struct expr_t expr_t;
+
+typedef struct precedence_stack_t precedence_stack_t;
+
+#define NROF_PRECEDENCE_LEVEL 15
+
+struct precedence_stack_t {
+   expr_t * active[NROF_PRECEDENCE_LEVEL];
+};
+
+void init_precedencestack(/*out*/precedence_stack_t * stack)
+{
+   memset(stack, 0, sizeof(*stack));
+}
+
+
 /* ==========
  *  parser_t
  * ========== */
 
-typedef struct parser parser_t;
+typedef struct parser_t parser_t;
 
-struct parser {
+struct parser_t {
    buffer_t buffer;
    mman_t   mm;
+   precedence_stack_t precedence;
    const char * filename;
 };
 
@@ -284,6 +305,8 @@ int init_parser(/*out*/parser_t* parser, const char* filename)
    if (err) return err;
 
    init_mman(&parser->mm);
+
+   init_precedencestack(&parser->precedence);
 
    parser->filename = filename;
 
@@ -314,54 +337,111 @@ void print_debug(parser_t* parser, const char * format, ...)
    va_end(args);
 }
 
+/* ===================
+ *  struct data model
+ * =================== */
+
+#define EXPR_COMMON_FIELDS char type
+
+typedef struct expr_t expr_t;
+typedef struct expr_constant_t expr_constant_t;
+typedef struct expr_unaryop_t  expr_unaryop_t;
+typedef struct expr_binaryop_t expr_binaryop_t;
+
+enum expr_type {
+   TYPE_expr_constant_t,
+   TYPE_expr_unaryop_t,
+   TYPE_expr_binaryop_t,
+};
+
+enum expr_op {
+   OP_PLUS,          /* + */
+   OP_MINUS,         /* - */
+   OP_MULT,          /* * */
+   OP_DIV,           /* \ */
+   OP_LOGICAL_AND,   /* && */
+   OP_LOGICAL_OR,    /* || */
+   OP_LOGICAL_NOT,   /* ! */
+   OP_BITWISE_AND,   /* & */
+   OP_BITWISE_OR,    /* | */
+   OP_BITWISE_XOR,   /* ^ */
+   OP_BITWISE_NOT,   /* ~ */
+   OP_ASSIGN,        /* = */
+};
+
+static char s_expr_op_names[][3] = {
+   [OP_PLUS]  = "+",
+   [OP_MINUS] = "-",
+   [OP_MULT]  = "*",
+   [OP_DIV]   = "\\",
+   [OP_LOGICAL_AND] = "&&",
+   [OP_LOGICAL_OR]  = "||",
+   [OP_LOGICAL_NOT] = "!",
+   [OP_BITWISE_AND] = "&",
+   [OP_BITWISE_OR]  = "|",
+   [OP_BITWISE_XOR] = "^",
+   [OP_BITWISE_NOT] = "~",
+   [OP_ASSIGN]      = "=",
+};
+
+
+struct expr_t {
+   EXPR_COMMON_FIELDS;
+};
+
+struct expr_constant_t {
+   EXPR_COMMON_FIELDS;
+   int val;
+};
+
+#define IMPLEMENT_ARGLIST_expr_constant_t int val
+#define IMPLEMENT_ARGCOPY_expr_constant_t (*node)->val = val
+#define IMPLEMENT_PRINTF_expr_constant_t " %d\n", val
+
+struct expr_unaryop_t {
+   EXPR_COMMON_FIELDS;
+   char op;
+   expr_t * arg1;
+};
+
+#define IMPLEMENT_ARGLIST_expr_unaryop_t char op
+#define IMPLEMENT_ARGCOPY_expr_unaryop_t (*node)->op = op
+#define IMPLEMENT_PRINTF_expr_unaryop_t " '%s'\n", s_expr_op_names[(unsigned)op]
+
+struct expr_binaryop_t {
+   EXPR_COMMON_FIELDS;
+   char op;
+   char is_assign_op;
+   expr_t * arg1;
+   expr_t * arg2;
+};
+
+#define IMPLEMENT_ARGLIST_expr_binaryop_t char op, char is_assign_op
+#define IMPLEMENT_ARGCOPY_expr_binaryop_t (*node)->op = op; (*node)->is_assign_op = is_assign_op
+#define IMPLEMENT_PRINTF_expr_binaryop_t " %s%s\n", s_expr_op_names[(unsigned)op], is_assign_op ? "=" : ""
+
+#define IMPLEMENT_NEW(_name, _type) \
+   int new_ ## _name (parser_t* parser, /*out*/_type** node, IMPLEMENT_ARGLIST_ ## _type) \
+   { \
+      *node = (_type*) alloc_mman(&parser->mm, sizeof(_type)); \
+      if (!*node) return ENOMEM; \
+      (*node)->type = TYPE_ ## _type; \
+      IMPLEMENT_ARGCOPY_ ## _type; \
+      \
+      print_debug(parser, "Matched " #_type IMPLEMENT_PRINTF_ ## _type); \
+      \
+      return 0; \
+   }
+
+IMPLEMENT_NEW(exprconstant, expr_constant_t)
+IMPLEMENT_NEW(exprunaryop, expr_unaryop_t)
+IMPLEMENT_NEW(exprbinaryop, expr_binaryop_t)
+
 /* =======
  *  Value
  * ======= */
 
-enum node_type {
-   TYPE_VALUE_CONSTANT,
-   TYPE_VALUE_PREFIXOP
-};
-
-typedef struct value_constant value_constant_t;
-typedef struct value_prefixop value_prefixop_t;
-typedef struct value value_t;
-
-#define value_COMMON_FIELDS char type
-
-struct value {
-   value_COMMON_FIELDS;
-};
-
-struct value_constant {
-   value_COMMON_FIELDS;
-   int value;
-};
-
-int new_valueconstant(parser_t* parser, /*out*/value_constant_t** cval, int value)
-{
-   *cval = (value_constant_t*) alloc_mman(&parser->mm, sizeof(value_constant_t));
-
-   if (!*cval) {
-      return ENOMEM;
-   }
-
-   (*cval)->type = TYPE_VALUE_CONSTANT;
-   (*cval)->value = value;
-
-   print_debug(parser, "Matched integer %d\n", value);
-
-   return 0;
-}
-
-struct value_prefixop {
-   value_COMMON_FIELDS;
-   char prefix_op[2];
-   value_t* argument;
-};
-
-
-static /*err*/int parse_integer(parser_t * parser, /*out*/value_constant_t** cval, int c)
+static /*err*/int parse_integer(parser_t * parser, /*out*/expr_constant_t** expr, int c)
 {
    int err;
    int value = c - '0';
@@ -385,49 +465,75 @@ static /*err*/int parse_integer(parser_t * parser, /*out*/value_constant_t** cva
       }
    }
 
-   err = new_valueconstant(parser, cval, value);
+   err = new_exprconstant(parser, expr, value);
 
    return err;
 }
 
-static /*err*/int parse_value(parser_t * parser, /*out*/value_t** value)
+static /*err*/int parse_unaryop(parser_t * parser, /*out*/expr_t** expr, char op)
+{
+   int err;
+   expr_unaryop_t * unaryop;
+
+   err = new_exprunaryop(parser, &unaryop, op);
+   if (err) return err;
+
+   *expr = (expr_t*) unaryop;
+   return 0;
+}
+
+static /*err*/int parse_unaryop_or_value(parser_t * parser, /*out*/expr_t** expr)
 {
    int err;
    int c = nextchar(&parser->buffer);
-   value_constant_t * cval = 0;
+   expr_constant_t * value;
+
+   /* support prefix operators */
+   /* ! ~ + - (associativity from right to left) */
 
    switch (c) {
    case 0:
       /* reached end of input */
-      *value = 0;
+      *expr = 0;
       return 0;
    case '0': case '1': case '2': case '3': case '4':
    case '5': case '6': case '7': case '8': case '9':
-      err = parse_integer(parser, &cval, c);
+      err = parse_integer(parser, &value, c);
+      if (err) goto ONERR;
+      *expr = (expr_t*) value;
+      break;
+   case '~':
+      err = parse_unaryop(parser, expr, OP_BITWISE_NOT);
+      if (err) goto ONERR;
+      break;
+   case '!':
+      err = parse_unaryop(parser, expr, OP_LOGICAL_NOT);
       if (err) goto ONERR;
       break;
    case '+':
+      err = parse_unaryop(parser, expr, OP_PLUS);
+      if (err) goto ONERR;
       break;
    case '-':
+      err = parse_unaryop(parser, expr, OP_MINUS);
+      if (err) goto ONERR;
       break;
    default:
       print_error(parser, "unexpected input '%c'\n", c);
       break;
    }
 
-   return ENOSYS;
+   return 0;
 ONERR:
    return err;
 }
 
-
-
 static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
-   value_t* value;
+   expr_t * expr;
 
-   err = parse_value(parser, &value);
+   err = parse_unaryop_or_value(parser, &expr);
    if (err) return err;
 
    return 0;

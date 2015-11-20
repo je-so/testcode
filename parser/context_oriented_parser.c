@@ -75,6 +75,8 @@
  * */
 
 #include <errno.h>
+#include <limits.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -180,6 +182,7 @@ typedef struct buffer buffer_t;
 struct buffer {
    char * addr;
    size_t len;
+   size_t off;
    size_t line;
    size_t col;
 };
@@ -194,7 +197,6 @@ static /*err*/int read_buffer(/*out*/buffer_t* buffer, const char * filename)
       return ENOENT;
    }
 
-
    if (0 != fseek(file, 0, SEEK_END) || 0 > (size = ftell(file)) || 0 != fseek(file, 0, SEEK_SET)) {
       fprintf(stderr, "Can not determine length of file '%s'\n", filename);
       fclose(file);
@@ -208,7 +210,8 @@ static /*err*/int read_buffer(/*out*/buffer_t* buffer, const char * filename)
       return ENOMEM;
    }
    buffer->len  = (size_t) size;
-   buffer->line = 0;
+   buffer->off  = 0;
+   buffer->line = 1;
    buffer->col  = 0;
 
    size = (long) fread(buffer->addr, 1, buffer->len, file);
@@ -231,10 +234,9 @@ static void free_buffer(buffer_t * buffer)
 
 static inline /*char*/int nextchar(buffer_t * buffer)
 {
-   while (buffer->len) {
-      char c = buffer->addr[0];
-      ++ buffer->addr;
-      -- buffer->len;
+   while (buffer->off < buffer->len) {
+      char c = buffer->addr[buffer->off];
+      ++ buffer->off;
       ++ buffer->col; /* no multibyte support ! */
       if (c == '\n') {
          ++ buffer->line;
@@ -255,8 +257,7 @@ static inline /*char*/int peekchar(buffer_t * buffer)
    int c = nextchar(buffer);
 
    if (c) {
-      -- buffer->addr;
-      ++ buffer->len;
+      -- buffer->off;
       -- buffer->col;
    }
 
@@ -272,6 +273,7 @@ typedef struct parser parser_t;
 struct parser {
    buffer_t buffer;
    mman_t   mm;
+   const char * filename;
 };
 
 int init_parser(/*out*/parser_t* parser, const char* filename)
@@ -283,6 +285,8 @@ int init_parser(/*out*/parser_t* parser, const char* filename)
 
    init_mman(&parser->mm);
 
+   parser->filename = filename;
+
    return 0;
 }
 
@@ -292,36 +296,128 @@ void free_parser(parser_t* parser)
    free_mman(&parser->mm);
 }
 
+void print_error(parser_t* parser, const char * format, ...)
+{
+   va_list args;
+   va_start(args, format);
+   fprintf(stderr, "%s:%zd,%zd: ", parser->filename, parser->buffer.line, parser->buffer.col);
+   vfprintf(stderr, format, args);
+   va_end(args);
+}
+
+void print_debug(parser_t* parser, const char * format, ...)
+{
+   va_list args;
+   va_start(args, format);
+   fprintf(stdout, "%s:%zd,%zd: ", parser->filename, parser->buffer.line, parser->buffer.col);
+   vfprintf(stdout, format, args);
+   va_end(args);
+}
+
 /* =======
  *  Value
  * ======= */
+
+enum node_type {
+   TYPE_VALUE_CONSTANT,
+   TYPE_VALUE_PREFIXOP
+};
 
 typedef struct value_constant value_constant_t;
 typedef struct value_prefixop value_prefixop_t;
 typedef struct value value_t;
 
-struct value_constant {
-    int value;
+#define value_COMMON_FIELDS char type
+
+struct value {
+   value_COMMON_FIELDS;
 };
 
+struct value_constant {
+   value_COMMON_FIELDS;
+   int value;
+};
+
+int new_valueconstant(parser_t* parser, /*out*/value_constant_t** cval, int value)
+{
+   *cval = (value_constant_t*) alloc_mman(&parser->mm, sizeof(value_constant_t));
+
+   if (!*cval) {
+      return ENOMEM;
+   }
+
+   (*cval)->type = TYPE_VALUE_CONSTANT;
+   (*cval)->value = value;
+
+   print_debug(parser, "Matched integer %d\n", value);
+
+   return 0;
+}
+
 struct value_prefixop {
+   value_COMMON_FIELDS;
    char prefix_op[2];
    value_t* argument;
 };
 
-struct value {
-   const char type;
-   union {
-      value_prefixop_t preop;
-      value_constant_t val;
-   };
-};
+
+static /*err*/int parse_integer(parser_t * parser, /*out*/value_constant_t** cval, int c)
+{
+   int err;
+   int value = c - '0';
+
+   for (;;) {
+      c = peekchar(&parser->buffer);
+      if ('0' <= c && c <= '9') {
+         c = nextchar(&parser->buffer);
+         if (value >= INT_MAX/10) {
+            print_error(parser, "integer value too large\n");
+            return EOVERFLOW;
+         }
+         value *= 10;
+         if (value > INT_MAX - (c - '0')) {
+            print_error(parser, "integer value too large\n");
+            return EOVERFLOW;
+         }
+         value += c - '0';
+      } else {
+         break;
+      }
+   }
+
+   err = new_valueconstant(parser, cval, value);
+
+   return err;
+}
 
 static /*err*/int parse_value(parser_t * parser, /*out*/value_t** value)
 {
-   (void) parser;
-   (void) value;
+   int err;
+   int c = nextchar(&parser->buffer);
+   value_constant_t * cval = 0;
+
+   switch (c) {
+   case 0:
+      /* reached end of input */
+      *value = 0;
+      return 0;
+   case '0': case '1': case '2': case '3': case '4':
+   case '5': case '6': case '7': case '8': case '9':
+      err = parse_integer(parser, &cval, c);
+      if (err) goto ONERR;
+      break;
+   case '+':
+      break;
+   case '-':
+      break;
+   default:
+      print_error(parser, "unexpected input '%c'\n", c);
+      break;
+   }
+
    return ENOSYS;
+ONERR:
+   return err;
 }
 
 

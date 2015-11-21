@@ -264,23 +264,24 @@ static inline /*char*/int peekchar(buffer_t * buffer)
    return c;
 }
 
-/* ====================
- *  precedence_stack_t
- * ==================== */
+/* ================
+ *  parser_state_t
+ * ================ */
 
 typedef struct expr_t expr_t;
 
-typedef struct precedence_stack_t precedence_stack_t;
+typedef struct parser_state_t parser_state_t;
 
 #define NROF_PRECEDENCE_LEVEL 15
 
-struct precedence_stack_t {
-   expr_t * active[NROF_PRECEDENCE_LEVEL];
+struct parser_state_t {
+   expr_t * precedence[NROF_PRECEDENCE_LEVEL];
+   expr_t ** expect_value;
 };
 
-void init_precedencestack(/*out*/precedence_stack_t * stack)
+void init_parserstate(/*out*/parser_state_t * state)
 {
-   memset(stack, 0, sizeof(*stack));
+   memset(state, 0, sizeof(*state));
 }
 
 
@@ -293,7 +294,7 @@ typedef struct parser_t parser_t;
 struct parser_t {
    buffer_t buffer;
    mman_t   mm;
-   precedence_stack_t precedence;
+   parser_state_t * state;
    const char * filename;
 };
 
@@ -306,7 +307,7 @@ int init_parser(/*out*/parser_t* parser, const char* filename)
 
    init_mman(&parser->mm);
 
-   init_precedencestack(&parser->precedence);
+   parser->state = 0;
 
    parser->filename = filename;
 
@@ -437,14 +438,15 @@ IMPLEMENT_NEW(exprconstant, expr_constant_t)
 IMPLEMENT_NEW(exprunaryop, expr_unaryop_t)
 IMPLEMENT_NEW(exprbinaryop, expr_binaryop_t)
 
-/* =======
- *  Value
- * ======= */
+/* =================
+ *  Parse Algorithm
+ * ================= */
 
-static /*err*/int parse_integer(parser_t * parser, /*out*/expr_constant_t** expr, int c)
+static /*err*/int parse_integer(parser_t * parser, /*out*/expr_t** expr, int c)
 {
    int err;
    int value = c - '0';
+   expr_constant_t * cexpr;
 
    for (;;) {
       c = peekchar(&parser->buffer);
@@ -465,7 +467,13 @@ static /*err*/int parse_integer(parser_t * parser, /*out*/expr_constant_t** expr
       }
    }
 
-   err = new_exprconstant(parser, expr, value);
+   err = new_exprconstant(parser, &cexpr, value);
+   *expr = (expr_t*) cexpr;
+
+   if (parser->state->expect_value) {
+      *parser->state->expect_value = *expr;
+      parser->state->expect_value = 0;
+   }
 
    return err;
 }
@@ -478,6 +486,11 @@ static /*err*/int parse_unaryop(parser_t * parser, /*out*/expr_t** expr, char op
    err = new_exprunaryop(parser, &unaryop, op);
    if (err) return err;
 
+   if (parser->state->expect_value) {
+      *parser->state->expect_value = (expr_t*) unaryop;
+   }
+   parser->state->expect_value = &unaryop->arg1;
+
    *expr = (expr_t*) unaryop;
    return 0;
 }
@@ -486,7 +499,6 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser, /*out*/expr_t** expr
 {
    int err;
    int c = nextchar(&parser->buffer);
-   expr_constant_t * value;
 
    /* support prefix operators */
    /* ! ~ + - (associativity from right to left) */
@@ -498,9 +510,8 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser, /*out*/expr_t** expr
       return 0;
    case '0': case '1': case '2': case '3': case '4':
    case '5': case '6': case '7': case '8': case '9':
-      err = parse_integer(parser, &value, c);
+      err = parse_integer(parser, expr, c);
       if (err) goto ONERR;
-      *expr = (expr_t*) value;
       break;
    case '~':
       err = parse_unaryop(parser, expr, OP_BITWISE_NOT);
@@ -532,11 +543,21 @@ static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
    expr_t * expr;
+   parser_state_t state;
+   parser_state_t * oldstate = parser->state;
 
-   err = parse_unaryop_or_value(parser, &expr);
-   if (err) return err;
+   // start of expression: a value or unary (prefix) operator is expected
+   init_parserstate(&state);
+   parser->state = &state;
 
-   return 0;
+   do {
+      err = parse_unaryop_or_value(parser, &expr);
+      if (err) goto ONERR;
+   } while (state.expect_value);
+
+ONERR:
+   parser->state = oldstate;
+   return err;
 }
 
 

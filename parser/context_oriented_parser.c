@@ -74,6 +74,7 @@
  *
  * */
 
+#include <assert.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -275,15 +276,18 @@ typedef struct parser_state_t parser_state_t;
 #define NROF_PRECEDENCE_LEVEL 15
 
 struct parser_state_t {
+   parser_state_t * prev;
+   expr_t * root;
    expr_t * precedence[NROF_PRECEDENCE_LEVEL];
-   expr_t ** expect_value;
+   expr_t ** expect;
 };
 
-void init_parserstate(/*out*/parser_state_t * state)
+void init_parserstate(/*out*/parser_state_t * state, parser_state_t * prev)
 {
    memset(state, 0, sizeof(*state));
+   state->prev = prev;
+   state->expect = &state->root;
 }
-
 
 /* ==========
  *  parser_t
@@ -294,7 +298,9 @@ typedef struct parser_t parser_t;
 struct parser_t {
    buffer_t buffer;
    mman_t   mm;
+   parser_state_t * freestate;
    parser_state_t * state;
+   parser_state_t startstate;
    const char * filename;
 };
 
@@ -307,7 +313,9 @@ int init_parser(/*out*/parser_t* parser, const char* filename)
 
    init_mman(&parser->mm);
 
-   parser->state = 0;
+   parser->freestate = 0;
+   parser->state = &parser->startstate;
+   init_parserstate(parser->state, 0/*root start state*/);
 
    parser->filename = filename;
 
@@ -336,6 +344,57 @@ void print_debug(parser_t* parser, const char * format, ...)
    fprintf(stdout, "%s:%zd,%zd: ", parser->filename, parser->buffer.line, parser->buffer.col);
    vfprintf(stdout, format, args);
    va_end(args);
+}
+
+int newstate_parser(/*out*/parser_t * parser)
+{
+   parser_state_t * startstate;
+
+   if (parser->freestate) {
+      startstate = parser->freestate;
+      parser->freestate = parser->freestate->prev;
+
+   } else {
+      startstate = (parser_state_t*) alloc_mman(&parser->mm, sizeof(parser_state_t));
+      if (!startstate) {
+         return ENOMEM;
+      }
+   }
+
+   init_parserstate(startstate, /*prev*/parser->state);
+   parser->state = startstate;
+
+   return 0;
+}
+
+void prevstate_parserstate(parser_t * parser)
+{
+   parser_state_t * prev = parser->state->prev;
+
+   // check that state is not root state
+   assert(prev);
+
+   if (!parser->state->root) {
+      print_error(parser, "expected non empty sub expression\n");
+      assert(parser->state->root);
+   }
+
+   if (!prev->expect) {
+      print_error(parser, "unused sub expression\n");
+      assert(prev->expect);
+   }
+
+   // register sub expression with surrounding expression
+   *prev->expect = parser->state->root;
+   prev->expect = 0;
+
+   // add parser->state to list of free states
+   parser->state->prev = parser->freestate;
+   parser->freestate = parser->state;
+
+   // switch to prev state
+   parser->state = prev;
+
 }
 
 /* ===================
@@ -442,11 +501,11 @@ IMPLEMENT_NEW(exprbinaryop, expr_binaryop_t)
  *  Parse Algorithm
  * ================= */
 
-static /*err*/int parse_integer(parser_t * parser, /*out*/expr_t** expr, int c)
+static /*err*/int parse_integer(parser_t * parser, int c)
 {
    int err;
    int value = c - '0';
-   expr_constant_t * cexpr;
+   expr_constant_t * expr;
 
    for (;;) {
       c = peekchar(&parser->buffer);
@@ -467,18 +526,15 @@ static /*err*/int parse_integer(parser_t * parser, /*out*/expr_t** expr, int c)
       }
    }
 
-   err = new_exprconstant(parser, &cexpr, value);
-   *expr = (expr_t*) cexpr;
+   err = new_exprconstant(parser, &expr, value);
 
-   if (parser->state->expect_value) {
-      *parser->state->expect_value = *expr;
-      parser->state->expect_value = 0;
-   }
+   *parser->state->expect = (expr_t*) expr;
+   parser->state->expect = 0;
 
    return err;
 }
 
-static /*err*/int parse_unaryop(parser_t * parser, /*out*/expr_t** expr, char op)
+static /*err*/int parse_unaryop(parser_t * parser, char op)
 {
    int err;
    expr_unaryop_t * unaryop;
@@ -486,19 +542,19 @@ static /*err*/int parse_unaryop(parser_t * parser, /*out*/expr_t** expr, char op
    err = new_exprunaryop(parser, &unaryop, op);
    if (err) return err;
 
-   if (parser->state->expect_value) {
-      *parser->state->expect_value = (expr_t*) unaryop;
-   }
-   parser->state->expect_value = &unaryop->arg1;
+   *parser->state->expect = (expr_t*) unaryop;
+   parser->state->expect = &unaryop->arg1;
 
-   *expr = (expr_t*) unaryop;
    return 0;
 }
 
-static /*err*/int parse_unaryop_or_value(parser_t * parser, /*out*/expr_t** expr)
+static /*err*/int parse_unaryop_or_value(parser_t * parser)
 {
    int err;
    int c = nextchar(&parser->buffer);
+
+   // TODO: dokument why ?
+   assert(parser->state->expect);
 
    /* support prefix operators */
    /* ! ~ + - (associativity from right to left) */
@@ -506,27 +562,26 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser, /*out*/expr_t** expr
    switch (c) {
    case 0:
       /* reached end of input */
-      *expr = 0;
       return 0;
    case '0': case '1': case '2': case '3': case '4':
    case '5': case '6': case '7': case '8': case '9':
-      err = parse_integer(parser, expr, c);
+      err = parse_integer(parser, c);
       if (err) goto ONERR;
       break;
    case '~':
-      err = parse_unaryop(parser, expr, OP_BITWISE_NOT);
+      err = parse_unaryop(parser, OP_BITWISE_NOT);
       if (err) goto ONERR;
       break;
    case '!':
-      err = parse_unaryop(parser, expr, OP_LOGICAL_NOT);
+      err = parse_unaryop(parser, OP_LOGICAL_NOT);
       if (err) goto ONERR;
       break;
    case '+':
-      err = parse_unaryop(parser, expr, OP_PLUS);
+      err = parse_unaryop(parser, OP_PLUS);
       if (err) goto ONERR;
       break;
    case '-':
-      err = parse_unaryop(parser, expr, OP_MINUS);
+      err = parse_unaryop(parser, OP_MINUS);
       if (err) goto ONERR;
       break;
    default:
@@ -542,21 +597,20 @@ ONERR:
 static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
-   expr_t * expr;
-   parser_state_t state;
-   parser_state_t * oldstate = parser->state;
 
    // start of expression: a value or unary (prefix) operator is expected
-   init_parserstate(&state);
-   parser->state = &state;
+   err = newstate_parser(parser);
+   if (err) return err;
+   // assert (parser->state->expect != 0);
 
    do {
-      err = parse_unaryop_or_value(parser, &expr);
+      err = parse_unaryop_or_value(parser);
       if (err) goto ONERR;
-   } while (state.expect_value);
+   } while (parser->state->expect);
 
 ONERR:
-   parser->state = oldstate;
+   print_debug(parser, "parse_expression error %d\n", err);
+   prevstate_parserstate(parser);
    return err;
 }
 

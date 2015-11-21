@@ -67,7 +67,7 @@
  * TODO: implement parse_expression
  *
  * Compile with:
- * > gcc -ocop context_oriented_parser.c
+ * > ggcc -Wall -Wextra -Wconversion -std=gnu99 -ocop context_oriented_parser.c
  *
  * Run with:
  * > ./cop <filename>
@@ -408,11 +408,11 @@ typedef struct expr_constant_t expr_constant_t;
 typedef struct expr_unaryop_t  expr_unaryop_t;
 typedef struct expr_binaryop_t expr_binaryop_t;
 
-enum expr_type {
+typedef enum expr_type {
    TYPE_expr_constant_t,
    TYPE_expr_unaryop_t,
    TYPE_expr_binaryop_t,
-};
+} expr_type_e;
 
 enum expr_op {
    OP_PLUS,          /* + */
@@ -427,6 +427,7 @@ enum expr_op {
    OP_BITWISE_XOR,   /* ^ */
    OP_BITWISE_NOT,   /* ~ */
    OP_ASSIGN,        /* = */
+   OP_BRACKET
 };
 
 static char s_expr_op_names[][3] = {
@@ -442,6 +443,7 @@ static char s_expr_op_names[][3] = {
    [OP_BITWISE_XOR] = "^",
    [OP_BITWISE_NOT] = "~",
    [OP_ASSIGN]      = "=",
+   [OP_BRACKET]     = "(",
 };
 
 
@@ -460,25 +462,25 @@ struct expr_constant_t {
 
 struct expr_unaryop_t {
    EXPR_COMMON_FIELDS;
-   char op;
+   unsigned char op;
    expr_t * arg1;
 };
 
-#define IMPLEMENT_ARGLIST_expr_unaryop_t char op
+#define IMPLEMENT_ARGLIST_expr_unaryop_t unsigned char op
 #define IMPLEMENT_ARGCOPY_expr_unaryop_t (*node)->op = op
-#define IMPLEMENT_PRINTF_expr_unaryop_t " '%s'\n", s_expr_op_names[(unsigned)op]
+#define IMPLEMENT_PRINTF_expr_unaryop_t " '%s'\n", s_expr_op_names[op]
 
 struct expr_binaryop_t {
    EXPR_COMMON_FIELDS;
-   char op;
-   char is_assign_op;
+   unsigned char op;
+   unsigned char is_assign_op;
    expr_t * arg1;
    expr_t * arg2;
 };
 
-#define IMPLEMENT_ARGLIST_expr_binaryop_t char op, char is_assign_op
+#define IMPLEMENT_ARGLIST_expr_binaryop_t unsigned char op, unsigned char is_assign_op
 #define IMPLEMENT_ARGCOPY_expr_binaryop_t (*node)->op = op; (*node)->is_assign_op = is_assign_op
-#define IMPLEMENT_PRINTF_expr_binaryop_t " %s%s\n", s_expr_op_names[(unsigned)op], is_assign_op ? "=" : ""
+#define IMPLEMENT_PRINTF_expr_binaryop_t " %s%s\n", s_expr_op_names[op], is_assign_op ? "=" : ""
 
 #define IMPLEMENT_NEW(_name, _type) \
    int new_ ## _name (parser_t* parser, /*out*/_type** node, IMPLEMENT_ARGLIST_ ## _type) \
@@ -496,6 +498,44 @@ struct expr_binaryop_t {
 IMPLEMENT_NEW(exprconstant, expr_constant_t)
 IMPLEMENT_NEW(exprunaryop, expr_unaryop_t)
 IMPLEMENT_NEW(exprbinaryop, expr_binaryop_t)
+
+static void print_expr2(expr_t * expr)
+{
+   switch ((expr_type_e) expr->type) {
+      case TYPE_expr_constant_t: {
+         expr_constant_t * e = (expr_constant_t*) expr;
+         printf("%d", e->val);
+         break;
+      }
+      case TYPE_expr_unaryop_t: {
+         expr_unaryop_t * e = (expr_unaryop_t*) expr;
+         printf("%s", s_expr_op_names[e->op]);
+         if (OP_BRACKET != e->op) {
+            printf(" ");
+         }
+         print_expr2(e->arg1);
+         if (OP_BRACKET == e->op) {
+            printf(")");
+         }
+         break;
+      }
+      case TYPE_expr_binaryop_t: {
+         expr_binaryop_t * e = (expr_binaryop_t*) expr;
+         print_expr2(e->arg1);
+         printf(" %s ", s_expr_op_names[e->op]);
+         print_expr2(e->arg2);
+         break;
+      }
+   }
+}
+
+static inline void print_expr(expr_t * expr)
+{
+   if (expr) {
+      print_expr2(expr);
+      printf("\n");
+   }
+}
 
 /* =================
  *  Parse Algorithm
@@ -534,7 +574,7 @@ static /*err*/int parse_integer(parser_t * parser, int c)
    return err;
 }
 
-static /*err*/int parse_unaryop(parser_t * parser, char op)
+static /*err*/int parse_unaryop(parser_t * parser, unsigned char op)
 {
    int err;
    expr_unaryop_t * unaryop;
@@ -562,7 +602,14 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser)
    switch (c) {
    case 0:
       /* reached end of input */
-      return 0;
+      print_error(parser, "Unexpected end of input; expected number\n");
+      return ENODATA;
+   case '(':
+      err = newstate_parser(parser);
+      if (err) return err;
+      err = parse_unaryop(parser, OP_BRACKET);
+      if (err) goto ONERR;
+      break;
    case '0': case '1': case '2': case '3': case '4':
    case '5': case '6': case '7': case '8': case '9':
       err = parse_integer(parser, c);
@@ -585,7 +632,7 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser)
       if (err) goto ONERR;
       break;
    default:
-      print_error(parser, "unexpected input '%c'\n", c);
+      print_error(parser, "Unexpected input '%c'; expected number\n", c);
       break;
    }
 
@@ -597,20 +644,45 @@ ONERR:
 static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
+   int c;
 
    // start of expression: a value or unary (prefix) operator is expected
-   err = newstate_parser(parser);
-   if (err) return err;
-   // assert (parser->state->expect != 0);
+   // parser->state->expect != 0
 
-   do {
-      err = parse_unaryop_or_value(parser);
-      if (err) goto ONERR;
-   } while (parser->state->expect);
+   for (;;) {
+
+      while (parser->state->expect) {
+         err = parse_unaryop_or_value(parser);
+         if (err) goto ONERR;
+      }
+
+      c = nextchar(&parser->buffer);
+      if (')' == c) {
+         if (! parser->state->prev) {
+            print_error(parser, "Unmatched ')'\n");
+            err = EINVAL;
+            goto ONERR;
+         }
+         prevstate_parserstate(parser);
+
+      } else if (0 == c) {
+         /* end of input */
+         if (parser->state->prev) {
+            print_error(parser, "Unexpected end of input; unmatched '('\n");
+            err = EINVAL;
+            goto ONERR;
+         }
+         break;
+
+      } else {
+         print_error(parser, "Unexpected input '%c'\n", c);
+         err = EINVAL;
+         goto ONERR;
+      }
+   }
 
 ONERR:
    print_debug(parser, "parse_expression error %d\n", err);
-   prevstate_parserstate(parser);
    return err;
 }
 
@@ -630,6 +702,8 @@ int main(int argc, const char * argv[])
    }
 
    err = parse_expression(&parser);
+
+   print_expr(parser.startstate.root);
 
    free_parser(&parser);
 

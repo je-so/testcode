@@ -12,27 +12,27 @@
  * This simple prototype parses simple expressions with operator precedence.
  *
  * The following table lists the supported C operators.
- * The first row has the highest precedence (15)
- * and the last row the lowest (1).
+ * The first row has the highest precedence (rank 0)
+ * and the last row the lowest (rank 15).
  *
  * ---------------------------------------------------------------
  * Supported C Operators              | Associativity | Precedence
  * ---------------------------------------------------------------
- * () [] -> .                         | left to right | 15
- * ! ~ + -                            | right to left | 14
- * * / %                              | left to right | 13
- * + -                                | left to right | 12
- * << >>                              | left to right | 11
- * < <= > >=                          | left to right | 10
- * == !=                              | left to right |  9
+ * () [] -> .                         | left to right |  1
+ * ! ~ + -                            | right to left |  2
+ * * / %                              | left to right |  3
+ * + -                                | left to right |  4
+ * << >>                              | left to right |  5
+ * < <= > >=                          | left to right |  6
+ * == !=                              | left to right |  7
  * &                                  | left to right |  8
- * ^                                  | left to right |  7
- * |                                  | left to right |  6
- * &&                                 | left to right |  5
- * ||                                 | left to right |  4
- * ?:                                 | right to left |  3
- * = += -= *= /= %= <<= >>= &= ^= |=  | right to left |  2
- * ,                                  | left to right |  1
+ * ^                                  | left to right |  9
+ * |                                  | left to right | 10
+ * &&                                 | left to right | 11
+ * ||                                 | left to right | 12
+ * ?:                                 | right to left | 13
+ * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14
+ * ,                                  | left to right | 15
  *
  * Let us begin with a simpe value and any possible prefix operators.
  *
@@ -272,21 +272,29 @@ static inline /*char*/int peekchar(buffer_t * buffer)
 typedef struct expr_t expr_t;
 
 typedef struct parser_state_t parser_state_t;
+typedef struct precedence_t precedence_t;
 
-#define NROF_PRECEDENCE_LEVEL 15
+#define NROF_PRECEDENCE_LEVEL 16
+
+struct precedence_t {
+   expr_t ** expect; /* expect another expression as argument */
+   expr_t  * root;   /* root of expression of this precedence level */
+   expr_t  * last;   /* last parsed expression of this precedence level */
+};
 
 struct parser_state_t {
    parser_state_t * prev;
-   expr_t * root;
-   expr_t * precedence[NROF_PRECEDENCE_LEVEL];
+   expr_t  * root;
    expr_t ** expect;
+   precedence_t precedence[NROF_PRECEDENCE_LEVEL];
 };
 
 void init_parserstate(/*out*/parser_state_t * state, parser_state_t * prev)
 {
-   memset(state, 0, sizeof(*state));
    state->prev = prev;
+   state->root = 0;
    state->expect = &state->root;
+   memset(&state->precedence, 0, sizeof(state->precedence));
 }
 
 /* ==========
@@ -401,129 +409,188 @@ void prevstate_parserstate(parser_t * parser)
  *  struct data model
  * =================== */
 
-#define EXPR_COMMON_FIELDS char type
+#define EXPR_COMMON_FIELDS  unsigned char type
 
 typedef struct expr_t expr_t;
-typedef struct expr_constant_t expr_constant_t;
-typedef struct expr_unaryop_t  expr_unaryop_t;
-typedef struct expr_binaryop_t expr_binaryop_t;
+typedef struct expr_integer_t expr_integer_t;
+typedef struct expr_1ary_t expr_1ary_t;
+typedef struct expr_2ary_t expr_2ary_t;
 
 typedef enum expr_type {
-   TYPE_expr_constant_t,
-   TYPE_expr_unaryop_t,
-   TYPE_expr_binaryop_t,
+   EXPR_VOID,
+   EXPR_INTEGER,
+   EXPR_1ARY_BRACKET,      /* () */
+   EXPR_1ARY_MINUS,
+   EXPR_1ARY_PLUS,
+   EXPR_1ARY_LOGICAL_NOT,  /* ! */
+   EXPR_1ARY_BITWISE_NOT,  /* ~ */
+   EXPR_2ARY_MINUS,
+   EXPR_2ARY_PLUS,
+   EXPR_2ARY_MULT,
+   EXPR_2ARY_DIV,
+   EXPR_2ARY_LOGICAL_AND,  /* && */
+   EXPR_2ARY_LOGICAL_OR,   /* || */
+   EXPR_2ARY_BITWISE_AND,  /* & */
+   EXPR_2ARY_BITWISE_OR,   /* | */
+   EXPR_2ARY_BITWISE_XOR,  /* ^ */
+   EXPR_2ARY_ASSIGN,       /* = */
+   EXPR_2ARY_ARRAYINDEX,   /* [] */
 } expr_type_e;
 
-enum expr_op {
-   OP_PLUS,          /* + */
-   OP_MINUS,         /* - */
-   OP_MULT,          /* * */
-   OP_DIV,           /* \ */
-   OP_LOGICAL_AND,   /* && */
-   OP_LOGICAL_OR,    /* || */
-   OP_LOGICAL_NOT,   /* ! */
-   OP_BITWISE_AND,   /* & */
-   OP_BITWISE_OR,    /* | */
-   OP_BITWISE_XOR,   /* ^ */
-   OP_BITWISE_NOT,   /* ~ */
-   OP_ASSIGN,        /* = */
-   OP_BRACKET
-};
+typedef enum expr_precedence {
+   EXPR_PREC_VOID    = 0,
+   EXPR_PREC_INTEGER = 0,
+   EXPR_PREC_1ARY_BRACKET = 1,
+   EXPR_PREC_1ARY_MINUS = 2,
+   EXPR_PREC_1ARY_PLUS  = 2,
+   EXPR_PREC_1ARY_LOGICAL_NOT = 2,
+   EXPR_PREC_1ARY_BITWISE_NOT = 2,
+   EXPR_PREC_2ARY_MINUS = 4,
+   EXPR_PREC_2ARY_PLUS  = 4,
+   EXPR_PREC_2ARY_MULT  = 3,
+   EXPR_PREC_2ARY_DIV   = 3,
+   EXPR_PREC_2ARY_LOGICAL_AND = 11,
+   EXPR_PREC_2ARY_LOGICAL_OR  = 12,
+   EXPR_PREC_2ARY_BITWISE_AND = 8,
+   EXPR_PREC_2ARY_BITWISE_OR  = 10,
+   EXPR_PREC_2ARY_BITWISE_XOR = 9,
+   EXPR_PREC_2ARY_ASSIGN     = 14,
+   EXPR_PREC_2ARY_ARRAYINDEX = 1,
+} expr_precedence;
 
-static char s_expr_op_names[][3] = {
-   [OP_PLUS]  = "+",
-   [OP_MINUS] = "-",
-   [OP_MULT]  = "*",
-   [OP_DIV]   = "\\",
-   [OP_LOGICAL_AND] = "&&",
-   [OP_LOGICAL_OR]  = "||",
-   [OP_LOGICAL_NOT] = "!",
-   [OP_BITWISE_AND] = "&",
-   [OP_BITWISE_OR]  = "|",
-   [OP_BITWISE_XOR] = "^",
-   [OP_BITWISE_NOT] = "~",
-   [OP_ASSIGN]      = "=",
-   [OP_BRACKET]     = "(",
+static char s_expr_type_names[][4] = {
+   [EXPR_VOID]    = "",
+   [EXPR_INTEGER] = "",
+   [EXPR_1ARY_BRACKET] = "(",
+   [EXPR_1ARY_MINUS] = "-",
+   [EXPR_1ARY_PLUS]  = "+",
+   [EXPR_1ARY_LOGICAL_NOT] = "!",
+   [EXPR_1ARY_BITWISE_NOT] = "~",
+   [EXPR_2ARY_MINUS] = "-",
+   [EXPR_2ARY_PLUS] = "+",
+   [EXPR_2ARY_MULT] = "*",
+   [EXPR_2ARY_DIV]  = "/",
+   [EXPR_2ARY_LOGICAL_AND] = "&&",
+   [EXPR_2ARY_LOGICAL_OR]  = "||",
+   [EXPR_2ARY_BITWISE_AND] = "&",
+   [EXPR_2ARY_BITWISE_OR]  = "|",
+   [EXPR_2ARY_BITWISE_XOR] = "^",
+   [EXPR_2ARY_ASSIGN]      = "=",
+   [EXPR_2ARY_ARRAYINDEX]  = "["
 };
-
 
 struct expr_t {
    EXPR_COMMON_FIELDS;
 };
 
-struct expr_constant_t {
+struct expr_integer_t {
    EXPR_COMMON_FIELDS;
    int val;
 };
 
-#define IMPLEMENT_ARGLIST_expr_constant_t int val
-#define IMPLEMENT_ARGCOPY_expr_constant_t (*node)->val = val
-#define IMPLEMENT_PRINTF_expr_constant_t " %d\n", val
-
-struct expr_unaryop_t {
+struct expr_1ary_t {
    EXPR_COMMON_FIELDS;
-   unsigned char op;
    expr_t * arg1;
 };
 
-#define IMPLEMENT_ARGLIST_expr_unaryop_t unsigned char op
-#define IMPLEMENT_ARGCOPY_expr_unaryop_t (*node)->op = op
-#define IMPLEMENT_PRINTF_expr_unaryop_t " '%s'\n", s_expr_op_names[op]
-
-struct expr_binaryop_t {
+struct expr_2ary_t {
    EXPR_COMMON_FIELDS;
-   unsigned char op;
-   unsigned char is_assign_op;
+   unsigned char assign_type;
    expr_t * arg1;
    expr_t * arg2;
 };
 
-#define IMPLEMENT_ARGLIST_expr_binaryop_t unsigned char op, unsigned char is_assign_op
-#define IMPLEMENT_ARGCOPY_expr_binaryop_t (*node)->op = op; (*node)->is_assign_op = is_assign_op
-#define IMPLEMENT_PRINTF_expr_binaryop_t " %s%s\n", s_expr_op_names[op], is_assign_op ? "=" : ""
+static int new_exprinteger(parser_t* parser, /*out*/expr_integer_t** node, int val)
+{
+   *node = (expr_integer_t*) alloc_mman(&parser->mm, sizeof(expr_integer_t));
+   if (!*node) return ENOMEM;
+   (*node)->type = EXPR_INTEGER;
+   (*node)->val = val;
+   print_debug(parser, "Matched expr_integer_t %d\n", val);
+   return 0;
+}
 
-#define IMPLEMENT_NEW(_name, _type) \
-   int new_ ## _name (parser_t* parser, /*out*/_type** node, IMPLEMENT_ARGLIST_ ## _type) \
-   { \
-      *node = (_type*) alloc_mman(&parser->mm, sizeof(_type)); \
-      if (!*node) return ENOMEM; \
-      (*node)->type = TYPE_ ## _type; \
-      IMPLEMENT_ARGCOPY_ ## _type; \
-      \
-      print_debug(parser, "Matched " #_type IMPLEMENT_PRINTF_ ## _type); \
-      \
-      return 0; \
-   }
+static int new_expr1ary(parser_t* parser, /*out*/expr_1ary_t** node, unsigned char type)
+{
+   *node = (expr_1ary_t*) alloc_mman(&parser->mm, sizeof(expr_1ary_t));
+   if (!*node) return ENOMEM;
+   (*node)->type = type;
+   print_debug(parser, "Matched expr_1ary_t %s\n", s_expr_type_names[type]);
+   return 0;
+}
 
-IMPLEMENT_NEW(exprconstant, expr_constant_t)
-IMPLEMENT_NEW(exprunaryop, expr_unaryop_t)
-IMPLEMENT_NEW(exprbinaryop, expr_binaryop_t)
+static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned char type, unsigned char assign_type)
+{
+   *node = (expr_2ary_t*) alloc_mman(&parser->mm, sizeof(expr_2ary_t));
+   if (!*node) return ENOMEM;
+   (*node)->type = type;
+   (*node)->assign_type = assign_type;
+   print_debug(parser, "Matched expr_2ary_t %s%s\n", type == EXPR_2ARY_ASSIGN ? s_expr_type_names[assign_type] : "", s_expr_type_names[type]);
+   return 0;
+}
 
 static void print_expr2(expr_t * expr)
 {
    switch ((expr_type_e) expr->type) {
-      case TYPE_expr_constant_t: {
-         expr_constant_t * e = (expr_constant_t*) expr;
+      case EXPR_VOID:
+         break;
+      case EXPR_INTEGER: {
+         expr_integer_t * e = (expr_integer_t*) expr;
          printf("%d", e->val);
          break;
       }
-      case TYPE_expr_unaryop_t: {
-         expr_unaryop_t * e = (expr_unaryop_t*) expr;
-         printf("%s", s_expr_op_names[e->op]);
-         if (OP_BRACKET != e->op) {
-            printf(" ");
-         }
+      case EXPR_1ARY_BRACKET: {
+         expr_1ary_t * e = (expr_1ary_t*) expr;
+         printf("(");
          print_expr2(e->arg1);
-         if (OP_BRACKET == e->op) {
-            printf(")");
-         }
+         printf(")");
          break;
       }
-      case TYPE_expr_binaryop_t: {
-         expr_binaryop_t * e = (expr_binaryop_t*) expr;
+      case EXPR_1ARY_MINUS:
+      case EXPR_1ARY_PLUS:
+      case EXPR_1ARY_LOGICAL_NOT:
+      case EXPR_1ARY_BITWISE_NOT: {
+         expr_1ary_t * e = (expr_1ary_t*) expr;
+         printf("{");
+         printf("%s ", s_expr_type_names[e->type]);
          print_expr2(e->arg1);
-         printf(" %s ", s_expr_op_names[e->op]);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_MINUS:
+      case EXPR_2ARY_PLUS:
+      case EXPR_2ARY_MULT:
+      case EXPR_2ARY_DIV:
+      case EXPR_2ARY_LOGICAL_AND:
+      case EXPR_2ARY_LOGICAL_OR:
+      case EXPR_2ARY_BITWISE_AND:
+      case EXPR_2ARY_BITWISE_OR:
+      case EXPR_2ARY_BITWISE_XOR: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" %s ", s_expr_type_names[e->type]);
          print_expr2(e->arg2);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_ASSIGN: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" %s%s ", s_expr_type_names[e->assign_type], s_expr_type_names[e->type]);
+         print_expr2(e->arg2);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_ARRAYINDEX: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf("[");
+         print_expr2(e->arg2);
+         printf("]");
+         printf("}");
          break;
       }
    }
@@ -545,7 +612,7 @@ static /*err*/int parse_integer(parser_t * parser, int c)
 {
    int err;
    int value = c - '0';
-   expr_constant_t * expr;
+   expr_integer_t * expr;
 
    for (;;) {
       c = peekchar(&parser->buffer);
@@ -566,7 +633,7 @@ static /*err*/int parse_integer(parser_t * parser, int c)
       }
    }
 
-   err = new_exprconstant(parser, &expr, value);
+   err = new_exprinteger(parser, &expr, value);
 
    *parser->state->expect = (expr_t*) expr;
    parser->state->expect = 0;
@@ -574,21 +641,21 @@ static /*err*/int parse_integer(parser_t * parser, int c)
    return err;
 }
 
-static /*err*/int parse_unaryop(parser_t * parser, unsigned char op)
+static /*err*/int parse_1ary(parser_t * parser, unsigned char type)
 {
    int err;
-   expr_unaryop_t * unaryop;
+   expr_1ary_t * expr;
 
-   err = new_exprunaryop(parser, &unaryop, op);
+   err = new_expr1ary(parser, &expr, type);
    if (err) return err;
 
-   *parser->state->expect = (expr_t*) unaryop;
-   parser->state->expect = &unaryop->arg1;
+   *parser->state->expect = (expr_t*) expr;
+   parser->state->expect = &expr->arg1;
 
    return 0;
 }
 
-static /*err*/int parse_unaryop_or_value(parser_t * parser)
+static /*err*/int parse_prefix_or_value(parser_t * parser)
 {
    int err;
    int c = nextchar(&parser->buffer);
@@ -607,7 +674,7 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser)
    case '(':
       err = newstate_parser(parser);
       if (err) return err;
-      err = parse_unaryop(parser, OP_BRACKET);
+      err = parse_1ary(parser, EXPR_1ARY_BRACKET);
       if (err) goto ONERR;
       break;
    case '0': case '1': case '2': case '3': case '4':
@@ -616,19 +683,19 @@ static /*err*/int parse_unaryop_or_value(parser_t * parser)
       if (err) goto ONERR;
       break;
    case '~':
-      err = parse_unaryop(parser, OP_BITWISE_NOT);
+      err = parse_1ary(parser, EXPR_1ARY_BITWISE_NOT);
       if (err) goto ONERR;
       break;
    case '!':
-      err = parse_unaryop(parser, OP_LOGICAL_NOT);
+      err = parse_1ary(parser, EXPR_1ARY_LOGICAL_NOT);
       if (err) goto ONERR;
       break;
    case '+':
-      err = parse_unaryop(parser, OP_PLUS);
+      err = parse_1ary(parser, EXPR_1ARY_PLUS);
       if (err) goto ONERR;
       break;
    case '-':
-      err = parse_unaryop(parser, OP_MINUS);
+      err = parse_1ary(parser, EXPR_1ARY_MINUS);
       if (err) goto ONERR;
       break;
    default:
@@ -652,7 +719,7 @@ static /*err*/int parse_expression(parser_t * parser)
    for (;;) {
 
       while (parser->state->expect) {
-         err = parse_unaryop_or_value(parser);
+         err = parse_prefix_or_value(parser);
          if (err) goto ONERR;
       }
 

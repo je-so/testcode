@@ -265,36 +265,329 @@ static inline /*char*/int peekchar(buffer_t * buffer)
    return c;
 }
 
+/* ===================
+ *  struct data model
+ * =================== */
+
+#define EXPR_COMMON_FIELDS  unsigned char type
+
+typedef struct expr_t expr_t;
+typedef struct expr_integer_t expr_integer_t;
+typedef struct expr_1ary_t expr_1ary_t;
+typedef struct expr_2ary_t expr_2ary_t;
+
+typedef enum expr_type {
+   EXPR_VOID,
+   EXPR_INTEGER,
+   EXPR_1ARY_BRACKET,      /* () */
+   EXPR_1ARY_MINUS,
+   EXPR_1ARY_PLUS,
+   EXPR_1ARY_LOGICAL_NOT,  /* ! */
+   EXPR_1ARY_BITWISE_NOT,  /* ~ */
+   EXPR_1ARY_PREINCR,
+   EXPR_1ARY_PREDECR,
+   EXPR_1ARY_POSTINCR,
+   EXPR_1ARY_POSTDECR,
+   EXPR_2ARY_MINUS,
+   EXPR_2ARY_PLUS,
+   EXPR_2ARY_MULT,
+   EXPR_2ARY_DIV,
+   EXPR_2ARY_LOGICAL_AND,  /* && */
+   EXPR_2ARY_LOGICAL_OR,   /* || */
+   EXPR_2ARY_BITWISE_AND,  /* & */
+   EXPR_2ARY_BITWISE_OR,   /* | */
+   EXPR_2ARY_BITWISE_XOR,  /* ^ */
+   EXPR_2ARY_ASSIGN,       /* = */
+   EXPR_2ARY_ARRAYINDEX,   /* [] */
+} expr_type_e;
+
+typedef enum precedence {
+   PREC_INTEGER = 0,
+   PREC_1ARY_BRACKET = 1,
+   PREC_1ARY_MINUS = 2,
+   PREC_1ARY_PLUS  = 2,
+   PREC_1ARY_LOGICAL_NOT = 2,
+   PREC_1ARY_BITWISE_NOT = 2,
+   PREC_1ARY_PREINCR  = 2,
+   PREC_1ARY_PREDECR  = 2,
+   PREC_1ARY_POSTINCR = 2,
+   PREC_1ARY_POSTDECR = 2,
+   PREC_2ARY_MINUS = 4,
+   PREC_2ARY_PLUS  = 4,
+   PREC_2ARY_MULT  = 3,
+   PREC_2ARY_DIV   = 3,
+   PREC_2ARY_LOGICAL_AND = 11,
+   PREC_2ARY_LOGICAL_OR  = 12,
+   PREC_2ARY_BITWISE_AND = 8,
+   PREC_2ARY_BITWISE_OR  = 10,
+   PREC_2ARY_BITWISE_XOR = 9,
+   PREC_2ARY_ASSIGN     = 14,
+   PREC_2ARY_ARRAYINDEX = 1,
+} precedence;
+
+static char s_expr_type_names[][4] = {
+   [EXPR_VOID]    = "",
+   [EXPR_INTEGER] = "",
+   [EXPR_1ARY_BRACKET] = "(",
+   [EXPR_1ARY_MINUS] = "-",
+   [EXPR_1ARY_PLUS]  = "+",
+   [EXPR_1ARY_LOGICAL_NOT] = "!",
+   [EXPR_1ARY_BITWISE_NOT] = "~",
+   [EXPR_1ARY_PREINCR]  = "++",
+   [EXPR_1ARY_PREDECR]  = "--",
+   [EXPR_1ARY_POSTINCR] = "++",
+   [EXPR_1ARY_POSTDECR] = "--",
+   [EXPR_2ARY_MINUS] = "-",
+   [EXPR_2ARY_PLUS] = "+",
+   [EXPR_2ARY_MULT] = "*",
+   [EXPR_2ARY_DIV]  = "/",
+   [EXPR_2ARY_LOGICAL_AND] = "&&",
+   [EXPR_2ARY_LOGICAL_OR]  = "||",
+   [EXPR_2ARY_BITWISE_AND] = "&",
+   [EXPR_2ARY_BITWISE_OR]  = "|",
+   [EXPR_2ARY_BITWISE_XOR] = "^",
+   [EXPR_2ARY_ASSIGN]      = "=",
+   [EXPR_2ARY_ARRAYINDEX]  = "["
+};
+
+static unsigned char s_expr_type_nrargs[] = {
+   [EXPR_VOID]    = 0,
+   [EXPR_INTEGER] = 0,
+   [EXPR_1ARY_BRACKET] = 1,
+   [EXPR_1ARY_MINUS] = 1,
+   [EXPR_1ARY_PLUS]  = 1,
+   [EXPR_1ARY_PREINCR] = 1,
+   [EXPR_1ARY_PREDECR] = 1,
+   [EXPR_1ARY_POSTINCR] = 1,
+   [EXPR_1ARY_POSTDECR] = 1,
+   [EXPR_1ARY_LOGICAL_NOT] = 1,
+   [EXPR_1ARY_BITWISE_NOT] = 1,
+   [EXPR_2ARY_MINUS] = 2,
+   [EXPR_2ARY_PLUS]  = 2,
+   [EXPR_2ARY_MULT]  = 2,
+   [EXPR_2ARY_DIV]   = 2,
+   [EXPR_2ARY_LOGICAL_AND] = 2,
+   [EXPR_2ARY_LOGICAL_OR]  = 2,
+   [EXPR_2ARY_BITWISE_AND] = 2,
+   [EXPR_2ARY_BITWISE_OR]  = 2,
+   [EXPR_2ARY_BITWISE_XOR] = 2,
+   [EXPR_2ARY_ASSIGN]      = 2,
+   [EXPR_2ARY_ARRAYINDEX]  = 2
+};
+
+struct expr_t {
+   EXPR_COMMON_FIELDS;
+};
+
+struct expr_integer_t {
+   EXPR_COMMON_FIELDS;
+   int val;
+};
+
+struct expr_1ary_t {
+   EXPR_COMMON_FIELDS;
+   expr_t * arg1;
+};
+
+struct expr_2ary_t {
+   EXPR_COMMON_FIELDS;
+   unsigned char assign_type;
+   expr_t * arg1;
+   expr_t * arg2;
+};
+
+static void print_expr2(expr_t * expr)
+{
+   switch ((expr_type_e) expr->type) {
+      case EXPR_VOID:
+         break;
+      case EXPR_INTEGER: {
+         expr_integer_t * e = (expr_integer_t*) expr;
+         printf("%d", e->val);
+         break;
+      }
+      case EXPR_1ARY_BRACKET: {
+         expr_1ary_t * e = (expr_1ary_t*) expr;
+         printf("(");
+         print_expr2(e->arg1);
+         printf(")");
+         break;
+      }
+      case EXPR_1ARY_MINUS:
+      case EXPR_1ARY_PLUS:
+      case EXPR_1ARY_LOGICAL_NOT:
+      case EXPR_1ARY_BITWISE_NOT:
+      case EXPR_1ARY_PREINCR:
+      case EXPR_1ARY_PREDECR: {
+         expr_1ary_t * e = (expr_1ary_t*) expr;
+         printf("{");
+         printf("%s ", s_expr_type_names[e->type]);
+         print_expr2(e->arg1);
+         printf("}");
+         break;
+      }
+      case EXPR_1ARY_POSTINCR:
+      case EXPR_1ARY_POSTDECR: {
+         expr_1ary_t * e = (expr_1ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" %s", s_expr_type_names[e->type]);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_MINUS:
+      case EXPR_2ARY_PLUS:
+      case EXPR_2ARY_MULT:
+      case EXPR_2ARY_DIV:
+      case EXPR_2ARY_LOGICAL_AND:
+      case EXPR_2ARY_LOGICAL_OR:
+      case EXPR_2ARY_BITWISE_AND:
+      case EXPR_2ARY_BITWISE_OR:
+      case EXPR_2ARY_BITWISE_XOR: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" %s ", s_expr_type_names[e->type]);
+         print_expr2(e->arg2);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_ASSIGN: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" %s%s ", s_expr_type_names[e->assign_type], s_expr_type_names[e->type]);
+         print_expr2(e->arg2);
+         printf("}");
+         break;
+      }
+      case EXPR_2ARY_ARRAYINDEX: {
+         expr_2ary_t * e = (expr_2ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf("[");
+         print_expr2(e->arg2);
+         printf("]");
+         printf("}");
+         break;
+      }
+   }
+}
+
+static inline void print_expr(expr_t * expr)
+{
+   if (expr) {
+      print_expr2(expr);
+      printf("\n");
+   }
+}
+
 /* ================
  *  parser_state_t
  * ================ */
 
-typedef struct expr_t expr_t;
-
 typedef struct parser_state_t parser_state_t;
-typedef struct precedence_t precedence_t;
+typedef struct precedence_state_t precedence_state_t;
 
 #define NROF_PRECEDENCE_LEVEL 16
 
-struct precedence_t {
-   expr_t ** expect; /* expect another expression as argument */
+struct precedence_state_t {
    expr_t  * root;   /* root of expression of this precedence level */
-   expr_t  * last;   /* last parsed expression of this precedence level */
+   expr_t ** last;   /* last assigned argument */
+   expr_t ** expect; /* expect another expression as argument */
+   /* root == 0 ==> last == 0
+    * (last == 0 && expect != 0) || (last != 0 && expect == 0) */
 };
+
+static inline void init_precedencestate(precedence_state_t * state)
+{
+   state->root = 0;
+   state->last = 0;
+   state->expect = &state->root;
+}
 
 struct parser_state_t {
    parser_state_t * prev;
-   expr_t  * root;
-   expr_t ** expect;
-   precedence_t precedence[NROF_PRECEDENCE_LEVEL];
+   precedence_state_t * current;
+   precedence_state_t precedence[NROF_PRECEDENCE_LEVEL];
 };
 
 void init_parserstate(/*out*/parser_state_t * state, parser_state_t * prev)
 {
    state->prev = prev;
-   state->root = 0;
-   state->expect = &state->root;
-   memset(&state->precedence, 0, sizeof(state->precedence));
+   state->current = &state->precedence[0];
+   for (unsigned i = 0; i < NROF_PRECEDENCE_LEVEL; ++i) {
+      init_precedencestate(&state->precedence[i]);
+   }
+}
+
+/* Every expression from precedence level i < prec is linked to higher level.
+ *
+ * Precondition:
+ * Precedence level prec must expect an argument.
+ * A precedence level 0 <= h < prec exists with root != 0 && expect == 0.
+ * For all levels 0 <= x < h: root == 0 && expect == 0
+ * For all levels h < x < prec: root == 0 && expect == 0 || root != 0 && expect != 0
+ * Find first precedence level H Precedence levels 0..prec-1 must expect an argument.
+ * */
+int propagate_parserstate(parser_state_t * state, unsigned prec)
+{
+   unsigned h;
+
+   assert(prec < NROF_PRECEDENCE_LEVEL);
+   assert(state->precedence[prec].root);
+
+   for (h = 0; h < prec; ++h) {
+      if (state->precedence[h].root) {
+         assert(! state->precedence[h].expect);
+         break;
+      }
+   }
+
+   state->current = &state->precedence[prec];
+
+   if (h == prec) return 0; /* nothing to do cause state is in init state */
+
+   for (unsigned i = h+1; i <= prec; ++i) {
+      assert(h != prec) ;
+      if (state->precedence[i].root) {
+         assert(state->precedence[i].expect);
+         *state->precedence[i].expect = state->precedence[h].root;
+         init_precedencestate(&state->precedence[h]);
+         h = i;
+      }
+   }
+
+   state->precedence[prec].last   = state->precedence[prec].expect;
+   state->precedence[prec].expect = 0;
+
+   return 0;
+}
+
+void propagatemax_parserstate(parser_state_t * state, /*out*/unsigned * prec)
+{
+   unsigned h;
+
+   for (h = 0; h < NROF_PRECEDENCE_LEVEL; ++h) {
+      if (state->precedence[h].root) {
+         assert(! state->precedence[h].expect);
+         break;
+      }
+   }
+
+   for (unsigned i = h+1; i < NROF_PRECEDENCE_LEVEL; ++i) {
+      if (state->precedence[i].root) {
+         printf("h = %d i = %d\n", h, i);
+         assert(state->precedence[h].expect);
+         *state->precedence[i].expect = state->precedence[h].root;
+         init_precedencestate(&state->precedence[h]);
+         h = i;
+      }
+   }
+
+   state->current = &state->precedence[h];
+
+   *prec = h;
 }
 
 /* ==========
@@ -354,152 +647,6 @@ void print_debug(parser_t* parser, const char * format, ...)
    va_end(args);
 }
 
-int newstate_parser(/*out*/parser_t * parser)
-{
-   parser_state_t * startstate;
-
-   if (parser->freestate) {
-      startstate = parser->freestate;
-      parser->freestate = parser->freestate->prev;
-
-   } else {
-      startstate = (parser_state_t*) alloc_mman(&parser->mm, sizeof(parser_state_t));
-      if (!startstate) {
-         return ENOMEM;
-      }
-   }
-
-   init_parserstate(startstate, /*prev*/parser->state);
-   parser->state = startstate;
-
-   return 0;
-}
-
-void prevstate_parserstate(parser_t * parser)
-{
-   parser_state_t * prev = parser->state->prev;
-
-   // check that state is not root state
-   assert(prev);
-
-   if (!parser->state->root) {
-      print_error(parser, "expected non empty sub expression\n");
-      assert(parser->state->root);
-   }
-
-   if (!prev->expect) {
-      print_error(parser, "unused sub expression\n");
-      assert(prev->expect);
-   }
-
-   // register sub expression with surrounding expression
-   *prev->expect = parser->state->root;
-   prev->expect = 0;
-
-   // add parser->state to list of free states
-   parser->state->prev = parser->freestate;
-   parser->freestate = parser->state;
-
-   // switch to prev state
-   parser->state = prev;
-
-}
-
-/* ===================
- *  struct data model
- * =================== */
-
-#define EXPR_COMMON_FIELDS  unsigned char type
-
-typedef struct expr_t expr_t;
-typedef struct expr_integer_t expr_integer_t;
-typedef struct expr_1ary_t expr_1ary_t;
-typedef struct expr_2ary_t expr_2ary_t;
-
-typedef enum expr_type {
-   EXPR_VOID,
-   EXPR_INTEGER,
-   EXPR_1ARY_BRACKET,      /* () */
-   EXPR_1ARY_MINUS,
-   EXPR_1ARY_PLUS,
-   EXPR_1ARY_LOGICAL_NOT,  /* ! */
-   EXPR_1ARY_BITWISE_NOT,  /* ~ */
-   EXPR_2ARY_MINUS,
-   EXPR_2ARY_PLUS,
-   EXPR_2ARY_MULT,
-   EXPR_2ARY_DIV,
-   EXPR_2ARY_LOGICAL_AND,  /* && */
-   EXPR_2ARY_LOGICAL_OR,   /* || */
-   EXPR_2ARY_BITWISE_AND,  /* & */
-   EXPR_2ARY_BITWISE_OR,   /* | */
-   EXPR_2ARY_BITWISE_XOR,  /* ^ */
-   EXPR_2ARY_ASSIGN,       /* = */
-   EXPR_2ARY_ARRAYINDEX,   /* [] */
-} expr_type_e;
-
-typedef enum expr_precedence {
-   EXPR_PREC_VOID    = 0,
-   EXPR_PREC_INTEGER = 0,
-   EXPR_PREC_1ARY_BRACKET = 1,
-   EXPR_PREC_1ARY_MINUS = 2,
-   EXPR_PREC_1ARY_PLUS  = 2,
-   EXPR_PREC_1ARY_LOGICAL_NOT = 2,
-   EXPR_PREC_1ARY_BITWISE_NOT = 2,
-   EXPR_PREC_2ARY_MINUS = 4,
-   EXPR_PREC_2ARY_PLUS  = 4,
-   EXPR_PREC_2ARY_MULT  = 3,
-   EXPR_PREC_2ARY_DIV   = 3,
-   EXPR_PREC_2ARY_LOGICAL_AND = 11,
-   EXPR_PREC_2ARY_LOGICAL_OR  = 12,
-   EXPR_PREC_2ARY_BITWISE_AND = 8,
-   EXPR_PREC_2ARY_BITWISE_OR  = 10,
-   EXPR_PREC_2ARY_BITWISE_XOR = 9,
-   EXPR_PREC_2ARY_ASSIGN     = 14,
-   EXPR_PREC_2ARY_ARRAYINDEX = 1,
-} expr_precedence;
-
-static char s_expr_type_names[][4] = {
-   [EXPR_VOID]    = "",
-   [EXPR_INTEGER] = "",
-   [EXPR_1ARY_BRACKET] = "(",
-   [EXPR_1ARY_MINUS] = "-",
-   [EXPR_1ARY_PLUS]  = "+",
-   [EXPR_1ARY_LOGICAL_NOT] = "!",
-   [EXPR_1ARY_BITWISE_NOT] = "~",
-   [EXPR_2ARY_MINUS] = "-",
-   [EXPR_2ARY_PLUS] = "+",
-   [EXPR_2ARY_MULT] = "*",
-   [EXPR_2ARY_DIV]  = "/",
-   [EXPR_2ARY_LOGICAL_AND] = "&&",
-   [EXPR_2ARY_LOGICAL_OR]  = "||",
-   [EXPR_2ARY_BITWISE_AND] = "&",
-   [EXPR_2ARY_BITWISE_OR]  = "|",
-   [EXPR_2ARY_BITWISE_XOR] = "^",
-   [EXPR_2ARY_ASSIGN]      = "=",
-   [EXPR_2ARY_ARRAYINDEX]  = "["
-};
-
-struct expr_t {
-   EXPR_COMMON_FIELDS;
-};
-
-struct expr_integer_t {
-   EXPR_COMMON_FIELDS;
-   int val;
-};
-
-struct expr_1ary_t {
-   EXPR_COMMON_FIELDS;
-   expr_t * arg1;
-};
-
-struct expr_2ary_t {
-   EXPR_COMMON_FIELDS;
-   unsigned char assign_type;
-   expr_t * arg1;
-   expr_t * arg2;
-};
-
 static int new_exprinteger(parser_t* parser, /*out*/expr_integer_t** node, int val)
 {
    *node = (expr_integer_t*) alloc_mman(&parser->mm, sizeof(expr_integer_t));
@@ -529,79 +676,158 @@ static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned ch
    return 0;
 }
 
-static void print_expr2(expr_t * expr)
+int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr)
 {
-   switch ((expr_type_e) expr->type) {
-      case EXPR_VOID:
-         break;
-      case EXPR_INTEGER: {
-         expr_integer_t * e = (expr_integer_t*) expr;
-         printf("%d", e->val);
-         break;
+   parser_state_t * state = parser->state;
+
+   /* assume right associativity for all 1ary operators */
+
+   precedence_state_t * ps = &state->precedence[prec];
+
+   if (ps == state->current) {
+      if (ps->expect) {
+         *ps->expect = (expr_t*) expr;
+         ps->last    = ps->expect;
+         ps->expect  = &expr->arg1;
+      } else {
+         if ((*ps->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
+         expr->arg1 = *ps->last;
+         *ps->last  = (expr_t*) expr;
       }
-      case EXPR_1ARY_BRACKET: {
-         expr_1ary_t * e = (expr_1ary_t*) expr;
-         printf("(");
-         print_expr2(e->arg1);
-         printf(")");
-         break;
+   } else if (ps < state->current) {
+      /* ps higher precedence */
+      if (state->current->expect) {
+         ps->root   = (expr_t*) expr;
+         ps->last   = &ps->root;
+         ps->expect = &expr->arg1;
+      } else {
+         if ((*state->current->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
+         ps->root   = (expr_t*) expr;
+         ps->last   = &ps->root;
+         ps->expect = 0;
+         expr->arg1 = *state->current->last;
+         *state->current->last  = 0;
+         state->current->expect = state->current->last;
+         state->current->last   = 0;
       }
-      case EXPR_1ARY_MINUS:
-      case EXPR_1ARY_PLUS:
-      case EXPR_1ARY_LOGICAL_NOT:
-      case EXPR_1ARY_BITWISE_NOT: {
-         expr_1ary_t * e = (expr_1ary_t*) expr;
-         printf("{");
-         printf("%s ", s_expr_type_names[e->type]);
-         print_expr2(e->arg1);
-         printf("}");
-         break;
-      }
-      case EXPR_2ARY_MINUS:
-      case EXPR_2ARY_PLUS:
-      case EXPR_2ARY_MULT:
-      case EXPR_2ARY_DIV:
-      case EXPR_2ARY_LOGICAL_AND:
-      case EXPR_2ARY_LOGICAL_OR:
-      case EXPR_2ARY_BITWISE_AND:
-      case EXPR_2ARY_BITWISE_OR:
-      case EXPR_2ARY_BITWISE_XOR: {
-         expr_2ary_t * e = (expr_2ary_t*) expr;
-         printf("{");
-         print_expr2(e->arg1);
-         printf(" %s ", s_expr_type_names[e->type]);
-         print_expr2(e->arg2);
-         printf("}");
-         break;
-      }
-      case EXPR_2ARY_ASSIGN: {
-         expr_2ary_t * e = (expr_2ary_t*) expr;
-         printf("{");
-         print_expr2(e->arg1);
-         printf(" %s%s ", s_expr_type_names[e->assign_type], s_expr_type_names[e->type]);
-         print_expr2(e->arg2);
-         printf("}");
-         break;
-      }
-      case EXPR_2ARY_ARRAYINDEX: {
-         expr_2ary_t * e = (expr_2ary_t*) expr;
-         printf("{");
-         print_expr2(e->arg1);
-         printf("[");
-         print_expr2(e->arg2);
-         printf("]");
-         printf("}");
-         break;
-      }
+      state->current = ps;
+   } else {
+      /* ps has lower precedence */
+      if (state->current->root && state->current->expect) goto ONERR_EXPECT;
+      *ps->expect = (expr_t*) expr;
+      ps->last    = ps->expect;
+      ps->expect  = &expr->arg1;
+      propagate_parserstate(state, prec);
    }
+
+   return 0;
+ONERR_EXPECT:
+   print_error(parser, "Expected integer instead of operator\n");
+   return EINVAL;
 }
 
-static inline void print_expr(expr_t * expr)
+int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 {
-   if (expr) {
-      print_expr2(expr);
-      printf("\n");
+   parser_state_t * state = parser->state;
+
+   precedence_state_t * ps = &state->precedence[prec];
+
+   if (state->current->expect) {
+      print_error(parser, "Integer expected instead of operator\n");
+      return EINVAL;
    }
+
+   if (ps == state->current) {
+      (void) expr; // TODO: remove
+
+   } else if (ps < state->current) {
+      /* higher precedence */
+
+   } else {
+      /* lower precedence */
+
+   }
+
+   return 0;
+}
+
+int matchinteger_parser(parser_t * parser, int value)
+{
+   int err;
+   parser_state_t * state = parser->state;
+   expr_integer_t * expr;
+
+   if (! parser->state->current->expect) {
+      print_error(parser, "Operator expected instead of integer\n");
+      return EINVAL;
+   }
+
+   err = new_exprinteger(parser, &expr, value);
+   if (err) return err;
+
+   parser->state->current->last = parser->state->current->expect;
+   *parser->state->current->expect = (expr_t*) expr;
+   parser->state->current->expect = 0;
+
+   return 0;
+}
+
+int newstate_parser(/*out*/parser_t * parser)
+{
+   parser_state_t * startstate;
+
+   if (parser->freestate) {
+      startstate = parser->freestate;
+      parser->freestate = parser->freestate->prev;
+
+   } else {
+      startstate = (parser_state_t*) alloc_mman(&parser->mm, sizeof(parser_state_t));
+      if (!startstate) {
+         return ENOMEM;
+      }
+   }
+
+   init_parserstate(startstate, /*prev*/parser->state);
+   parser->state = startstate;
+
+   return 0;
+}
+
+int prevstate_parser(parser_t * parser, unsigned char expect_type, int c)
+{
+   parser_state_t * prev = parser->state->prev;
+   unsigned prec;
+
+   if (! prev || !prev->current->expect || (*prev->current->last)->type != expect_type) {
+      print_error(parser, "Unmatched '%c'\n", c);
+      return EINVAL;
+   }
+
+   if ((*prev->current->last)->type != expect_type) {
+      print_error(parser, "Character '%s' does not match '%c'\n", s_expr_type_names[(*prev->current->last)->type], c);
+      return EINVAL;
+   }
+
+   if (parser->state->current->expect) {
+      print_error(parser, "Expected integer instead of '%c'\n", c);
+      return EINVAL;
+   }
+
+   propagatemax_parserstate(parser->state, &prec);
+
+   // register sub expression with surrounding expression
+   *prev->current->expect = parser->state->precedence[prec].root;
+   prev->current->last    = prev->current->expect;
+   prev->current->expect  = 0;
+
+   // add parser->state to list of free states
+   parser->state->prev = parser->freestate;
+   parser->freestate = parser->state;
+
+   // switch to prev state
+   parser->state = prev;
+
+   return 0;
 }
 
 /* =================
@@ -612,7 +838,6 @@ static /*err*/int parse_integer(parser_t * parser, int c)
 {
    int err;
    int value = c - '0';
-   expr_integer_t * expr;
 
    for (;;) {
       c = peekchar(&parser->buffer);
@@ -633,15 +858,12 @@ static /*err*/int parse_integer(parser_t * parser, int c)
       }
    }
 
-   err = new_exprinteger(parser, &expr, value);
-
-   *parser->state->expect = (expr_t*) expr;
-   parser->state->expect = 0;
+   err = matchinteger_parser(parser, value);
 
    return err;
 }
 
-static /*err*/int parse_1ary(parser_t * parser, unsigned char type)
+static /*err*/int parse_1ary(parser_t * parser, unsigned char precedence, unsigned char type)
 {
    int err;
    expr_1ary_t * expr;
@@ -649,103 +871,110 @@ static /*err*/int parse_1ary(parser_t * parser, unsigned char type)
    err = new_expr1ary(parser, &expr, type);
    if (err) return err;
 
-   *parser->state->expect = (expr_t*) expr;
-   parser->state->expect = &expr->arg1;
+   err = match1ary_parser(parser, precedence, expr);
 
-   return 0;
+   return err;
 }
 
-static /*err*/int parse_prefix_or_value(parser_t * parser)
+static /*err*/int parse_2ary(parser_t * parser, unsigned char precedence, unsigned char type, unsigned char assign_type)
 {
    int err;
-   int c = nextchar(&parser->buffer);
+   expr_2ary_t * expr;
 
-   // TODO: dokument why ?
-   assert(parser->state->expect);
+   err = new_expr2ary(parser, &expr, type, assign_type);
+   if (err) return err;
 
-   /* support prefix operators */
-   /* ! ~ + - (associativity from right to left) */
+   err = match2ary_parser(parser, precedence, expr);
 
-   switch (c) {
-   case 0:
-      /* reached end of input */
-      print_error(parser, "Unexpected end of input; expected number\n");
-      return ENODATA;
-   case '(':
-      err = newstate_parser(parser);
-      if (err) return err;
-      err = parse_1ary(parser, EXPR_1ARY_BRACKET);
-      if (err) goto ONERR;
-      break;
-   case '0': case '1': case '2': case '3': case '4':
-   case '5': case '6': case '7': case '8': case '9':
-      err = parse_integer(parser, c);
-      if (err) goto ONERR;
-      break;
-   case '~':
-      err = parse_1ary(parser, EXPR_1ARY_BITWISE_NOT);
-      if (err) goto ONERR;
-      break;
-   case '!':
-      err = parse_1ary(parser, EXPR_1ARY_LOGICAL_NOT);
-      if (err) goto ONERR;
-      break;
-   case '+':
-      err = parse_1ary(parser, EXPR_1ARY_PLUS);
-      if (err) goto ONERR;
-      break;
-   case '-':
-      err = parse_1ary(parser, EXPR_1ARY_MINUS);
-      if (err) goto ONERR;
-      break;
-   default:
-      print_error(parser, "Unexpected input '%c'; expected number\n", c);
-      break;
-   }
-
-   return 0;
-ONERR:
    return err;
 }
 
 static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
-   int c;
 
    // start of expression: a value or unary (prefix) operator is expected
    // parser->state->expect != 0
 
    for (;;) {
 
-      while (parser->state->expect) {
-         err = parse_prefix_or_value(parser);
-         if (err) goto ONERR;
-      }
+      int c = nextchar(&parser->buffer);
 
-      c = nextchar(&parser->buffer);
-      if (')' == c) {
-         if (! parser->state->prev) {
-            print_error(parser, "Unmatched ')'\n");
-            err = EINVAL;
-            goto ONERR;
+      switch (c) {
+      case 0:
+         /* reached end of input */
+         if (parser->state->prev || parser->state->current->expect) {
+            print_error(parser, "Unexpected end of input\n");
+            err = ENODATA;
+         } else {
+            unsigned prec;
+            propagatemax_parserstate(parser->state, &prec);
          }
-         prevstate_parserstate(parser);
-
-      } else if (0 == c) {
-         /* end of input */
-         if (parser->state->prev) {
-            print_error(parser, "Unexpected end of input; unmatched '('\n");
-            err = EINVAL;
-            goto ONERR;
-         }
-         break;
-
-      } else {
-         print_error(parser, "Unexpected input '%c'\n", c);
-         err = EINVAL;
          goto ONERR;
+      case '(':
+         if (! parser->state->current->expect) {
+            // TODO: move test into match1ary_parser (add second parameter for post operator
+            // if postoperator == VOID ==> parser->state->current->expect != 0
+            print_error(parser, "Expected operator and no subexpression\n");
+            err = EINVAL;
+            goto ONERR;
+         }
+         err = parse_1ary(parser, PREC_1ARY_BRACKET, EXPR_1ARY_BRACKET);
+         if (err) goto ONERR;
+         err = newstate_parser(parser);
+         if (err) goto ONERR;
+         break;
+      case ')':
+         err = prevstate_parser(parser, EXPR_1ARY_BRACKET, ')');
+         if (err) goto ONERR;
+         break;
+      case '0': case '1': case '2': case '3': case '4':
+      case '5': case '6': case '7': case '8': case '9':
+         err = parse_integer(parser, c);
+         if (err) goto ONERR;
+         break;
+      case '~':
+         if (! parser->state->current->expect) {
+            print_error(parser, "'%c' not allowd as postfix operator\n", c);
+            err = EINVAL;
+            goto ONERR;
+         }
+         err = parse_1ary(parser, PREC_1ARY_BITWISE_NOT, EXPR_1ARY_BITWISE_NOT);
+         if (err) goto ONERR;
+         break;
+      case '!':
+         if (! parser->state->current->expect) {
+            print_error(parser, "'%c' not allowd as postfix operator\n", c);
+            err = EINVAL;
+            goto ONERR;
+         }
+         err = parse_1ary(parser, PREC_1ARY_LOGICAL_NOT, EXPR_1ARY_LOGICAL_NOT);
+         if (err) goto ONERR;
+         break;
+      case '+':
+         if ('+' == peekchar(&parser->buffer)) {
+            nextchar(&parser->buffer);
+            if (parser->state->current->expect) {
+               err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREINCR);
+            } else {
+               err = parse_1ary(parser, PREC_1ARY_POSTINCR, EXPR_1ARY_POSTINCR);
+            }
+         } else if (parser->state->current->expect) {
+            err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_PLUS);
+         } else {
+            err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_PLUS, EXPR_VOID);
+         }
+         if (err) goto ONERR;
+         break;
+      case '-':
+         err = parse_1ary(parser, PREC_1ARY_MINUS, EXPR_1ARY_MINUS);
+         if (err) goto ONERR;
+         break;
+      default:
+         print_error(parser, "Unexpected input '%c'; expected number\n", c);
+         break;
       }
+
    }
 
 ONERR:
@@ -770,7 +999,7 @@ int main(int argc, const char * argv[])
 
    err = parse_expression(&parser);
 
-   print_expr(parser.startstate.root);
+   print_expr(parser.state->current->root);
 
    free_parser(&parser);
 

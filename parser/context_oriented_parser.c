@@ -734,11 +734,17 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsig
       state->current = ps;
    } else {
       /* ps has lower precedence */
-      if (state->current->root && state->current->expect) goto ONERR_EXPECT;
-      *ps->expect = (expr_t*) expr;
-      ps->last    = ps->expect;
-      ps->expect  = &expr->arg1;
-      propagate_parserstate(state, prec);
+      if (state->current->root) {
+         if (state->current->expect) goto ONERR_EXPECT;
+         propagate_parserstate(state, prec);
+         *ps->last   = (expr_t*) expr;
+         expr->arg1  = *ps->last;
+      } else {
+         ps->root = (expr_t*) expr;
+         ps->last = &ps->root;
+         ps->expect = &expr->arg1;
+         state->current = ps;
+      }
    }
 
    return 0;

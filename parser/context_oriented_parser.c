@@ -542,6 +542,7 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    unsigned h;
 
    assert(prec < NROF_PRECEDENCE_LEVEL);
+   assert(state->current.root);
    assert(state->precedence[prec].expect);
 
    for (h = 0; h < prec; ++h) {
@@ -550,10 +551,6 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
          break;
       }
    }
-
-   state->current = &state->precedence[prec];
-
-   if (h == prec) return 0; /* nothing to do cause state is in init state */
 
    for (unsigned i = h+1; i < prec; ++i) {
       if (state->precedence[i].root) {
@@ -565,10 +562,11 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    }
 
    *state->precedence[prec].expect = state->precedence[h].root;
-   init_precedencestate(&state->precedence[h]);
-
    state->precedence[prec].last   = state->precedence[prec].expect;
    state->precedence[prec].expect = 0;
+   init_precedencestate(&state->precedence[h]);
+
+   state->current = &state->precedence[prec];
 
    return 0;
 }

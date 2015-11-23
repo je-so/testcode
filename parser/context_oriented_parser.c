@@ -30,7 +30,7 @@
  * |                                  | left to right | 10
  * &&                                 | left to right | 11
  * ||                                 | left to right | 12
- * ?:                                 | right to left | 13
+ * ?:                                 | right to left | 13  // ternary op not supported!
  * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14
  * ,                                  | left to right | 15
  *
@@ -542,7 +542,7 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    unsigned h;
 
    assert(prec < NROF_PRECEDENCE_LEVEL);
-   assert(state->precedence[prec].root);
+   assert(state->precedence[prec].expect);
 
    for (h = 0; h < prec; ++h) {
       if (state->precedence[h].root) {
@@ -555,7 +555,7 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
 
    if (h == prec) return 0; /* nothing to do cause state is in init state */
 
-   for (unsigned i = h+1; i <= prec; ++i) {
+   for (unsigned i = h+1; i < prec; ++i) {
       if (state->precedence[i].root) {
          assert(state->precedence[i].expect);
          *state->precedence[i].expect = state->precedence[h].root;
@@ -563,6 +563,9 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
          h = i;
       }
    }
+
+   *state->precedence[prec].expect = state->precedence[h].root;
+   init_precedencestate(&state->precedence[h]);
 
    state->precedence[prec].last   = state->precedence[prec].expect;
    state->precedence[prec].expect = 0;
@@ -750,20 +753,49 @@ int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 
    precedence_state_t * ps = &state->precedence[prec];
 
+   /* TODO: implement associativity !! */
+
    if (state->current->expect) {
       print_error(parser, "Integer expected instead of operator\n");
       return EINVAL;
    }
 
    if (ps == state->current) {
-      (void) expr; // TODO: remove
+      if (0/*is right associative*/) {
+         expr->arg1 = *ps->last;
+         *ps->last  = (expr_t*) expr;
+      } else {
+         /*left associative*/
+         expr->arg1 = ps->root;
+         ps->root   = (expr_t*) expr;
+         ps->last   = &ps->root;
+      }
+      ps->expect = &expr->arg2;
 
    } else if (ps < state->current) {
       /* higher precedence */
+      ps->root   = (expr_t*) expr;
+      ps->last   = &ps->root;
+      ps->expect = &expr->arg2;
+      expr->arg1 = *state->current->last;
+      *state->current->last  = 0;
+      state->current->expect = state->current->last;
+      state->current->last   = 0;
+      state->current = ps;
 
    } else {
       /* lower precedence */
-
+      propagate_parserstate(state, prec);
+      if (0/*is right associative*/) {
+         expr->arg1 = *ps->last;
+         *ps->last  = (expr_t*) expr;
+      } else {
+         /*left associative*/
+         expr->arg1 = ps->root;
+         ps->root   = (expr_t*) expr;
+         ps->last   = &ps->root;
+      }
+      ps->expect = &expr->arg2;
    }
 
    return 0;
@@ -772,7 +804,6 @@ int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 int matchinteger_parser(parser_t * parser, int value)
 {
    int err;
-   parser_state_t * state = parser->state;
    expr_integer_t * expr;
 
    if (! parser->state->current->expect) {
@@ -953,14 +984,24 @@ static /*err*/int parse_expression(parser_t * parser)
          if (err) goto ONERR;
          break;
       case '+':
-         if ('+' == peekchar(&parser->buffer)) {
+         c = peekchar(&parser->buffer);
+         if ('+' == c) {
             nextchar(&parser->buffer);
             err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREINCR, EXPR_1ARY_POSTINCR);
+         } else if ('=' == c) {
+            nextchar(&parser->buffer);
+            err = parse_2ary(parser, PREC_2ARY_ASSIGN, EXPR_2ARY_ASSIGN, EXPR_2ARY_PLUS);
          } else if (parser->state->current->expect) {
             err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_PLUS, EXPR_VOID);
          } else {
             err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_PLUS, EXPR_VOID);
          }
+         if (err) goto ONERR;
+         break;
+      case '=':
+         c = peekchar(&parser->buffer);
+         // TODO: ...
+         err = parse_2ary(parser, PREC_2ARY_ASSIGN, EXPR_2ARY_ASSIGN, EXPR_VOID);
          if (err) goto ONERR;
          break;
       case '-':

@@ -158,7 +158,6 @@ void* alloc_mman(mman_t* mm, size_t size)
       return 0;
    }
 
-
    if (aligned_size > mm->free_bytes) {
       memblock_t* block;
 
@@ -504,7 +503,7 @@ struct precedence_state_t {
    expr_t ** last;   /* last assigned argument */
    expr_t ** expect; /* expect another expression as argument */
    /* root == 0 ==> last == 0
-    * (last == 0 && expect != 0) || (last != 0 && expect == 0) */
+    * expect == 0 ==> no argument is expected, else expect points to arg1 or arg2 */
 };
 
 static inline void init_precedencestate(precedence_state_t * state)

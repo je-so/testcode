@@ -556,7 +556,6 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    if (h == prec) return 0; /* nothing to do cause state is in init state */
 
    for (unsigned i = h+1; i <= prec; ++i) {
-      assert(h != prec) ;
       if (state->precedence[i].root) {
          assert(state->precedence[i].expect);
          *state->precedence[i].expect = state->precedence[h].root;
@@ -584,9 +583,10 @@ void propagatemax_parserstate(parser_state_t * state, /*out*/unsigned * prec)
 
    for (unsigned i = h+1; i < NROF_PRECEDENCE_LEVEL; ++i) {
       if (state->precedence[i].root) {
-         printf("h = %d i = %d\n", h, i);
-         assert(state->precedence[h].expect);
+         assert(state->precedence[i].expect);
          *state->precedence[i].expect = state->precedence[h].root;
+         state->precedence[i].last    = state->precedence[i].expect;
+         state->precedence[i].expect  = 0;
          init_precedencestate(&state->precedence[h]);
          h = i;
       }

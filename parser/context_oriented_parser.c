@@ -12,7 +12,7 @@
  * This simple prototype parses simple expressions with operator precedence.
  *
  * The following table lists the supported C operators.
- * The first row has the highest precedence (rank 0)
+ * The first row has the highest precedence (rank 1)
  * and the last row the lowest (rank 15).
  *
  * ---------------------------------------------------------------
@@ -34,40 +34,48 @@
  * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14
  * ,                                  | left to right | 15
  *
- * Let us begin with a simpe value and any possible prefix operators.
+ * Every simple expression starts with
+ * 1. integer value  ['0'-'9']+
+ * 2. subexpression  '(' expr ')'
+ * 3. prefix operator ['+' '-' '!' '++' '--'] expr
  *
- * Every simple expression starts therefore with
- * 1. integer value  [0-9]+
- * 2. subexpression  '(' value ')'
- * 3. computed value  '+' value, '-' value, '!' value, '++' value, ...
+ * The parsed expression should is stored in a structured form
+ * which uses the follwing AST types:
  *
- * The parsed value expression should be stored in a structured form
- * which supports the above 3 value types.
- *
- * struct value_constant_t {
- *    int value;
+ * struct expr_t {
+ *    unsigned char type;
+ * };
+ * struct expr_integer_t {
+ *    unsigned char type;
+ *    int val;
+ * };
+ * struct expr_1ary_t {
+ *    unsigned char type;
+ *    expr_t * arg1;
+ * };
+ * struct expr_2ary_t {
+ *    unsigned char type;        //
+ *    unsigned char assign_type; // used for +=, -=, ...
+ *    expr_t * arg1;
+ *    expr_t * arg2;
  * };
  *
- * struct value_prefixop_t {
- *    char prefix_op[2];
- *    value_t* arg1;
- * };
+ * Already parsed input is stored as an expr_t.
  *
- * struct value_t {
- *    const char type;
- *    union {
- *       value_prefixop_t preop;
- *       value_constant_t val;
- *    };
- * };
+ * The parsing algorithm is simple and does not use recursion.
  *
+ * All state is stored in the context (tree of expr_t).
+ * Expression are on different levels to support operator precedence.
+ * For every precedence rank there is a different level.
+ * This simulates the stack of a LL(1) recursive descent parser used
+ * to implement correct parsing of operator precedence.
  *
- * TODO: Describe context (structs used to represent already read text)
+ * TODO: Describe AST structure and parse algorithm used !!
  *
- * TODO: implement parse_expression
+ * TODO: implement support for 2ary operators
  *
  * Compile with:
- * > ggcc -Wall -Wextra -Wconversion -std=gnu99 -ocop context_oriented_parser.c
+ * > gcc -Wall -Wextra -Wconversion -std=gnu99 -ocop context_oriented_parser.c
  *
  * Run with:
  * > ./cop <filename>
@@ -638,7 +646,9 @@ void print_error(parser_t* parser, const char * format, ...)
    va_end(args);
 }
 
-void print_debug(parser_t* parser, const char * format, ...)
+#define print_debug(...) // TODO: remove + rename next line
+
+void _print_debug(parser_t* parser, const char * format, ...)
 {
    va_list args;
    va_start(args, format);
@@ -994,11 +1004,11 @@ int main(int argc, const char * argv[])
 
    err = parse_expression(&parser);
 
-   print_expr(parser.state->current->root);
+   // TODO: print_expr(parser.state->current->root);
 
    free_parser(&parser);
 
-   malloc_stats(); /* TODO: remove ! */
+   // TODO: malloc_stats(); /* TODO: remove ! */
 
    return err ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -676,7 +676,7 @@ static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned ch
    return 0;
 }
 
-int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr)
+int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsigned char postfix_type)
 {
    parser_state_t * state = parser->state;
 
@@ -684,13 +684,22 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr)
 
    precedence_state_t * ps = &state->precedence[prec];
 
+   if (! state->current->expect) {
+      if (postfix_type == EXPR_VOID) {
+         print_error(parser, "Operator '%s' not allowed as postifx operator\n", s_expr_type_names[expr->type]);
+         return EINVAL;
+      } else {
+         expr->type = postfix_type;
+      }
+   }
+
    if (ps == state->current) {
       if (ps->expect) {
          *ps->expect = (expr_t*) expr;
          ps->last    = ps->expect;
          ps->expect  = &expr->arg1;
       } else {
-         if ((*ps->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
+         if (!ps->last || (*ps->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
          expr->arg1 = *ps->last;
          *ps->last  = (expr_t*) expr;
       }
@@ -701,7 +710,7 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr)
          ps->last   = &ps->root;
          ps->expect = &expr->arg1;
       } else {
-         if ((*state->current->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
+         if (!state->current->last || (*state->current->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
          ps->root   = (expr_t*) expr;
          ps->last   = &ps->root;
          ps->expect = 0;
@@ -863,7 +872,7 @@ static /*err*/int parse_integer(parser_t * parser, int c)
    return err;
 }
 
-static /*err*/int parse_1ary(parser_t * parser, unsigned char precedence, unsigned char type)
+static /*err*/int parse_1ary(parser_t * parser, unsigned char precedence, unsigned char type, unsigned char postfix_type)
 {
    int err;
    expr_1ary_t * expr;
@@ -871,7 +880,7 @@ static /*err*/int parse_1ary(parser_t * parser, unsigned char precedence, unsign
    err = new_expr1ary(parser, &expr, type);
    if (err) return err;
 
-   err = match1ary_parser(parser, precedence, expr);
+   err = match1ary_parser(parser, precedence, expr, postfix_type);
 
    return err;
 }
@@ -912,14 +921,7 @@ static /*err*/int parse_expression(parser_t * parser)
          }
          goto ONERR;
       case '(':
-         if (! parser->state->current->expect) {
-            // TODO: move test into match1ary_parser (add second parameter for post operator
-            // if postoperator == VOID ==> parser->state->current->expect != 0
-            print_error(parser, "Expected operator and no subexpression\n");
-            err = EINVAL;
-            goto ONERR;
-         }
-         err = parse_1ary(parser, PREC_1ARY_BRACKET, EXPR_1ARY_BRACKET);
+         err = parse_1ary(parser, PREC_1ARY_BRACKET, EXPR_1ARY_BRACKET, EXPR_VOID);
          if (err) goto ONERR;
          err = newstate_parser(parser);
          if (err) goto ONERR;
@@ -934,40 +936,33 @@ static /*err*/int parse_expression(parser_t * parser)
          if (err) goto ONERR;
          break;
       case '~':
-         if (! parser->state->current->expect) {
-            print_error(parser, "'%c' not allowd as postfix operator\n", c);
-            err = EINVAL;
-            goto ONERR;
-         }
-         err = parse_1ary(parser, PREC_1ARY_BITWISE_NOT, EXPR_1ARY_BITWISE_NOT);
+         err = parse_1ary(parser, PREC_1ARY_BITWISE_NOT, EXPR_1ARY_BITWISE_NOT, EXPR_VOID);
          if (err) goto ONERR;
          break;
       case '!':
-         if (! parser->state->current->expect) {
-            print_error(parser, "'%c' not allowd as postfix operator\n", c);
-            err = EINVAL;
-            goto ONERR;
-         }
-         err = parse_1ary(parser, PREC_1ARY_LOGICAL_NOT, EXPR_1ARY_LOGICAL_NOT);
+         err = parse_1ary(parser, PREC_1ARY_LOGICAL_NOT, EXPR_1ARY_LOGICAL_NOT, EXPR_VOID);
          if (err) goto ONERR;
          break;
       case '+':
          if ('+' == peekchar(&parser->buffer)) {
             nextchar(&parser->buffer);
-            if (parser->state->current->expect) {
-               err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREINCR);
-            } else {
-               err = parse_1ary(parser, PREC_1ARY_POSTINCR, EXPR_1ARY_POSTINCR);
-            }
+            err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREINCR, EXPR_1ARY_POSTINCR);
          } else if (parser->state->current->expect) {
-            err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_PLUS);
+            err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_PLUS, EXPR_VOID);
          } else {
             err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_PLUS, EXPR_VOID);
          }
          if (err) goto ONERR;
          break;
       case '-':
-         err = parse_1ary(parser, PREC_1ARY_MINUS, EXPR_1ARY_MINUS);
+         if ('-' == peekchar(&parser->buffer)) {
+            nextchar(&parser->buffer);
+            err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREDECR, EXPR_1ARY_POSTDECR);
+         } else if (parser->state->current->expect) {
+            err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_MINUS, EXPR_VOID);
+         } else {
+            err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_MINUS, EXPR_VOID);
+         }
          if (err) goto ONERR;
          break;
       default:

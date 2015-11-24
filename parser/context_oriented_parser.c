@@ -276,6 +276,8 @@ static inline /*char*/int peekchar(buffer_t * buffer)
  *  struct data model
  * =================== */
 
+#define NROF_PRECEDENCE_LEVEL 16
+
 #define EXPR_COMMON_FIELDS  unsigned char type
 
 typedef struct expr_t expr_t;
@@ -295,6 +297,7 @@ typedef enum expr_type {
    EXPR_1ARY_PREDECR,
    EXPR_1ARY_POSTINCR,
    EXPR_1ARY_POSTDECR,
+   EXPR_2ARY_COMMA,        /* , */
    EXPR_2ARY_MINUS,
    EXPR_2ARY_PLUS,
    EXPR_2ARY_MULT,
@@ -319,6 +322,7 @@ typedef enum precedence {
    PREC_1ARY_PREDECR  = 2,
    PREC_1ARY_POSTINCR = 2,
    PREC_1ARY_POSTDECR = 2,
+   PREC_2ARY_COMMA    = 15,
    PREC_2ARY_MINUS = 4,
    PREC_2ARY_PLUS  = 4,
    PREC_2ARY_MULT  = 3,
@@ -330,7 +334,31 @@ typedef enum precedence {
    PREC_2ARY_BITWISE_XOR = 9,
    PREC_2ARY_ASSIGN     = 14,
    PREC_2ARY_ARRAYINDEX = 1,
-} precedence;
+} precedence_e;
+
+typedef enum associativity {
+   ASSOC_LEFT,
+   ASSOC_RIGHT
+} associativity_e;
+
+static char s_associativity_preclevel[NROF_PRECEDENCE_LEVEL] = {
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_RIGHT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_LEFT,
+   ASSOC_RIGHT,
+   ASSOC_RIGHT,
+   ASSOC_LEFT
+};
 
 static char s_expr_type_names[][4] = {
    [EXPR_VOID]    = "",
@@ -344,6 +372,7 @@ static char s_expr_type_names[][4] = {
    [EXPR_1ARY_PREDECR]  = "--",
    [EXPR_1ARY_POSTINCR] = "++",
    [EXPR_1ARY_POSTDECR] = "--",
+   [EXPR_2ARY_COMMA]    = ",",
    [EXPR_2ARY_MINUS] = "-",
    [EXPR_2ARY_PLUS] = "+",
    [EXPR_2ARY_MULT] = "*",
@@ -442,6 +471,7 @@ static void print_expr2(expr_t * expr)
          printf("}");
          break;
       }
+      case EXPR_2ARY_COMMA:
       case EXPR_2ARY_MINUS:
       case EXPR_2ARY_PLUS:
       case EXPR_2ARY_MULT:
@@ -494,11 +524,9 @@ static inline void print_expr(expr_t * expr)
  * ================ */
 
 typedef struct parser_state_t parser_state_t;
-typedef struct precedence_state_t precedence_state_t;
+typedef struct precedence_level_t precedence_level_t;
 
-#define NROF_PRECEDENCE_LEVEL 16
-
-struct precedence_state_t {
+struct precedence_level_t {
    expr_t  * root;   /* root of expression of this precedence level */
    expr_t ** last;   /* last assigned argument */
    expr_t ** expect; /* expect another expression as argument */
@@ -506,25 +534,25 @@ struct precedence_state_t {
     * expect == 0 ==> no argument is expected, else expect points to arg1 or arg2 */
 };
 
-static inline void init_precedencestate(precedence_state_t * state)
+static inline void init_precedencelevel(precedence_level_t * level)
 {
-   state->root = 0;
-   state->last = 0;
-   state->expect = &state->root;
+   level->root = 0;
+   level->last = 0;
+   level->expect = &level->root;
 }
 
 struct parser_state_t {
    parser_state_t * prev;
-   precedence_state_t * current;
-   precedence_state_t precedence[NROF_PRECEDENCE_LEVEL];
+   precedence_level_t * current;
+   precedence_level_t preclevel[NROF_PRECEDENCE_LEVEL];
 };
 
 void init_parserstate(/*out*/parser_state_t * state, parser_state_t * prev)
 {
    state->prev = prev;
-   state->current = &state->precedence[0];
+   state->current = &state->preclevel[0];
    for (unsigned i = 0; i < NROF_PRECEDENCE_LEVEL; ++i) {
-      init_precedencestate(&state->precedence[i]);
+      init_precedencelevel(&state->preclevel[i]);
    }
 }
 
@@ -542,60 +570,63 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    unsigned h;
 
    assert(prec < NROF_PRECEDENCE_LEVEL);
-   assert(state->current.root);
-   assert(state->precedence[prec].expect);
+   assert(state->current->root);
+   assert(state->preclevel[prec].expect);
 
    for (h = 0; h < prec; ++h) {
-      if (state->precedence[h].root) {
-         assert(! state->precedence[h].expect);
+      if (state->preclevel[h].root) {
+         assert(! state->preclevel[h].expect);
          break;
       }
    }
 
    for (unsigned i = h+1; i < prec; ++i) {
-      if (state->precedence[i].root) {
-         assert(state->precedence[i].expect);
-         *state->precedence[i].expect = state->precedence[h].root;
-         init_precedencestate(&state->precedence[h]);
+      if (state->preclevel[i].root) {
+         assert(state->preclevel[i].expect);
+         *state->preclevel[i].expect = state->preclevel[h].root;
+         init_precedencelevel(&state->preclevel[h]);
          h = i;
       }
    }
 
-   *state->precedence[prec].expect = state->precedence[h].root;
-   state->precedence[prec].last   = state->precedence[prec].expect;
-   state->precedence[prec].expect = 0;
-   init_precedencestate(&state->precedence[h]);
+   *state->preclevel[prec].expect = state->preclevel[h].root;
+   state->preclevel[prec].last   = state->preclevel[prec].expect;
+   state->preclevel[prec].expect = 0;
+   init_precedencelevel(&state->preclevel[h]);
 
-   state->current = &state->precedence[prec];
+   state->current = &state->preclevel[prec];
 
    return 0;
 }
 
-void propagatemax_parserstate(parser_state_t * state, /*out*/unsigned * prec)
+int propagatemax_parserstate(parser_state_t * state, /*out*/unsigned * prec)
 {
    unsigned h;
 
    for (h = 0; h < NROF_PRECEDENCE_LEVEL; ++h) {
-      if (state->precedence[h].root) {
-         assert(! state->precedence[h].expect);
+      if (state->preclevel[h].root) {
+         if (state->preclevel[h].expect) {
+            return ENODATA;
+         }
          break;
       }
    }
 
    for (unsigned i = h+1; i < NROF_PRECEDENCE_LEVEL; ++i) {
-      if (state->precedence[i].root) {
-         assert(state->precedence[i].expect);
-         *state->precedence[i].expect = state->precedence[h].root;
-         state->precedence[i].last    = state->precedence[i].expect;
-         state->precedence[i].expect  = 0;
-         init_precedencestate(&state->precedence[h]);
+      if (state->preclevel[i].root) {
+         assert(state->preclevel[i].expect);
+         *state->preclevel[i].expect = state->preclevel[h].root;
+         state->preclevel[i].last    = state->preclevel[i].expect;
+         state->preclevel[i].expect  = 0;
+         init_precedencelevel(&state->preclevel[h]);
          h = i;
       }
    }
 
-   state->current = &state->precedence[h];
+   state->current = &state->preclevel[h];
 
    *prec = h;
+   return 0;
 }
 
 /* ==========
@@ -692,7 +723,7 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsig
 
    /* assume right associativity for all 1ary operators */
 
-   precedence_state_t * ps = &state->precedence[prec];
+   precedence_level_t * pl = &state->preclevel[prec];
 
    if (! state->current->expect) {
       if (postfix_type == EXPR_VOID) {
@@ -703,45 +734,45 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsig
       }
    }
 
-   if (ps == state->current) {
-      if (ps->expect) {
-         *ps->expect = (expr_t*) expr;
-         ps->last    = ps->expect;
-         ps->expect  = &expr->arg1;
+   if (pl == state->current) {
+      if (pl->expect) {
+         *pl->expect = (expr_t*) expr;
+         pl->last    = pl->expect;
+         pl->expect  = &expr->arg1;
       } else {
-         if (!ps->last || (*ps->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
-         expr->arg1 = *ps->last;
-         *ps->last  = (expr_t*) expr;
+         if (!pl->last || (*pl->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
+         expr->arg1 = *pl->last;
+         *pl->last  = (expr_t*) expr;
       }
-   } else if (ps < state->current) {
-      /* ps higher precedence */
+   } else if (pl < state->current) {
+      /* pl higher precedence */
       if (state->current->expect) {
-         ps->root   = (expr_t*) expr;
-         ps->last   = &ps->root;
-         ps->expect = &expr->arg1;
+         pl->root   = (expr_t*) expr;
+         pl->last   = &pl->root;
+         pl->expect = &expr->arg1;
       } else {
          if (!state->current->last || (*state->current->last)->type != EXPR_INTEGER) goto ONERR_EXPECT;
-         ps->root   = (expr_t*) expr;
-         ps->last   = &ps->root;
-         ps->expect = 0;
+         pl->root   = (expr_t*) expr;
+         pl->last   = &pl->root;
+         pl->expect = 0;
          expr->arg1 = *state->current->last;
          *state->current->last  = 0;
          state->current->expect = state->current->last;
          state->current->last   = 0;
       }
-      state->current = ps;
+      state->current = pl;
    } else {
-      /* ps has lower precedence */
+      /* pl has lower precedence */
       if (state->current->root) {
          if (state->current->expect) goto ONERR_EXPECT;
          propagate_parserstate(state, prec);
-         *ps->last   = (expr_t*) expr;
-         expr->arg1  = *ps->last;
+         *pl->last   = (expr_t*) expr;
+         expr->arg1  = *pl->last;
       } else {
-         ps->root = (expr_t*) expr;
-         ps->last = &ps->root;
-         ps->expect = &expr->arg1;
-         state->current = ps;
+         pl->root = (expr_t*) expr;
+         pl->last = &pl->root;
+         pl->expect = &expr->arg1;
+         state->current = pl;
       }
    }
 
@@ -755,51 +786,49 @@ int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 {
    parser_state_t * state = parser->state;
 
-   precedence_state_t * ps = &state->precedence[prec];
-
-   /* TODO: implement associativity !! */
+   precedence_level_t * pl = &state->preclevel[prec];
 
    if (state->current->expect) {
       print_error(parser, "Integer expected instead of operator\n");
       return EINVAL;
    }
 
-   if (ps == state->current) {
-      if (0/*is right associative*/) {
-         expr->arg1 = *ps->last;
-         *ps->last  = (expr_t*) expr;
+   if (pl == state->current) {
+      if (ASSOC_RIGHT == s_associativity_preclevel[prec]) {
+         expr->arg1 = *pl->last;
+         *pl->last  = (expr_t*) expr;
       } else {
          /*left associative*/
-         expr->arg1 = ps->root;
-         ps->root   = (expr_t*) expr;
-         ps->last   = &ps->root;
+         expr->arg1 = pl->root;
+         pl->root   = (expr_t*) expr;
+         pl->last   = &pl->root;
       }
-      ps->expect = &expr->arg2;
+      pl->expect = &expr->arg2;
 
-   } else if (ps < state->current) {
+   } else if (pl < state->current) {
       /* higher precedence */
-      ps->root   = (expr_t*) expr;
-      ps->last   = &ps->root;
-      ps->expect = &expr->arg2;
+      pl->root   = (expr_t*) expr;
+      pl->last   = &pl->root;
+      pl->expect = &expr->arg2;
       expr->arg1 = *state->current->last;
       *state->current->last  = 0;
       state->current->expect = state->current->last;
       state->current->last   = 0;
-      state->current = ps;
+      state->current = pl;
 
    } else {
       /* lower precedence */
       propagate_parserstate(state, prec);
-      if (0/*is right associative*/) {
-         expr->arg1 = *ps->last;
-         *ps->last  = (expr_t*) expr;
+      if (ASSOC_RIGHT == s_associativity_preclevel[prec]) {
+         expr->arg1 = *pl->last;
+         *pl->last  = (expr_t*) expr;
       } else {
          /*left associative*/
-         expr->arg1 = ps->root;
-         ps->root   = (expr_t*) expr;
-         ps->last   = &ps->root;
+         expr->arg1 = pl->root;
+         pl->root   = (expr_t*) expr;
+         pl->last   = &pl->root;
       }
-      ps->expect = &expr->arg2;
+      pl->expect = &expr->arg2;
    }
 
    return 0;
@@ -848,6 +877,7 @@ int newstate_parser(/*out*/parser_t * parser)
 
 int prevstate_parser(parser_t * parser, unsigned char expect_type, int c)
 {
+   int err;
    parser_state_t * prev = parser->state->prev;
    unsigned prec;
 
@@ -866,10 +896,14 @@ int prevstate_parser(parser_t * parser, unsigned char expect_type, int c)
       return EINVAL;
    }
 
-   propagatemax_parserstate(parser->state, &prec);
+   err = propagatemax_parserstate(parser->state, &prec);
+   if (err) {
+      print_error(parser, "Expected integer instead of '%c'\n", c);
+      return err;
+   }
 
    // register sub expression with surrounding expression
-   *prev->current->expect = parser->state->precedence[prec].root;
+   *prev->current->expect = parser->state->preclevel[prec].root;
    prev->current->last    = prev->current->expect;
    prev->current->expect  = 0;
 
@@ -956,12 +990,14 @@ static /*err*/int parse_expression(parser_t * parser)
       switch (c) {
       case 0:
          /* reached end of input */
-         if (parser->state->prev || parser->state->current->expect) {
-            print_error(parser, "Unexpected end of input\n");
+         if (parser->state->prev) {
             err = ENODATA;
          } else {
             unsigned prec;
-            propagatemax_parserstate(parser->state, &prec);
+            err = propagatemax_parserstate(parser->state, &prec);
+         }
+         if (err) {
+            print_error(parser, "Unexpected end of input\n");
          }
          goto ONERR;
       case '(':
@@ -972,6 +1008,16 @@ static /*err*/int parse_expression(parser_t * parser)
          break;
       case ')':
          err = prevstate_parser(parser, EXPR_1ARY_BRACKET, ')');
+         if (err) goto ONERR;
+         break;
+      case '[':
+         err = parse_2ary(parser, PREC_2ARY_ARRAYINDEX, EXPR_2ARY_ARRAYINDEX, EXPR_VOID);
+         if (err) goto ONERR;
+         err = newstate_parser(parser);
+         if (err) goto ONERR;
+         break;
+      case ']':
+         err = prevstate_parser(parser, EXPR_2ARY_ARRAYINDEX, ']');
          if (err) goto ONERR;
          break;
       case '0': case '1': case '2': case '3': case '4':
@@ -1012,11 +1058,18 @@ static /*err*/int parse_expression(parser_t * parser)
          if ('-' == peekchar(&parser->buffer)) {
             nextchar(&parser->buffer);
             err = parse_1ary(parser, PREC_1ARY_PREINCR, EXPR_1ARY_PREDECR, EXPR_1ARY_POSTDECR);
+         } else if ('=' == c) {
+            nextchar(&parser->buffer);
+            err = parse_2ary(parser, PREC_2ARY_ASSIGN, EXPR_2ARY_ASSIGN, EXPR_2ARY_MINUS);
          } else if (parser->state->current->expect) {
             err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_MINUS, EXPR_VOID);
          } else {
             err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_MINUS, EXPR_VOID);
          }
+         if (err) goto ONERR;
+         break;
+      case ',':
+         err = parse_2ary(parser, PREC_2ARY_COMMA, EXPR_2ARY_COMMA, EXPR_VOID);
          if (err) goto ONERR;
          break;
       default:
@@ -1048,7 +1101,8 @@ int main(int argc, const char * argv[])
 
    err = parse_expression(&parser);
 
-   // TODO: print_expr(parser.state->current->root);
+   // TODO:
+   if (!err) print_expr(parser.state->current->root);
 
    free_parser(&parser);
 

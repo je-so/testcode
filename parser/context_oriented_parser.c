@@ -1046,7 +1046,7 @@ int prevstate_parser(parser_t * parser, unsigned char expect_type, int c)
 
    err = propagatemax_parserstate(parser->state, &prec);
    if (err) {
-      print_error(parser, "Expected integer instead of '%c'\n", c);
+      print_error(parser, "Expect ':' instead of '%c'\n", c);
       return err;
    }
 
@@ -1078,7 +1078,7 @@ static /*err*/int parse_integer(parser_t * parser, int c)
       c = peekchar(&parser->buffer);
       if ('0' <= c && c <= '9') {
          c = nextchar(&parser->buffer);
-         if (value >= INT_MAX/10) {
+         if (value > INT_MAX/10) {
             print_error(parser, "integer value too large\n");
             return EOVERFLOW;
          }

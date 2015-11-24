@@ -18,20 +18,20 @@
  * ---------------------------------------------------------------
  * Supported C Operators              | Associativity | Precedence
  * ---------------------------------------------------------------
- * () [] -> .                         | left to right |  1
- * ! ~ + -                            | right to left |  2
- * * / %                              | left to right |  3
- * + -                                | left to right |  4
- * << >>                              | left to right |  5
- * < <= > >=                          | left to right |  6
- * == !=                              | left to right |  7
- * &                                  | left to right |  8
- * ^                                  | left to right |  9
- * |                                  | left to right | 10
- * &&                                 | left to right | 11
- * ||                                 | left to right | 12
- * ?:                                 | right to left | 13   // is supported!!
- * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14
+ * () [] -> .                         | left to right |  1   // () [] supported!!
+ * ! ~ + - ++ --                      | right to left |  2   // supported!!
+ * * / %                              | left to right |  3   // only * supported
+ * + -                                | left to right |  4   // supported
+ * << >>                              | left to right |  5   // not implemented
+ * < <= > >=                          | left to right |  6   // not implemented
+ * == !=                              | left to right |  7   // not implemented
+ * &                                  | left to right |  8   // supported
+ * ^                                  | left to right |  9   // not implemented
+ * |                                  | left to right | 10   // not implemented
+ * &&                                 | left to right | 11   // not implemented
+ * ||                                 | left to right | 12   // not implemented
+ * ?:                                 | right to left | 13   // supported
+ * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14   // =, +=, *=, -= supported
  * ,                                  | left to right | 15
  *
  * Every simple expression starts with
@@ -39,8 +39,8 @@
  * 2. subexpression  '(' expr ')'
  * 3. prefix operator ['+' '-' '!' '++' '--'] expr
  *
- * The parsed expression should is stored in a structured form
- * which uses the follwing AST types:
+ * The parsed expression is stored in a structured form
+ * which uses the follwing struct types:
  *
  * struct expr_t {
  *    unsigned char type;
@@ -73,7 +73,7 @@
  * The parsing algorithm is simple and does not use recursion.
  *
  * All state is stored in the context (tree of expr_t).
- * Expression are on different levels to support operator precedence.
+ * Expressions are managed on different levels to support operator precedence.
  * For every precedence rank there is a different level.
  * This simulates the stack of a LL(1) recursive descent parser used
  * to implement correct parsing of operator precedence.
@@ -1214,6 +1214,26 @@ static /*err*/int parse_expression(parser_t * parser)
             err = parse_1ary(parser, PREC_1ARY_PLUS, EXPR_1ARY_PLUS, EXPR_VOID);
          } else {
             err = parse_2ary(parser, PREC_2ARY_PLUS, EXPR_2ARY_PLUS, EXPR_VOID);
+         }
+         if (err) goto ONERR;
+         break;
+      case '*':
+         c = peekchar(&parser->buffer);
+         if ('=' == c) {
+            nextchar(&parser->buffer);
+            err = parse_2ary(parser, PREC_2ARY_ASSIGN, EXPR_2ARY_ASSIGN, EXPR_2ARY_MULT);
+         } else {
+            err = parse_2ary(parser, PREC_2ARY_MULT, EXPR_2ARY_MULT, EXPR_VOID);
+         }
+         if (err) goto ONERR;
+         break;
+      case '&':
+         c = peekchar(&parser->buffer);
+         if ('=' == c) {
+            nextchar(&parser->buffer);
+            err = parse_2ary(parser, PREC_2ARY_ASSIGN, EXPR_2ARY_ASSIGN, EXPR_2ARY_BITWISE_AND);
+         } else {
+            err = parse_2ary(parser, PREC_2ARY_BITWISE_AND, EXPR_2ARY_BITWISE_AND, EXPR_VOID);
          }
          if (err) goto ONERR;
          break;

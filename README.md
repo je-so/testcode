@@ -9,6 +9,11 @@ iperf
 
 See directory [iperf/](iperf/).
 
+PaKo Testparser
+---------------
+Prototype algorithm _Parsing with Kontext_ implemented
+which parses simple expressions.
+See [context_oriented_parser.c](parser/context_oriented_parser.c).
 
 License
 -------

@@ -30,7 +30,7 @@
  * |                                  | left to right | 10
  * &&                                 | left to right | 11
  * ||                                 | left to right | 12
- * ?:                                 | right to left | 13  // ternary op not supported!
+ * ?:                                 | right to left | 13   // is supported!!
  * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14
  * ,                                  | left to right | 15
  *
@@ -54,10 +54,18 @@
  *    expr_t * arg1;
  * };
  * struct expr_2ary_t {
- *    unsigned char type;        //
+ *    unsigned char type;
  *    unsigned char assign_type; // used for +=, -=, ...
  *    expr_t * arg1;
  *    expr_t * arg2;
+ * };
+ * struct expr_3ary_t {
+ *    unsigned char type;
+ *    struct expr_3ary_t * prev_expectmore; // used to build list of 3ary ops
+ *                                          // whose arg3 is not yet matched
+ *    expr_t * arg1;
+ *    expr_t * arg2;
+ *    expr_t * arg3;
  * };
  *
  * Already parsed input is stored as an expr_t.
@@ -72,13 +80,21 @@
  *
  * TODO: Describe AST structure and parse algorithm used !!
  *
- * TODO: implement support for 2ary operators
- *
  * Compile with:
  * > gcc -Wall -Wextra -Wconversion -std=gnu99 -ocop context_oriented_parser.c
  *
  * Run with:
  * > ./cop <filename>
+ *
+ * If file with name <filename> contains the expression
+ *
+ *   - 123[20] += 10 ? 20 ? 30 : 40 : 30
+ *
+ * the generated output should be
+ *
+ * {{- {123[20]}} += {10 ? {20 ? 30 : 40} : 30}}
+ *
+ * Where { } is used to show the associativity of the operators.
  *
  * */
 
@@ -100,12 +116,11 @@ typedef struct mman mman_t;
 
 #define memblock_SIZE        ((size_t)65536 - 8u/*malloc admin size?*/)
 #define memblock_DATASIZE    (memblock_SIZE - offsetof(memblock_t, data))
-/* align to 8 bytes */
-#define memblock_ALIGN(size) (((size)+7u) & ~(size_t)7)
+#define memblock_ALIGN(size) (((size)+(offsetof(memblock_t, data)-1)) & ~(size_t)(offsetof(memblock_t, data)-1))
 
 struct memblock {
    memblock_t* next;
-   char        data[1];
+   long        data[1];
 };
 
 int new_memblock(/*out*/memblock_t** block)
@@ -284,6 +299,7 @@ typedef struct expr_t expr_t;
 typedef struct expr_integer_t expr_integer_t;
 typedef struct expr_1ary_t expr_1ary_t;
 typedef struct expr_2ary_t expr_2ary_t;
+typedef struct expr_3ary_t expr_3ary_t;
 
 typedef enum expr_type {
    EXPR_VOID,
@@ -309,6 +325,7 @@ typedef enum expr_type {
    EXPR_2ARY_BITWISE_XOR,  /* ^ */
    EXPR_2ARY_ASSIGN,       /* = */
    EXPR_2ARY_ARRAYINDEX,   /* [] */
+   EXPR_TERNARY,           /* ?: */
 } expr_type_e;
 
 typedef enum precedence {
@@ -334,6 +351,7 @@ typedef enum precedence {
    PREC_2ARY_BITWISE_XOR = 9,
    PREC_2ARY_ASSIGN     = 14,
    PREC_2ARY_ARRAYINDEX = 1,
+   PREC_TERNARY         = 13,
 } precedence_e;
 
 typedef enum associativity {
@@ -383,7 +401,8 @@ static char s_expr_type_names[][4] = {
    [EXPR_2ARY_BITWISE_OR]  = "|",
    [EXPR_2ARY_BITWISE_XOR] = "^",
    [EXPR_2ARY_ASSIGN]      = "=",
-   [EXPR_2ARY_ARRAYINDEX]  = "["
+   [EXPR_2ARY_ARRAYINDEX]  = "[",
+   [EXPR_TERNARY]          = "?",
 };
 
 static unsigned char s_expr_type_nrargs[] = {
@@ -430,6 +449,15 @@ struct expr_2ary_t {
    unsigned char assign_type;
    expr_t * arg1;
    expr_t * arg2;
+};
+
+struct expr_3ary_t {
+   EXPR_COMMON_FIELDS;
+   expr_3ary_t * prev_expectmore; // used to build list of 3ary ops
+                                  // whose arg3 is not yet matched
+   expr_t * arg1;
+   expr_t * arg2;
+   expr_t * arg3;
 };
 
 static void print_expr2(expr_t * expr)
@@ -508,6 +536,17 @@ static void print_expr2(expr_t * expr)
          printf("}");
          break;
       }
+      case EXPR_TERNARY: {
+         expr_3ary_t * e = (expr_3ary_t*) expr;
+         printf("{");
+         print_expr2(e->arg1);
+         printf(" ? ");
+         print_expr2(e->arg2);
+         printf(" : ");
+         print_expr2(e->arg3);
+         printf("}");
+         break;
+      }
    }
 }
 
@@ -544,6 +583,7 @@ static inline void init_precedencelevel(precedence_level_t * level)
 struct parser_state_t {
    parser_state_t * prev;
    precedence_level_t * current;
+   expr_3ary_t * list_expectmore;
    precedence_level_t preclevel[NROF_PRECEDENCE_LEVEL];
 };
 
@@ -551,6 +591,7 @@ void init_parserstate(/*out*/parser_state_t * state, parser_state_t * prev)
 {
    state->prev = prev;
    state->current = &state->preclevel[0];
+   state->list_expectmore = 0;
    for (unsigned i = 0; i < NROF_PRECEDENCE_LEVEL; ++i) {
       init_precedencelevel(&state->preclevel[i]);
    }
@@ -570,29 +611,36 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
    unsigned h;
 
    assert(prec < NROF_PRECEDENCE_LEVEL);
-   assert(state->current->root);
    assert(state->preclevel[prec].expect);
+
+   if (prec > PREC_TERNARY && state->list_expectmore) {
+      return ENOENT;
+   }
 
    for (h = 0; h < prec; ++h) {
       if (state->preclevel[h].root) {
-         assert(! state->preclevel[h].expect);
+         if (state->preclevel[h].expect) {
+            return ENODATA;
+         }
          break;
       }
    }
 
-   for (unsigned i = h+1; i < prec; ++i) {
-      if (state->preclevel[i].root) {
-         assert(state->preclevel[i].expect);
-         *state->preclevel[i].expect = state->preclevel[h].root;
-         init_precedencelevel(&state->preclevel[h]);
-         h = i;
+   if (h < prec) {
+      for (unsigned i = h+1; i < prec; ++i) {
+         if (state->preclevel[i].root) {
+            assert(state->preclevel[i].expect);
+            *state->preclevel[i].expect = state->preclevel[h].root;
+            init_precedencelevel(&state->preclevel[h]);
+            h = i;
+         }
       }
-   }
 
-   *state->preclevel[prec].expect = state->preclevel[h].root;
-   state->preclevel[prec].last   = state->preclevel[prec].expect;
-   state->preclevel[prec].expect = 0;
-   init_precedencelevel(&state->preclevel[h]);
+      *state->preclevel[prec].expect = state->preclevel[h].root;
+      state->preclevel[prec].last   = state->preclevel[prec].expect;
+      state->preclevel[prec].expect = 0;
+      init_precedencelevel(&state->preclevel[h]);
+   }
 
    state->current = &state->preclevel[prec];
 
@@ -602,6 +650,10 @@ int propagate_parserstate(parser_state_t * state, unsigned prec)
 int propagatemax_parserstate(parser_state_t * state, /*out*/unsigned * prec)
 {
    unsigned h;
+
+   if (state->list_expectmore) {
+      return ENOENT;
+   }
 
    for (h = 0; h < NROF_PRECEDENCE_LEVEL; ++h) {
       if (state->preclevel[h].root) {
@@ -717,6 +769,16 @@ static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned ch
    return 0;
 }
 
+static int new_expr3ary(parser_t* parser, /*out*/expr_3ary_t** node, unsigned char type)
+{
+   *node = (expr_3ary_t*) alloc_mman(&parser->mm, sizeof(expr_3ary_t));
+   if (!*node) return ENOMEM;
+   (*node)->type = type;
+   (*node)->prev_expectmore = 0;
+   print_debug(parser, "Matched expr_3ary_t %s\n", s_expr_type_names[type]);
+   return 0;
+}
+
 int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsigned char postfix_type)
 {
    parser_state_t * state = parser->state;
@@ -764,8 +826,7 @@ int match1ary_parser(parser_t * parser, unsigned prec, expr_1ary_t * expr, unsig
    } else {
       /* pl has lower precedence */
       if (state->current->root) {
-         if (state->current->expect) goto ONERR_EXPECT;
-         propagate_parserstate(state, prec);
+         if (propagate_parserstate(state, prec)) goto ONERR_EXPECT;
          *pl->last   = (expr_t*) expr;
          expr->arg1  = *pl->last;
       } else {
@@ -784,6 +845,7 @@ ONERR_EXPECT:
 
 int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 {
+   int err;
    parser_state_t * state = parser->state;
 
    precedence_level_t * pl = &state->preclevel[prec];
@@ -818,7 +880,11 @@ int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
 
    } else {
       /* lower precedence */
-      propagate_parserstate(state, prec);
+      err = propagate_parserstate(state, prec);
+      if (err) {
+         print_error(parser, "Expected ':' to instead of '%s'\n", s_expr_type_names[expr->type]);
+         return err;
+      }
       if (ASSOC_RIGHT == s_associativity_preclevel[prec]) {
          expr->arg1 = *pl->last;
          *pl->last  = (expr_t*) expr;
@@ -830,6 +896,88 @@ int match2ary_parser(parser_t * parser, unsigned prec, expr_2ary_t * expr)
       }
       pl->expect = &expr->arg2;
    }
+
+   return 0;
+}
+
+int matchstart3ary_parser(parser_t * parser, expr_3ary_t * expr)
+{
+   int err;
+   parser_state_t * state = parser->state;
+
+   precedence_level_t * pl = &state->preclevel[PREC_TERNARY];
+
+   /* assume right associativity for single 3ary operator */
+
+   if (state->current->expect) {
+      print_error(parser, "Integer expected instead of operator\n");
+      return EINVAL;
+   }
+
+   if (pl == state->current) {
+      expr->arg1 = *pl->last;
+      *pl->last  = (expr_t*) expr;
+      pl->expect = &expr->arg2;
+
+   } else if (pl < state->current) {
+      /* higher precedence */
+      pl->root   = (expr_t*) expr;
+      pl->last   = &pl->root;
+      pl->expect = &expr->arg2;
+      expr->arg1 = *state->current->last;
+      *state->current->last  = 0;
+      state->current->expect = state->current->last;
+      state->current->last   = 0;
+      state->current = pl;
+
+   } else {
+      /* lower precedence */
+      err = propagate_parserstate(state, PREC_TERNARY);
+      assert(!err);
+      expr->arg1 = *pl->last;
+      *pl->last  = (expr_t*) expr;
+      pl->expect = &expr->arg2;
+   }
+
+   expr->prev_expectmore = state->list_expectmore;
+   state->list_expectmore = expr;
+
+   return 0;
+}
+
+int matchnext3ary_parser(parser_t * parser)
+{
+   int err;
+   parser_state_t * state = parser->state;
+
+   precedence_level_t * pl = &state->preclevel[PREC_TERNARY];
+
+   /* assume right associativity for single 3ary operator */
+
+   if (! state->list_expectmore) {
+      print_error(parser, "Unmatched ':'\n");
+      return EINVAL;
+   }
+
+   if (state->current->expect) {
+      print_error(parser, "Integer expected instead of ':'\n");
+      return EINVAL;
+   }
+
+   if (pl == state->current) {
+
+   } else if (pl < state->current) {
+      /* higher precedence */
+      assert(0 && "internal parser error");
+
+   } else {
+      /* lower precedence */
+      err = propagate_parserstate(state, PREC_TERNARY);
+      assert(!err);
+   }
+
+   state->current->expect = &state->list_expectmore->arg3;
+   state->list_expectmore = state->list_expectmore->prev_expectmore;
 
    return 0;
 }
@@ -976,6 +1124,19 @@ static /*err*/int parse_2ary(parser_t * parser, unsigned char precedence, unsign
    return err;
 }
 
+static /*err*/int parse_3ary(parser_t * parser)
+{
+   int err;
+   expr_3ary_t * expr;
+
+   err = new_expr3ary(parser, &expr, EXPR_TERNARY);
+   if (err) return err;
+
+   err = matchstart3ary_parser(parser, expr);
+
+   return err;
+}
+
 static /*err*/int parse_expression(parser_t * parser)
 {
    int err;
@@ -1000,6 +1161,14 @@ static /*err*/int parse_expression(parser_t * parser)
             print_error(parser, "Unexpected end of input\n");
          }
          goto ONERR;
+      case '?':
+         err = parse_3ary(parser);
+         if (err) goto ONERR;
+         break;
+      case ':':
+         err = matchnext3ary_parser(parser);
+         if (err) goto ONERR;
+         break;
       case '(':
          err = parse_1ary(parser, PREC_1ARY_BRACKET, EXPR_1ARY_BRACKET, EXPR_VOID);
          if (err) goto ONERR;

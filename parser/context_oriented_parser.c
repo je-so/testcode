@@ -32,7 +32,7 @@
  * ||                                 | left to right | 12   // not implemented
  * ?:                                 | right to left | 13   // supported
  * = += -= *= /= %= <<= >>= &= ^= |=  | right to left | 14   // =, +=, *=, -= supported
- * ,                                  | left to right | 15
+ * ,                                  | left to right | 15   // supported
  *
  * Every simple expression starts with
  * 1. integer value  ['0'-'9']+

@@ -111,6 +111,8 @@
  *  Memory Management
  * =================== */
 
+// TODO: #define PERFTEST_USE_MALLOC 1
+
 typedef struct memblock memblock_t;
 typedef struct mman mman_t;
 
@@ -120,7 +122,7 @@ typedef struct mman mman_t;
 
 struct memblock {
    memblock_t* next;
-   long        data[1];
+   char        data[1];
 };
 
 int new_memblock(/*out*/memblock_t** block)
@@ -293,7 +295,11 @@ static inline /*char*/int peekchar(buffer_t * buffer)
 
 #define NROF_PRECEDENCE_LEVEL 16
 
-#define EXPR_COMMON_FIELDS  unsigned char type
+#ifdef PERFTEST_USE_MALLOC
+#   define EXPR_COMMON_FIELDS  void * mem; unsigned char type
+#else
+#   define EXPR_COMMON_FIELDS  unsigned char type
+#endif
 
 typedef struct expr_t expr_t;
 typedef struct expr_integer_t expr_integer_t;
@@ -747,6 +753,9 @@ static int new_exprinteger(parser_t* parser, /*out*/expr_integer_t** node, int v
    (*node)->type = EXPR_INTEGER;
    (*node)->val = val;
    print_debug(parser, "Matched expr_integer_t %d\n", val);
+   #ifdef PERFTEST_USE_MALLOC
+   (*node)->mem = malloc(10);
+   #endif
    return 0;
 }
 
@@ -756,6 +765,9 @@ static int new_expr1ary(parser_t* parser, /*out*/expr_1ary_t** node, unsigned ch
    if (!*node) return ENOMEM;
    (*node)->type = type;
    print_debug(parser, "Matched expr_1ary_t %s\n", s_expr_type_names[type]);
+   #ifdef PERFTEST_USE_MALLOC
+   (*node)->mem = malloc(10);
+   #endif
    return 0;
 }
 
@@ -766,6 +778,9 @@ static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned ch
    (*node)->type = type;
    (*node)->assign_type = assign_type;
    print_debug(parser, "Matched expr_2ary_t %s%s\n", type == EXPR_2ARY_ASSIGN ? s_expr_type_names[assign_type] : "", s_expr_type_names[type]);
+   #ifdef PERFTEST_USE_MALLOC
+   (*node)->mem = malloc(10);
+   #endif
    return 0;
 }
 
@@ -776,6 +791,9 @@ static int new_expr3ary(parser_t* parser, /*out*/expr_3ary_t** node, unsigned ch
    (*node)->type = type;
    (*node)->prev_expectmore = 0;
    print_debug(parser, "Matched expr_3ary_t %s\n", s_expr_type_names[type]);
+   #ifdef PERFTEST_USE_MALLOC
+   (*node)->mem = malloc(10);
+   #endif
    return 0;
 }
 

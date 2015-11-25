@@ -113,6 +113,10 @@
 
 // TODO: #define PERFTEST_USE_MALLOC 1
 
+#ifdef PERFTEST_USE_MALLOC
+static int s_nrmalloc = 0;
+#endif
+
 typedef struct memblock memblock_t;
 typedef struct mman mman_t;
 
@@ -755,6 +759,7 @@ static int new_exprinteger(parser_t* parser, /*out*/expr_integer_t** node, int v
    print_debug(parser, "Matched expr_integer_t %d\n", val);
    #ifdef PERFTEST_USE_MALLOC
    (*node)->mem = malloc(10);
+   ++ s_nrmalloc;
    #endif
    return 0;
 }
@@ -767,6 +772,7 @@ static int new_expr1ary(parser_t* parser, /*out*/expr_1ary_t** node, unsigned ch
    print_debug(parser, "Matched expr_1ary_t %s\n", s_expr_type_names[type]);
    #ifdef PERFTEST_USE_MALLOC
    (*node)->mem = malloc(10);
+   ++ s_nrmalloc;
    #endif
    return 0;
 }
@@ -780,6 +786,7 @@ static int new_expr2ary(parser_t* parser, /*out*/expr_2ary_t** node, unsigned ch
    print_debug(parser, "Matched expr_2ary_t %s%s\n", type == EXPR_2ARY_ASSIGN ? s_expr_type_names[assign_type] : "", s_expr_type_names[type]);
    #ifdef PERFTEST_USE_MALLOC
    (*node)->mem = malloc(10);
+   ++ s_nrmalloc;
    #endif
    return 0;
 }
@@ -793,6 +800,7 @@ static int new_expr3ary(parser_t* parser, /*out*/expr_3ary_t** node, unsigned ch
    print_debug(parser, "Matched expr_3ary_t %s\n", s_expr_type_names[type]);
    #ifdef PERFTEST_USE_MALLOC
    (*node)->mem = malloc(10);
+   ++ s_nrmalloc;
    #endif
    return 0;
 }
@@ -1308,12 +1316,14 @@ int main(int argc, const char * argv[])
 
    err = parse_expression(&parser);
 
-   // TODO:
-   if (!err) print_expr(parser.state->current->root);
+   // TODO: if (!err) print_expr(parser.state->current->root);
 
    free_parser(&parser);
 
    // TODO: malloc_stats(); /* TODO: remove ! */
 
+#ifdef PERFTEST_USE_MALLOC
+   printf("nrmalloc called = %d\n", s_nrmalloc);
+#endif
    return err ? EXIT_FAILURE : EXIT_SUCCESS;
 }

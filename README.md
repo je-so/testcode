@@ -15,6 +15,10 @@ Prototype algorithm _Parsing with Kontext_ implemented
 which parses simple expressions.
 See [context_oriented_parser.c](parser/context_oriented_parser.c).
 
+Sudoku Solver
+-------------
+Jump to directory [sudoku/](old-projects/sudoku).
+
 License
 -------
 

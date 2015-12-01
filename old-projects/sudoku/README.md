@@ -31,6 +31,12 @@ The result is:
 8 1 7 9 4 6 5 2 3
 ```
 
+You can solve the 5 contained test sudokus with (replace `sudoku1.txt` with the corresponding filename):
+
+```Shell
+./sudoku < sudoku1.txt
+```
+
 ## Reference
 The strategies to solve sudokus are from the book
 [Sudoku Programming with C](http://zambon.com.au/) by *Giulio Zambon*.
@@ -62,7 +68,7 @@ static inline bool issolved_sudoku(const sudoku_t* sudoku, int row/*0..8*/, int 
 }
 ```
 The expression ``(cell-1)`` clears the least significant bit of cell and sets all trailing zero bits to 1. 
-With expression ``cell & (cell-1)`` the switched trailing zero bits are switched back to 0. 
+With expression ``cell & (cell-1)`` the last significant bit and the trailing bits are cleared to 0. 
 The result is 0 if the least significant bit in cell is the only set bit.
 
 ## Backtracking

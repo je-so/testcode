@@ -3,17 +3,17 @@ Testcode
 
 This repository contains unrelated stuff.
 
-iperf
------
-**Measure performance of multiple threads/processes.**
-
-See directory [iperf/](iperf/).
-
 PaKo Testparser
 ---------------
 Prototype algorithm _Parsing with Kontext_ implemented
 which parses simple expressions.
 See [context_oriented_parser.c](parser/context_oriented_parser.c).
+
+iperf
+-----
+**Measure performance of multiple threads/processes.**
+
+See directory [iperf/](iperf/).
 
 Sudoku Solver
 -------------

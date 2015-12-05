@@ -19,6 +19,10 @@ Sudoku Solver
 -------------
 Jump to directory [sudoku/](old-projects/sudoku).
 
+OS API
+-------------
+* How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).
+
 License
 -------
 

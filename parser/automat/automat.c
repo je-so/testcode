@@ -24,6 +24,7 @@ struct memory_page_t;
 struct automat_mman_t;
 struct range_transition_t;
 struct state_t;
+struct multistate_node_t;
 struct multistate_t;
 struct automat_t;
 
@@ -290,7 +291,7 @@ slist_IMPLEMENT(_statelist, state_t, next)
 /* function: initempty_state
  * Initialisiert state mit einem "leerem" Übergang zu target <state_t>.
  * Ein leerer Übergang wird immer verwendet und liest bzw. verbraucht keinen Buchstaben. */
-static void initempty_state(state_t * state, state_t * target)
+static void initempty_state(/*out*/state_t * state, state_t * target)
 {
    state->type = state_EMPTY;
    state->nrtrans = 1;
@@ -300,7 +301,7 @@ static void initempty_state(state_t * state, state_t * target)
 /* function: initempty2_state
  * Initialisiert state mit zwei "leeren" Übergangem zu target und target2.
  * Ein leerer Übergang wird immer verwendet und liest bzw. verbraucht keinen Buchstaben. */
-static void initempty2_state(state_t * state, state_t * target, state_t * target2)
+static void initempty2_state(/*out*/state_t * state, state_t * target, state_t * target2)
 {
    state->type = state_EMPTY;
    state->nrtrans = 2;
@@ -313,7 +314,7 @@ static void initempty2_state(state_t * state, state_t * target, state_t * target
  * Ein <state_RANGE> Übergang testet den nächsten zu lesenden Character, ob er innerhalb
  * der nrmatch Bereiche [match_from..match_to] liegt. Wenn ja, wird der Character verbraucht
  * und der Übergang nach target <state_t> ausgeführt. */
-static void initrange_state(state_t * state, state_t * target, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
+static void initrange_state(/*out*/state_t * state, state_t * target, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
 {
    state->type = state_RANGE;
    state->nrtrans = nrmatch;
@@ -330,7 +331,7 @@ static void initrange_state(state_t * state, state_t * target, uint8_t nrmatch, 
  * weitere nrmatch Übergange. Diese testem den nächsten zu lesenden Character, ob er innerhalb
  * der nrmatch Bereiche [match_from..match_to] liegt. Wenn ja, wird der Character verbraucht
  * und der Übergang nach target <state_t> ausgeführt. */
-static void initcontinue_state(state_t * state, state_t * target, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
+static void initcontinue_state(/*out*/state_t * state, state_t * target, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
 {
    state->type = state_RANGE_CONTINUE;
    state->nrtrans = nrmatch;
@@ -342,20 +343,169 @@ static void initcontinue_state(state_t * state, state_t * target, uint8_t nrmatc
 }
 
 
+/* struct: multistate_node_t
+ * Knoten, der Teil eines B-Tree ist. */
+typedef struct multistate_node_t {
+   uint8_t level;
+   uint8_t size;
+   union {
+      struct { // level > 0
+         state_t * key[3];
+         struct multistate_node_t * node[4];
+      };
+      struct { // level == 0
+         struct multistate_node_t * next;
+         state_t * state[6];
+      };
+   };
+} multistate_node_t;
+
+
+typedef struct multistate_stack_entry_t {
+   multistate_node_t * node;
+   unsigned idx_node;
+} multistate_stack_entry_t;
+
+typedef struct multistate_stack_t {
+   size_t                   depth;
+   multistate_stack_entry_t entry[bitsof(size_t)];
+} multistate_stack_t;
+
+// group: lifetime
+
+static inline void init_multistatestack(multistate_stack_t * stack)
+{
+   stack->depth = 0;
+}
+
+// group: update
+
+static inline void push_multistatestack(multistate_stack_t * stack, multistate_node_t * node, unsigned idx_node)
+{
+   stack->entry[stack->depth] = (multistate_stack_entry_t) { node, idx_node };
+   ++ stack->depth;
+}
+
+
 /* struct: multistate_t
  * Verwaltet mehrere Pointer auf <state_t>.
  * Die gespeicherten Werte sind sortiert abgelegt, so dass
  * ein Vergleich zweier <multistate_t> auf Gleichheit möglich ist.*/
 typedef struct multistate_t {
-
+   size_t size;
+   void * root;
 } multistate_t;
 
 // group: lifetime
 
+#define multistate_INIT \
+         { 0, 0 }
+
 // group: query
+
+// TODO:
 
 // group: update
 
+static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mman_t * mman)
+{
+   int err;
+   void * node;
+
+   // 3 cases
+   // 1: 2 <= mst->size ==> insert into leaf
+   // 2: 0 == mst->size ==> store state into root pointer
+   // 3: 1 == mst->size ==> allocate leaf and store root + state into leaf
+
+   if (1 < mst->size) { // case 1
+      // search from mst->root node to leaf and store search path in stack
+      multistate_stack_t   stack;
+      init_multistatestack(&stack);
+      node = mst->root;
+      if (  ((multistate_node_t*)node)->level >= (int) lengthof(stack.entry)
+            || ((multistate_node_t*)node)->size < 2) {
+         return EINVARIANT;
+      }
+      for (int level = ((multistate_node_t*)node)->level; (level--) > 0; ) {
+         if (((multistate_node_t*)node)->size > lengthof(((multistate_node_t*)node)->node)) {
+            return EINVARIANT;
+         }
+         unsigned high = (((multistate_node_t*)node)->size -1u); // size >= 2 ==> high >= 1
+         unsigned low  = 0; // low < high cause high >= 1
+         // ((multistate_node_t*)node)->node[high] is valid
+         // ((multistate_node_t*)node)->key[high-1] is valid
+         for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
+            // search state in node->key
+            if (((multistate_node_t*)node)->key[mid] < state) {
+               low = mid + 1; // low <= high
+            } else {
+               high = mid;
+            }
+            if (low == high) break;
+         }
+         push_multistatestack(&stack, node, low);
+         node = ((multistate_node_t*)node)->node[low];
+         if (  ((multistate_node_t*)node)->level != level
+               || ((multistate_node_t*)node)->size < 2
+               || ((multistate_node_t*)node)->size > lengthof(((multistate_node_t*)node)->node)) {
+            return EINVARIANT;
+         }
+      }
+      if (((multistate_node_t*)node)->size > lengthof(((multistate_node_t*)node)->state)) {
+         return EINVARIANT;
+      }
+      // find state in leaf node. low is the index where new state has to be inserted !
+      unsigned high = ((multistate_node_t*)node)->size;
+      unsigned low  = 0; // 0 <= low <= ((multistate_node_t*)node)->size
+      for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
+         // search state in node->key
+         if (((multistate_node_t*)node)->state[mid] < state) {
+            low = mid + 1;
+         } else if (((multistate_node_t*)node)->state[mid] == state) {
+            return EEXIST;
+         } else {
+            high = mid;
+         }
+         if (low == high) break;
+      }
+      if (lengthof(((multistate_node_t*)node)->state) > ((multistate_node_t*)node)->size) {
+         // insert into leaf
+         memmove(&((multistate_node_t*)node)->state[low+1], &((multistate_node_t*)node)->state[low], sizeof(((multistate_node_t*)node)->state[0]) * (((multistate_node_t*)node)->size - low));
+         ((multistate_node_t*)node)->state[low] = state;
+         ++ ((multistate_node_t*)node)->size;
+      } else {
+         // split node
+         // ENOMEM ==> splitting failed ==> possible half of the information is lost
+         //        ==> structure corrupt afterwards ==> ignored cause user sees only ENOMEM and never content of this structure
+         assert(0); // TODO: implement
+      }
+
+   } else if (! mst->size) {  // case 2
+      mst->root = state;
+
+   } else { // case 3
+      const uint16_t SIZE = sizeof(multistate_node_t);
+      err = allocmem_automatmman(mman, SIZE, &node);
+      if (err) goto ONERR;
+      ((multistate_node_t*)node)->level = 0;
+      ((multistate_node_t*)node)->size  = 2;
+      ((multistate_node_t*)node)->next  = 0;
+      if ((state_t*)mst->root < state) {
+         ((multistate_node_t*)node)->state[0] = mst->root;
+         ((multistate_node_t*)node)->state[1] = state;
+      } else {
+         ((multistate_node_t*)node)->state[0] = state;
+         ((multistate_node_t*)node)->state[1] = mst->root;
+      }
+      mst->root = node;
+   }
+
+   ++ mst->size;
+
+   return 0;
+ONERR:
+   return err;
+}
 
 
 // section: automat_t
@@ -613,6 +763,7 @@ static int test_memorypage(void)
    // TEST memory_page_SIZE
    TEST(0 < memory_page_SIZE);
    TEST(ispowerof2_int(memory_page_SIZE));
+
 
    // === group helper types
 
@@ -953,8 +1104,7 @@ ONERR:
 
 static int test_state(void)
 {
-   uint8_t buffer[256 * sizeof(state_t)] = { 0 };
-   state_t * state = (void*) buffer;
+   state_t state[256];
 
    // === constants
 
@@ -1040,7 +1190,7 @@ static int test_state(void)
          TEST(state[0].range_transition[r].to    == (r < i ? r+10 : 0));
       }
       // reset
-      memset(buffer, 0, sizeof(buffer));
+      memset(state, 0, sizeof(state));
       state[0].next = (void*) &state[1].next;
    }
 
@@ -1056,7 +1206,7 @@ static int test_state(void)
          TEST(state[0].range_transition[r].to    == (r < i ? r+10 : 0));
       }
       // reset
-      memset(buffer, 0, sizeof(buffer));
+      memset(state, 0, sizeof(state));
       state[0].next = (void*) &state[1].next;
    }
 
@@ -1067,9 +1217,89 @@ ONERR:
 
 static int test_multistate(void)
 {
+   state_t        state[256];
+   multistate_t   mst = multistate_INIT;
+   automat_mman_t mman = automat_mman_INIT;
+
+   // TEST multistate_INIT
+   TEST(0 == mst.size);
+   TEST(0 == mst.root);
+
+   // TEST add_multistate: multistate_t.size == 0
+   for (unsigned i = 0; i < lengthof(state); ++i) {
+      mst = (multistate_t) multistate_INIT;
+      TEST( 0 == add_multistate(&mst, &state[i], &mman));
+      // check mman: nothing allocated
+      TEST( 0 == sizeallocated_automatmman(&mman));
+      // check mst
+      TEST( 1 == mst.size);
+      TEST( &state[i] == mst.root);
+   }
+
+   // TEST add_multistate: multistate_t.size == 1
+   for (unsigned i = 0; i < lengthof(state)-1; ++i) {
+      for (unsigned order = 0; order <= 1; ++order) {
+
+         mst = (multistate_t) multistate_INIT;
+         TEST(0 == add_multistate(&mst, &state[i + !order], &mman));
+         TEST( 0 == add_multistate(&mst, &state[i + order], &mman));
+         // check mman
+         TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         // check mst
+         TEST( 2 == mst.size);
+         TEST( 0 != mst.root);
+         // check mst.root content
+         TEST( 0 == ((multistate_node_t*)mst.root)->level);
+         TEST( 2 == ((multistate_node_t*)mst.root)->size);
+         TEST( &state[i] == ((multistate_node_t*)mst.root)->state[0]);
+         TEST( &state[i+1] == ((multistate_node_t*)mst.root)->state[1]);
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   void * const ENDMARKER = (void*) (uintptr_t) 0x01234567;
+
+   // TEST add_multistate: single node && add states ascending/descending
+   for (int asc = 1; asc >= 0; --asc) {
+      const unsigned Lstate = lengthof(((multistate_node_t*)0)->state);
+      void * addr = 0;
+      mst = (multistate_t) multistate_INIT;
+      for (unsigned i = 0; i < Lstate; ++i) {
+         // test
+         TEST( 0 == add_multistate(&mst, &state[asc ? i : Lstate-1-i], &mman));
+         if (1 == i) {  // set end marker at end of node
+            allocmem_automatmman(&mman, sizeof(void*), &addr);
+            *((void**)addr) = ENDMARKER;
+            // check that end marker is effective !!
+            TEST(addr == &((multistate_node_t*)mst.root)->state[Lstate]);
+         }
+         // check mman
+         TEST( (i > 0 ? sizeof(void*)+sizeof(multistate_node_t) : 0) == sizeallocated_automatmman(&mman));
+         // check mst
+         TEST( i+1 == mst.size);
+         TEST( 0   != mst.root);
+         // check mst.root content
+         if (i >= 1) {
+            TEST( 0   == ((multistate_node_t*)mst.root)->level);
+            TEST( i+1 == ((multistate_node_t*)mst.root)->size);
+            for (unsigned s = 0; s <= i; ++s) {
+               TEST( &state[asc ? s : Lstate-1-i+s] == ((multistate_node_t*)mst.root)->state[s]);
+            }
+            TEST(ENDMARKER == *((void**)addr)); // no overflow into following memory block
+         }
+      }
+      // reset
+      TEST(0 == free_automatmman(&mman));
+   }
+
+   // TEST add_multistate: single node && add states unordered
+   // TODO:
+
 
    return 0;
 ONERR:
+   free_automatmman(&mman);
    return EINVAL;
 }
 

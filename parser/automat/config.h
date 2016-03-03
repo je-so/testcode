@@ -8,6 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#define EINVARIANT 1024
+
 typedef void* IDNAME;
 typedef void* TYPENAME;
 typedef uint32_t char32_t;
@@ -45,3 +47,4 @@ typedef uint32_t char32_t;
 #define ispowerof2_int(i) (0 == ((i)&((i)-1)))
 
 #define lengthof(a) (sizeof(a) / sizeof((a)[0]))
+#define bitsof(a) (sizeof(a) * 8/*assume CHAR_BIT == 8*/)

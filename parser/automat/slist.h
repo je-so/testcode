@@ -400,8 +400,6 @@ static inline void insertlastPlist_slist(slist_t * list, slist_t * list2)
  * Implements <slist_t.removefirst_slist>. */
 static inline int removefirst_slist(slist_t * list, struct slist_node_t ** removed_node)
 {
-   int err ;
-
    // TODO: change implementation => return 0 if list is empty !
 
    if (isempty_slist(list)) return EINVAL;

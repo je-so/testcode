@@ -44,8 +44,8 @@ typedef struct automat_mman_t {
    size_t   refcount;   // number of <automat_t> which use resources managed by this object
    uint8_t* freemem;    // freemem points to end of memory_page_t
                         // addr_next_free_memblock == freemem - freesize
-   size_t   freesize;   // 0 <= freesize <= resource_page_SIZE - offsetof(memory_page_t, data)
-   size_t   allocated;  // size of allocated memory
+   size_t   freesize;   // 0 <= freesize <= memory_page_SIZE - offsetof(memory_page_t, data)
+   size_t   allocated;  // total amount of allocated memory
 } automat_mman_t;
 
 // group: lifetime
@@ -136,7 +136,7 @@ int free_automat(automat_t* ndfa);
  * Gibt Anzahl Zustände des Automaten zurück. */
 size_t nrstate_automat(const automat_t* ndfa);
 
-/* function: nrstate_automat
+/* function: startstate_automat
  * Gibt den einzigen Startzustand des automaten zurück. */
 const void* startstate_automat(const automat_t* ndfa);
 
@@ -148,7 +148,7 @@ const void* endstate_automat(const automat_t* ndfa);
 
 // group: update
 
-/* function: add_automat
+/* function: addmatch_automat
  * Erweitert den Automaten um weiter zu matchende Characters.
  * Wird nur dann verwendet, falls <initmatch_automat> nicht ausreicht,
  * um alle Characterbereiche aufzuzählen. Ein Aufruf in anderen Fällen führt

@@ -136,16 +136,6 @@ int free_automat(automat_t* ndfa);
  * Gibt Anzahl Zustände des Automaten zurück. */
 size_t nrstate_automat(const automat_t* ndfa);
 
-/* function: startstate_automat
- * Gibt den einzigen Startzustand des automaten zurück. */
-const void* startstate_automat(const automat_t* ndfa);
-
-/* function: endstate_automat
- * Endzustand des Automaten. Im Falle eines optimierten Automaten,
- * der mehrere Endzustände hat, verweisen diese per zuätzlicher "empty transition"
- * auf den einzigen und nicht optimierten Endzustand. */
-const void* endstate_automat(const automat_t* ndfa);
-
 // group: update
 
 /* function: addmatch_automat

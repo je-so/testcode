@@ -19,14 +19,16 @@
 
 typedef uint32_t char32_t;
 
-// === implemented types
+// === private types
 struct memory_page_t;
-struct automat_mman_t;
 struct range_transition_t;
+union  transition_t;
 struct state_t;
 struct multistate_node_t;
 struct multistate_t;
-struct automat_t;
+struct range_t;            // TODO:
+struct rangeindex_node_t;  // TODO:
+struct rangeindex_t;       // TODO:
 
 /* enums: state_e
  * Beschreibt Typ eines <state_t>.
@@ -352,8 +354,8 @@ typedef struct multistate_node_t {
    uint8_t size;
    union {
       struct { // level > 0
-         state_t * key[3]; // key[i] == node[i+1]->node[/*(level > 0)*/0]->...->state[/*(level == 0)*/0]
-         struct multistate_node_t * node[4];
+         state_t * key[3]; // key[i] == child[i+1]->child[/*(level > 0)*/0]->...->state[/*(level == 0)*/0]
+         struct multistate_node_t * child[4];
       };
       struct { // level == 0
          struct multistate_node_t * next;
@@ -364,8 +366,8 @@ typedef struct multistate_node_t {
 
 
 typedef struct multistate_stack_entry_t {
-   multistate_node_t * node;
-   unsigned idx_node;
+   multistate_node_t * parent;
+   unsigned            ichild;
 } multistate_stack_entry_t;
 
 typedef struct multistate_stack_t {
@@ -382,9 +384,9 @@ static inline void init_multistatestack(multistate_stack_t * stack)
 
 // group: update
 
-static inline void push_multistatestack(multistate_stack_t * stack, multistate_node_t * node, unsigned idx_node)
+static inline void push_multistatestack(multistate_stack_t * stack, multistate_node_t * node, unsigned ichild)
 {
-   stack->entry[stack->depth] = (multistate_stack_entry_t) { node, idx_node };
+   stack->entry[stack->depth] = (multistate_stack_entry_t) { node, ichild };
    ++ stack->depth;
 }
 
@@ -405,6 +407,17 @@ typedef struct multistate_t {
 #define multistate_NROFSTATE \
          (lengthof(((multistate_node_t*)0)->state))
 
+/* define: multistate_NROFCHILD
+ * Nr of pointer array <multistate_node_t->child> could store. */
+#define multistate_NROFCHILD \
+         (lengthof(((multistate_node_t*)0)->child))
+
+/* define: multistate_NROFKEY
+ * Nr of pointer array <multistate_node_t->key> could store. */
+#define multistate_NROFKEY \
+         (lengthof(((multistate_node_t*)0)->key))
+
+
 // group: lifetime
 
 #define multistate_INIT \
@@ -416,32 +429,35 @@ typedef struct multistate_t {
 
 // group: update
 
+// returns:
+// ENOMEM - Data structure may my be corrupt due to split operation (do not use it afterwards)
 static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mman_t * mman)
 {
    int err;
    void * node;
 
-   // 3 cases
-   // 1: 2 <= mst->size ==> insert into leaf
-   // 2: 0 == mst->size ==> store state into root pointer
-   // 3: 1 == mst->size ==> allocate leaf and store root + state into leaf
+   // === 3 cases ===
+   // 1: 2 <= mst->size ==> insert into leaf (general case)
+   // 2: 0 == mst->size ==> store state into root pointer (special case)
+   // 3: 1 == mst->size ==> allocate leaf and store root + state into leaf (special case)
 
-   if (1 < mst->size) { // case 1
+   if (1 < mst->size) {
+      // === case 1 ===
       // search from mst->root node to leaf and store search path in stack
       multistate_stack_t   stack;
       init_multistatestack(&stack);
       node = mst->root;
-      if (  ((multistate_node_t*)node)->level >= (int) lengthof(stack.entry)
-            || ((multistate_node_t*)node)->size < 2) {
+      if (((multistate_node_t*)node)->level >= (int) lengthof(stack.entry)) {
          return EINVARIANT;
       }
       for (unsigned level = ((multistate_node_t*)node)->level; (level--) > 0; ) {
-         if (((multistate_node_t*)node)->size > lengthof(((multistate_node_t*)node)->node)) {
+         if (((multistate_node_t*)node)->size > multistate_NROFCHILD
+            || ((multistate_node_t*)node)->size < 2) {
             return EINVARIANT;
          }
          unsigned high = (((multistate_node_t*)node)->size -1u); // size >= 2 ==> high >= 1
          unsigned low  = 0; // low < high cause high >= 1
-         // ((multistate_node_t*)node)->node[0..high] are valid
+         // ((multistate_node_t*)node)->child[0..high] are valid
          // ((multistate_node_t*)node)->key[0..high-1] are valid
          for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
             // search state in node->key
@@ -453,13 +469,13 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
             if (low == high) break;
          }
          push_multistatestack(&stack, node, low);
-         node = ((multistate_node_t*)node)->node[low];
-         if (  ((multistate_node_t*)node)->level != level
-               || ((multistate_node_t*)node)->size < 2) {
+         node = ((multistate_node_t*)node)->child[low];
+         if (((multistate_node_t*)node)->level != level) {
             return EINVARIANT;
          }
       }
-      if (((multistate_node_t*)node)->size > multistate_NROFSTATE) {
+      if (((multistate_node_t*)node)->size > multistate_NROFSTATE
+         || ((multistate_node_t*)node)->size < 2) {
          return EINVARIANT;
       }
       // find state in leaf node. The index »low« is the offset where «state» has to be inserted !
@@ -478,71 +494,146 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
       }
       if (multistate_NROFSTATE > ((multistate_node_t*)node)->size) {
          // insert into leaf
-         memmove(&((multistate_node_t*)node)->state[low+1], &((multistate_node_t*)node)->state[low], sizeof(((multistate_node_t*)node)->state[0]) * (((multistate_node_t*)node)->size - low));
+         for (unsigned i = ((multistate_node_t*)node)->size; i > low; --i) {
+            ((multistate_node_t*)node)->state[i] = ((multistate_node_t*)node)->state[i-1];
+         }
          ((multistate_node_t*)node)->state[low] = state;
          ++ ((multistate_node_t*)node)->size;
       } else {
-         // split node
-         // ENOMEM ==> splitting failed ==> possible half of the information is lost
-         //        ==> structure corrupt afterwards ==> ignored cause user sees only ENOMEM and never content of this structure
+         // split leaf
          void * node2;
          const uint16_t SIZE = sizeof(multistate_node_t);
-         err = allocmem_automatmman(mman, SIZE, &node2);
-         if (err) goto ONERR;
-         const unsigned NODE2_SIZE = ((multistate_NROFSTATE+1) / 2);
-         const unsigned NODE_SIZE  = ((multistate_NROFSTATE+1) - NODE2_SIZE);
-         ((multistate_node_t*)node2)->level = 0;
-         ((multistate_node_t*)node2)->size  = (uint8_t) NODE2_SIZE;
-         ((multistate_node_t*)node2)->next  = ((multistate_node_t*)node)->next;
-         ((multistate_node_t*)node)->size   = (uint8_t) NODE_SIZE;
-         ((multistate_node_t*)node)->next   = node;
-         // low <  multistate_NROFSTATE
-         // ==> node->state[0], ..., state, node->state[low], ..., node->state[multistate_NROFSTATE-1]
-         // low == multistate_NROFSTATE
-         // ==> node->state[0], ..., node->state[multistate_NROFSTATE-1], state
-         if (low < NODE_SIZE) {
-            state_t ** node_state  = &((multistate_node_t*)node)->state[multistate_NROFSTATE];
-            state_t ** node2_state = &((multistate_node_t*)node2)->state[NODE2_SIZE];
-            for (unsigned i = NODE2_SIZE; i; --i) {
-               *(--node2_state) = *(--node_state);
+         {
+            err = allocmem_automatmman(mman, SIZE, &node2);
+            if (err) goto ONERR;
+            const unsigned NODE2_SIZE = ((multistate_NROFSTATE+1) / 2);
+            const unsigned NODE_SIZE  = ((multistate_NROFSTATE+1) - NODE2_SIZE);
+            ((multistate_node_t*)node2)->level = 0;
+            ((multistate_node_t*)node2)->size  = (uint8_t) NODE2_SIZE;
+            ((multistate_node_t*)node2)->next  = ((multistate_node_t*)node)->next;
+            ((multistate_node_t*)node)->size   = (uint8_t) NODE_SIZE;
+            ((multistate_node_t*)node)->next   = node2;
+            // low <  multistate_NROFSTATE
+            // ==> node->state[0], ..., state, node->state[low], ..., node->state[multistate_NROFSTATE-1]
+            // low == multistate_NROFSTATE
+            // ==> node->state[0], ..., node->state[multistate_NROFSTATE-1], state
+            if (low < NODE_SIZE) {
+               state_t ** node_state  = &((multistate_node_t*)node)->state[multistate_NROFSTATE];
+               state_t ** node2_state = &((multistate_node_t*)node2)->state[NODE2_SIZE];
+               for (unsigned i = NODE2_SIZE; i; --i) {
+                  *(--node2_state) = *(--node_state);
+               }
+               for (unsigned i = NODE_SIZE-1-low; i > 0; --i, --node_state) {
+                  *node_state = node_state[-1];
+               }
+               *node_state = state;
+            } else {
+               state_t ** node_state  = &((multistate_node_t*)node)->state[NODE_SIZE];
+               state_t ** node2_state = &((multistate_node_t*)node2)->state[0];
+               for (unsigned i = low-NODE_SIZE; i; --i, ++node_state, ++node2_state) {
+                  *node2_state = *node_state;
+               }
+               *node2_state++ = state;
+               for (unsigned i = multistate_NROFSTATE-low; i; --i, ++node_state, ++node2_state) {
+                  *node2_state = *node_state;
+               }
             }
-            for (unsigned i = NODE_SIZE-1-low; i > 0; --i, --node_state) {
-               *node_state = node_state[-1];
-            }
-            *node_state = state;
-         } else {
-            state_t ** node_state  = &((multistate_node_t*)node)->state[NODE_SIZE];
-            state_t ** node2_state = &((multistate_node_t*)node2)->state[0];
-            for (unsigned i = low-NODE_SIZE; i; --i, ++node_state, ++node2_state) {
-               *node2_state = *node_state;
-            }
-            *node2_state++ = state;
-            for (unsigned i = multistate_NROFSTATE-low; i; --i, ++node_state, ++node2_state) {
-               *node2_state = *node_state;
+         }
+         // insert node2 into parent
+         state_t * key2 = ((multistate_node_t*)node2)->state[0]; // TODO: use it !!!!
+         while (stack.depth) {
+            node = stack.entry[--stack.depth].parent;
+            low  = stack.entry[stack.depth].ichild;
+            if (multistate_NROFCHILD > ((multistate_node_t*)node)->size) {
+               // insert into parent (node)
+               for (unsigned i = ((multistate_node_t*)node)->size-1u; i > low; --i) {
+                  ((multistate_node_t*)node)->key[i] = ((multistate_node_t*)node)->key[i-1];
+               }
+               ((multistate_node_t*)node)->key[low] = key2;
+               ++ low;
+               for (unsigned i = ((multistate_node_t*)node)->size; i > low; --i) {
+                  ((multistate_node_t*)node)->child[i] = ((multistate_node_t*)node)->child[i-1];
+               }
+               ((multistate_node_t*)node)->child[low] = node2;
+               ++ ((multistate_node_t*)node)->size;
+               goto END_SPLIT;
+            } else {
+               // split node
+               void * child = node2;
+               state_t * child_key = key2;
+               // ENOMEM ==> information in child(former node2) is lost !! (corrupt data structure)
+               err = allocmem_automatmman(mman, SIZE, &node2);
+               if (err) goto ONERR;
+               const unsigned NODE2_SIZE = ((multistate_NROFCHILD+1) / 2);
+               const unsigned NODE_SIZE  = ((multistate_NROFCHILD+1) - NODE2_SIZE);
+               ((multistate_node_t*)node2)->level = ((multistate_node_t*)node)->level;
+               ((multistate_node_t*)node2)->size  = (uint8_t) NODE2_SIZE;
+               ((multistate_node_t*)node)->size   = (uint8_t) NODE_SIZE;
+               if (low + 1 < NODE_SIZE) {
+                  state_t ** node_key  = &((multistate_node_t*)node)->key[multistate_NROFKEY];
+                  state_t ** node2_key = &((multistate_node_t*)node2)->key[NODE2_SIZE-1];
+                  multistate_node_t ** node2_child = &((multistate_node_t*)node2)->child[NODE2_SIZE];
+                  multistate_node_t ** node_child  = &((multistate_node_t*)node)->child[multistate_NROFCHILD];
+                  for (unsigned i = NODE2_SIZE-1; i; --i) {
+                     *(--node2_key) = *(--node_key);
+                     *(--node2_child) = *(--node_child);
+                  }
+                  key2 = *(--node_key);
+                  *(--node2_child) = *(--node_child);
+                  for (unsigned i = NODE_SIZE-2-low; i; --i, --node_key, --node_child) {
+                     *node_key  = node_key[-1];
+                     *node_child  = node_child[-1];
+                  }
+                  *node_key = child_key;
+                  *node_child = child;
+               } else {
+                  state_t ** node_key  = &((multistate_node_t*)node)->key[NODE_SIZE-1];
+                  state_t ** node2_key = &((multistate_node_t*)node2)->key[0];
+                  multistate_node_t ** node_child  = &((multistate_node_t*)node)->child[NODE_SIZE];
+                  multistate_node_t ** node2_child = &((multistate_node_t*)node2)->child[0];
+                  unsigned I = low-(NODE_SIZE-1);
+                  if (I) {
+                     key2 = *node_key++;
+                     *node2_child++ = *node_child++;
+                     for (unsigned i = I-1; i; --i, ++node_key, ++node2_key, ++node_child, ++node2_child) {
+                        *node2_key = *node_key;
+                        *node2_child = *node_child;
+                     }
+                     *node2_key++ = child_key;
+                  } else {
+                     // key2 = child_key; // already equal
+                  }
+                  *node2_child++ = child;
+                  for (unsigned i = (multistate_NROFCHILD-1)-low; i; --i, ++node_child, ++node2_child) {
+                     *node2_key = *node_key;
+                     *node2_child = *node_child;
+                  }
+               }
             }
          }
 
-         if (stack.depth) {   // insert new key into parent
-            /* new key  : ((multistate_node_t*)node2)->state[0] */
-            /* new node : node2 */
-            assert(0); // TODO: implement
-         } else {             // build depth 1 tree: alloc root node pointing to leaf and split leaf
-            void * root;
-            err = allocmem_automatmman(mman, SIZE, &root);
-            if (err) goto ONERR;
-            ((multistate_node_t*)root)->level = 1;
-            ((multistate_node_t*)root)->size  = 2;
-            ((multistate_node_t*)root)->key[0]  = ((multistate_node_t*)node2)->state[0];
-            ((multistate_node_t*)root)->node[0] = node;
-            ((multistate_node_t*)root)->node[1] = node2;
-            mst->root = root;
-         }
+         // increment depth by 1: alloc root node pointing to child and split child
+         void * root;
+         // ENOMEM ==> information in node2 is lost !! (corrupt data structure)
+         err = allocmem_automatmman(mman, SIZE, &root);
+         if (err) goto ONERR;
+         ((multistate_node_t*)root)->level = (uint8_t) (((multistate_node_t*)node2)->level + 1);
+         ((multistate_node_t*)root)->size  = 2;
+         ((multistate_node_t*)root)->key[0]  = key2;
+         ((multistate_node_t*)root)->child[0] = node;
+         ((multistate_node_t*)root)->child[1] = node2;
+         mst->root = root;
+
+         END_SPLIT: ;
       }
 
-   } else if (! mst->size) {  // case 2
+
+   } else if (! mst->size) {
+      // === case 2 ===
       mst->root = state;
 
-   } else { // case 3
+   } else {
+      // === case 3 ===
       const uint16_t SIZE = sizeof(multistate_node_t);
       err = allocmem_automatmman(mman, SIZE, &node);
       if (err) goto ONERR;
@@ -567,6 +658,24 @@ ONERR:
 }
 
 
+/* struct: range_t
+ * Beschreibt einen Übergangsbereich zu einem Zustand.
+ * Wird für Optimierung des Automaten in einen DFA benötigt. */
+typedef struct range_t {
+   char32_t       from;    // inclusive
+   char32_t       to;      // inclusive
+   multistate_t   state;
+} range_t;
+
+// group: lifetime
+
+/* define: range_INIT
+ * Initialisiert range mit Zeichenbereich [from..to]. */
+#define range_INIT(from, to) \
+         { from, to, multistate_INIT }
+
+
+
 // section: automat_t
 
 // group: static variables
@@ -576,6 +685,21 @@ ONERR:
  * Simuliert Fehler in Funktionen für <automat_t> und <automat_mman_t>. */
 static test_errortimer_t   s_automat_errtimer = test_errortimer_FREE;
 #endif
+
+// group: query
+
+static inline const void* startstate_automat(const automat_t* ndfa)
+{
+   // documents how to access startstate
+   return first_statelist(&ndfa->states);
+}
+
+static inline const void* endstate_automat(const automat_t* ndfa)
+{
+   // documents how to access endstate
+   state_t * start = first_statelist(&ndfa->states);
+   return start ? next_statelist(start) : 0;
+}
 
 // group: lifetime
 
@@ -755,23 +879,6 @@ ONERR:
    return err;
 }
 
-// group: query
-
-const void* startstate_automat(const automat_t* ndfa)
-{
-   return first_statelist(&ndfa->states);
-}
-
-/* function: endstate_automat
- * Endzustand des Automaten. Im Falle eines optimierten Automaten,
- * der mehrere Endzustände hat, verweisen diese per zuätzlicher "empty transition"
- * auf den einzigen und nicht optimierten Endzustand. */
-const void* endstate_automat(const automat_t* ndfa)
-{
-   state_t * start = first_statelist(&ndfa->states);
-   return start ? next_statelist(start) : 0;
-}
-
 // group: update
 
 int addmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
@@ -811,6 +918,111 @@ ONERR:
 // group: test
 
 #ifdef KONFIG_UNITTEST
+
+/* function: build1_multistate
+ * Build level 1 b-tree (root + nrchild leaves).
+ *
+ * Memory Layout:
+ * addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... */
+static int build1_multistate(
+   /*out*/multistate_t * mst,
+   automat_mman_t * mman,
+   state_t state[],
+   unsigned step, /*every stepth*/
+   void * ENDMARKER,
+   unsigned nrchild,
+   /*out*/void* addr[nrchild+2],
+   /*out*/void* child[nrchild])
+{
+   unsigned S = 0;
+   const uint16_t SIZE = sizeof(multistate_node_t);
+   TEST(nrchild >= 2);
+   TEST(nrchild <= multistate_NROFCHILD);
+
+   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+   TEST(0 == allocmem_automatmman(mman, SIZE, &mst->root));
+   mst->size = nrchild * multistate_NROFSTATE;
+   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+   ((multistate_node_t*)mst->root)->level = 1;
+   ((multistate_node_t*)mst->root)->size  = (uint8_t) nrchild;
+
+   void * prevchild = 0;
+   for (unsigned i = 0; i < nrchild; ++i) {
+      TEST(0 == allocmem_automatmman(mman, SIZE, &child[i]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[2+i]));
+      if (i) ((multistate_node_t*)mst->root)->key[i-1] = &state[S];
+      ((multistate_node_t*)mst->root)->child[i] = child[i];
+      ((multistate_node_t*)child[i])->level = 0;
+      ((multistate_node_t*)child[i])->size = multistate_NROFSTATE;
+      ((multistate_node_t*)child[i])->next = 0;
+      for (unsigned s = 0; s < multistate_NROFSTATE; ++s, S += step) {
+         ((multistate_node_t*)child[i])->state[s] = &state[S];
+      }
+      if (prevchild) ((multistate_node_t*)prevchild)->next = child[i];
+      prevchild = child[i];
+   }
+
+   for (unsigned i = 0; i < nrchild+2; ++i) {
+      *((void**)addr[i]) = ENDMARKER;
+   }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
+/* function: build1_multistate
+ * Build level 2 b-tree (root + nrchild nodes + full leaves).
+ * Inserted states are generated beginning from (void*)0 up to
+ * (void*)(nrchild*multistate_NROFCHILD*step*multistate_NROFSTATE). */
+static int build2_multistate(
+   /*out*/multistate_t * mst,
+   automat_mman_t * mman,
+   unsigned step, /*every stepth*/
+   unsigned nrchild,
+   /*out*/void* child[nrchild])
+{
+   const uint16_t SIZE = sizeof(multistate_node_t);
+   size_t level1_size = multistate_NROFCHILD*multistate_NROFSTATE;
+   TEST(nrchild >= 2);
+   TEST(nrchild <= multistate_NROFCHILD);
+
+   TEST(0 == allocmem_automatmman(mman, SIZE, &mst->root));
+   mst->size = nrchild * level1_size;
+   ((multistate_node_t*)mst->root)->level = 2;
+   ((multistate_node_t*)mst->root)->size  = (uint8_t) nrchild;
+
+   for (uintptr_t i = 0; i < nrchild; ++i) {
+      TEST(0 == allocmem_automatmman(mman, SIZE, &child[i]));
+      if (i) ((multistate_node_t*)mst->root)->key[i-1] = (void*)(i*step*level1_size);
+      ((multistate_node_t*)mst->root)->child[i] = child[i];
+      ((multistate_node_t*)child[i])->level = 1;
+      ((multistate_node_t*)child[i])->size  = multistate_NROFCHILD;
+   }
+
+   uintptr_t statenr = 0;
+   void * prevleaf = 0;
+   for (unsigned i = 0; i < nrchild; ++i) {
+      for (unsigned c = 0; c < multistate_NROFCHILD; ++c) {
+         void * leaf;
+         TEST(0 == allocmem_automatmman(mman, SIZE, &leaf));
+         ((multistate_node_t*)child[i])->child[c] = leaf;
+         if (c) ((multistate_node_t*)child[i])->key[c-1] = (void*)statenr;
+         ((multistate_node_t*)leaf)->level = 0;
+         ((multistate_node_t*)leaf)->size  = multistate_NROFSTATE;
+         ((multistate_node_t*)leaf)->next  = 0;
+         for (unsigned s = 0; s < multistate_NROFSTATE; ++s, statenr += step) {
+            ((multistate_node_t*)leaf)->state[s] = (void*)statenr;
+         }
+         if (prevleaf) ((multistate_node_t*)prevleaf)->next = leaf;
+         prevleaf = leaf;
+      }
+   }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
 
 static int test_memorypage(void)
 {
@@ -1287,7 +1499,7 @@ static int test_multistate(void)
    multistate_t   mst = multistate_INIT;
    automat_mman_t mman = automat_mman_INIT;
    void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
-   const unsigned LEVEL1_NROFSTATE = multistate_NROFSTATE * sizeof(((multistate_node_t*)0)->node);
+   const unsigned LEVEL1_NROFSTATE = multistate_NROFSTATE * multistate_NROFCHILD;
 
    static_assert( 2*LEVEL1_NROFSTATE <= NROFSTATE,
                   "state array big enough to build root node with all possible number of leaves"
@@ -1299,6 +1511,12 @@ static int test_multistate(void)
 
    // TEST multistate_NROFSTATE
    TEST( lengthof(((multistate_node_t*)0)->state) == multistate_NROFSTATE);
+
+   // TEST multistate_NROFCHILD
+   TEST( lengthof(((multistate_node_t*)0)->child) == multistate_NROFCHILD);
+
+   // TEST multistate_NROFKEY
+   TEST( lengthof(((multistate_node_t*)0)->key)   == multistate_NROFKEY);
 
    // TEST multistate_INIT
    TEST(0 == mst.size);
@@ -1318,9 +1536,10 @@ static int test_multistate(void)
    // TEST add_multistate: multistate_t.size == 1
    for (unsigned i = 0; i < NROFSTATE-1; ++i) {
       for (unsigned order = 0; order <= 1; ++order) {
-
+         // prepare
          mst = (multistate_t) multistate_INIT;
          TEST(0 == add_multistate(&mst, &state[i + !order], &mman));
+         // test
          TEST( 0 == add_multistate(&mst, &state[i + order], &mman));
          // check mman
          TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
@@ -1345,7 +1564,7 @@ static int test_multistate(void)
          // test
          TEST( 0 == add_multistate(&mst, &state[asc ? i : multistate_NROFSTATE-1-i], &mman));
          if (1 == i) {  // set end marker at end of node
-            allocmem_automatmman(&mman, sizeof(void*), &addr);
+            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
             *((void**)addr) = ENDMARKER;
             // check that end marker is effective !!
             TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
@@ -1362,7 +1581,7 @@ static int test_multistate(void)
             for (unsigned s = 0; s <= i; ++s) {
                TEST( &state[asc ? s : multistate_NROFSTATE-1-i+s] == ((multistate_node_t*)mst.root)->state[s]);
             }
-            TEST(ENDMARKER == *((void**)addr)); // no overflow into following memory block
+            TEST( ENDMARKER == *((void**)addr)); // no overflow into following memory block
          }
       }
       // reset
@@ -1378,7 +1597,7 @@ static int test_multistate(void)
             if (i != pos) { TEST(0 == add_multistate(&mst, &state[i], &mman)); }
          }
          void * addr = 0;
-         allocmem_automatmman(&mman, sizeof(void*), &addr);
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
          *((void**)addr) = ENDMARKER;
          TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
          // test
@@ -1395,7 +1614,7 @@ static int test_multistate(void)
             TEST( &state[i] == ((multistate_node_t*)mst.root)->state[i]);
          }
          // check: no overflow into following memory block
-         TEST(ENDMARKER == *((void**)addr));
+         TEST( ENDMARKER == *((void**)addr));
          // reset
          TEST(0 == free_automatmman(&mman));
       }
@@ -1409,7 +1628,7 @@ static int test_multistate(void)
          TEST(0 == add_multistate(&mst, &state[i], &mman));
       }
       void * addr = 0;
-      allocmem_automatmman(&mman, sizeof(void*), &addr);
+      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
       *((void**)addr) = ENDMARKER;
       TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       for (unsigned i = 0; i < multistate_NROFSTATE; ++i) {
@@ -1423,10 +1642,11 @@ static int test_multistate(void)
          // check mst.root content
          TEST( 0 == ((multistate_node_t*)mst.root)->level);
          TEST( multistate_NROFSTATE == ((multistate_node_t*)mst.root)->size);
+         TEST( 0 == ((multistate_node_t*)mst.root)->next);
          for (unsigned s = 0; s < multistate_NROFSTATE; ++s) {
             TEST( &state[s] == ((multistate_node_t*)mst.root)->state[s]);
          }
-         TEST(ENDMARKER == *((void**)addr)); // no overflow into following memory block
+         TEST( ENDMARKER == *((void**)addr)); // no overflow into following memory block
       }
       // reset
       TEST(0 == free_automatmman(&mman));
@@ -1435,7 +1655,7 @@ static int test_multistate(void)
    // TEST add_multistate: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
    for (unsigned splitidx = 0; splitidx <= multistate_NROFSTATE; ++splitidx) {
       void * addr[2] = { 0 };
-      allocmem_automatmman(&mman, sizeof(void*), &addr[0]);
+      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       // prepare
       mst = (multistate_t) multistate_INIT;
@@ -1443,7 +1663,7 @@ static int test_multistate(void)
          if (next == splitidx) ++next;
          TEST(0 == add_multistate(&mst, &state[next], &mman));
       }
-      allocmem_automatmman(&mman, sizeof(void*), &addr[1]);
+      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       TEST(addr[1] == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       TEST(addr[0] == &((void**)mst.root)[-1]);
@@ -1461,37 +1681,257 @@ static int test_multistate(void)
       // check: mst.root content
       TEST( 1 == ((multistate_node_t*)mst.root)->level);
       TEST( 2 == ((multistate_node_t*)mst.root)->size);
-      TEST( ((multistate_node_t*)mst.root)->node[0] == oldroot);
-      TEST( ((multistate_node_t*)mst.root)->node[1] == (multistate_node_t*) (((uint8_t*)addr[1]) + sizeof(void*)));
-      TEST( ((multistate_node_t*)mst.root)->key[0]  == ((multistate_node_t*)mst.root)->node[1]->state[0]);
+      TEST( ((multistate_node_t*)mst.root)->child[0] == oldroot);
+      TEST( ((multistate_node_t*)mst.root)->child[1] == (multistate_node_t*) (((uint8_t*)addr[1]) + sizeof(void*)));
+      TEST( ((multistate_node_t*)mst.root)->key[0]   == ((multistate_node_t*)mst.root)->child[1]->state[0]);
       // check: leaf1 content
-      multistate_node_t* leaf1 = ((multistate_node_t*)mst.root)->node[0];
+      multistate_node_t* leaf1 = ((multistate_node_t*)mst.root)->child[0];
+      multistate_node_t* leaf2 = ((multistate_node_t*)mst.root)->child[1];
       TEST( 0 == leaf1->level);
       TEST( multistate_NROFSTATE/2 + 1 == leaf1->size);
+      TEST( leaf2 == leaf1->next);
       for (unsigned i = 0; i < leaf1->size; ++i) {
          TEST( &state[i] == leaf1->state[i]);
       }
       // check: leaf2 content
-      multistate_node_t* leaf2 = ((multistate_node_t*)mst.root)->node[1];
       TEST( 0 == leaf2->level);
       TEST( multistate_NROFSTATE/2 == leaf2->size);
+      TEST( 0 == leaf2->next);
       for (unsigned i = 0; i < leaf2->size; ++i) {
          TEST( &state[leaf1->size+i] == leaf2->state[i]);
       }
       // check: no overflow into surrounding memory
       for (unsigned i = 0; i < lengthof(addr); ++i) {
-         TEST(ENDMARKER == *((void**)addr[i]));
+         TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
       TEST(0 == free_automatmman(&mman));
    }
 
-
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) ascending/descending
-   // TODO:
+   for (unsigned desc = 0; desc <= 1; ++desc) {
+      void * child[multistate_NROFCHILD] = { 0 };
+      void * addr[multistate_NROFCHILD] = { 0 };
+      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+      *((void**)addr[0]) = ENDMARKER;
+      child[0] = (uint8_t*)addr[0] + sizeof(void*);
+      child[1] = (uint8_t*)child[0] + sizeof(multistate_node_t);
+      void * root = (uint8_t*)child[1] + sizeof(multistate_node_t);
+      // prepare
+      mst = (multistate_t) multistate_INIT;
+      for (unsigned i = 0; i < multistate_NROFSTATE+1; ++i) {
+         TEST(0 == add_multistate(&mst, &state[desc?NROFSTATE-1-i:i], &mman));
+      }
+      unsigned SIZE = multistate_NROFSTATE+1;
+      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+      *((void**)addr[1]) = ENDMARKER;
+      for (unsigned nrchild = 2; nrchild <= multistate_NROFCHILD; ) {
+         for (unsigned nrstate = 1; nrstate <= multistate_NROFSTATE/2+(desc==0); ++nrstate) {
+            const unsigned isSplit = (nrstate == multistate_NROFSTATE/2+(desc==0));
+            if (isSplit && nrchild==multistate_NROFCHILD) {
+               // fill only last but do not split it else root would overflow
+               // this is checked in next test case
+               ++nrchild;
+               break;
+            }
+            // test add to last(desc==0)/first(desc==1) leaf
+            TEST( 0 == add_multistate(&mst, &state[desc?NROFSTATE-1-SIZE:SIZE], &mman));
+            if (isSplit) {
+               if (desc) memmove(&child[2], &child[1], (nrchild-1)*sizeof(child[0]));
+               child[desc?1:nrchild] = (uint8_t*)addr[nrchild-1] + sizeof(void*);
+               TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[nrchild]));
+               *((void**)addr[nrchild]) = ENDMARKER;
+               ++ nrchild;
+            }
+            // check: mman
+            TEST( nrchild*sizeof(void*)+(nrchild+1)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+            // check: mst
+            ++ SIZE;
+            TEST( SIZE == mst.size);
+            TEST( root == mst.root);
+            // check mst.root content
+            TEST( 1       == ((multistate_node_t*)mst.root)->level);
+            TEST( nrchild == ((multistate_node_t*)mst.root)->size);
+            for (unsigned i = 0; i < nrchild; ++i) {
+               TEST( child[i] == ((multistate_node_t*)mst.root)->child[i]);
+               if (i) {
+                  state_t * key = &state[ desc ? NROFSTATE-nrchild*(multistate_NROFSTATE/2) + i*(multistate_NROFSTATE/2)
+                                : i*(multistate_NROFSTATE/2+1)];
+                  TEST( key == ((multistate_node_t*)mst.root)->key[i-1]);
+               }
+            }
+            // check: leaf content
+            for (unsigned i = 0, istate=desc?NROFSTATE-SIZE:0; i < nrchild; ++i) {
+               const unsigned isLast = desc?i==0:i==nrchild-1;
+               const unsigned S = (multistate_NROFSTATE/2+(desc?isLast:(unsigned)!isLast)) + nrstate*isLast*(!isSplit);
+               TEST( 0 == ((multistate_node_t*)child[i])->level);
+               TEST( S == ((multistate_node_t*)child[i])->size);
+               TEST( (i==nrchild-1?0:child[i+1]) == ((multistate_node_t*)child[i])->next);
+               for (unsigned s = 0; s < S; ++s, ++istate) {
+                  TEST( &state[istate] == ((multistate_node_t*)child[i])->state[s]);
+               }
+            }
+            // check: no overflow into surrounding memory
+            for (unsigned i = 0; i < nrchild; ++i) {
+               TEST( ENDMARKER == *((void**)addr[i]));
+            }
+         }
+      }
+      // reset
+      TEST(0 == free_automatmman(&mman));
+   }
 
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) unordered
-   // TODO:
+   for (unsigned nrchild=2; nrchild < multistate_NROFCHILD; ++nrchild) {
+      for (unsigned pos = 0; pos < nrchild; ++pos) {
+         void * child[multistate_NROFCHILD] = { 0 };
+         void * addr[multistate_NROFCHILD+1] = { 0 };
+         // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild
+         TEST(0 == build1_multistate(&mst, &mman, state, 2/*every 2nd*/, ENDMARKER, nrchild, addr, child));
+         void *   const root = mst.root;
+         unsigned const SIZE = nrchild * multistate_NROFSTATE + 1;
+         // test add single state ==> split check split
+         TEST( 0 == add_multistate(&mst, &state[1+pos*(2*multistate_NROFSTATE)], &mman));
+         // check: mman
+         TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         // check: mst
+         TEST( SIZE == mst.size);
+         TEST( root == mst.root);
+         // check mst.root content
+         TEST( 1         == ((multistate_node_t*)mst.root)->level);
+         TEST( nrchild+1 == ((multistate_node_t*)mst.root)->size);
+         memmove(&child[pos+2], &child[pos+1], (nrchild-1-pos)*sizeof(child[0]));
+         child[pos+1] = (uint8_t*)addr[1+nrchild] + sizeof(void*);
+         for (unsigned i = 0; i < nrchild+1; ++i) {
+            TEST( child[i] == ((multistate_node_t*)mst.root)->child[i]);
+            if (i) {
+               state_t * key = &state[(i-(i>pos))*(2*multistate_NROFSTATE)+(i==pos+1)*multistate_NROFSTATE];
+               TEST( key == ((multistate_node_t*)mst.root)->key[i-1]);
+            }
+         }
+         // check: leaf content
+         for (unsigned i = 0, istate=0; i < nrchild+1; ++i) {
+            unsigned const S = i == pos ? multistate_NROFSTATE/2+1 : i == pos+1 ? multistate_NROFSTATE/2 : multistate_NROFSTATE;
+            TEST( 0 == ((multistate_node_t*)child[i])->level);
+            TEST( S == ((multistate_node_t*)child[i])->size);
+            TEST( (i==nrchild?0:child[i+1]) == ((multistate_node_t*)child[i])->next);
+            for (unsigned s = 0; s < S; ++s, istate += (s<=2&&i==pos?1:2)) {
+               TEST( &state[istate] == ((multistate_node_t*)child[i])->state[s]);
+            }
+         }
+         // check: no overflow into surrounding memory
+         for (unsigned i = 0; i < nrchild+2; ++i) {
+            TEST( ENDMARKER == *((void**)addr[i]));
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST add_multistate: split root node (level 1)
+   for (unsigned pos = 0; pos < multistate_NROFCHILD; ++pos) {
+      void * child[multistate_NROFCHILD+1] = { 0 };
+      void * addr[multistate_NROFCHILD+2] = { 0 };
+      // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild splitroot new-root
+      TEST(0 == build1_multistate(&mst, &mman, state, 2/*every 2nd*/, ENDMARKER, multistate_NROFCHILD, addr, child));
+      void *   const oldroot = mst.root;
+      void *   const splitchild = (uint8_t*)addr[multistate_NROFCHILD+1] + sizeof(void*);
+      void *   const splitroot = (uint8_t*)splitchild + sizeof(multistate_node_t);
+      void *   const root = (uint8_t*)splitroot + sizeof(multistate_node_t);
+      unsigned const SIZE = multistate_NROFCHILD * multistate_NROFSTATE + 1;
+      state_t* const splitchild_key = &state[pos*(2*multistate_NROFSTATE)+multistate_NROFSTATE];
+      state_t* const splitroot_key  = pos < multistate_NROFCHILD/2 ? &state[(multistate_NROFCHILD/2)*(2*multistate_NROFSTATE)]
+                                    : pos == multistate_NROFCHILD/2 ? splitchild_key
+                                    : &state[(multistate_NROFCHILD/2+1)*(2*multistate_NROFSTATE)];
+      memmove(&child[pos+2], &child[pos+1], (multistate_NROFCHILD-1-pos)*sizeof(child[0]));
+      child[pos+1] = splitchild;
+      // test add single state ==> split check split
+      TEST( 0 == add_multistate(&mst, &state[1+pos*(2*multistate_NROFSTATE)], &mman));
+      // check: mman
+      TEST( (multistate_NROFCHILD+2)*sizeof(void*)+(multistate_NROFCHILD+4)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+      // check: mst
+      TEST( SIZE == mst.size);
+      TEST( root == mst.root);
+      // check mst.root content
+      TEST( 2 == ((multistate_node_t*)mst.root)->level);
+      TEST( 2 == ((multistate_node_t*)mst.root)->size);
+      TEST( splitroot_key == ((multistate_node_t*)mst.root)->key[0]);
+      TEST( oldroot   == ((multistate_node_t*)mst.root)->child[0]);
+      TEST( splitroot == ((multistate_node_t*)mst.root)->child[1]);
+      // check oldroot / splitroot content
+      for (unsigned i = 0, ichild = 0; i < 2; ++i) {
+         const unsigned S = multistate_NROFCHILD/2+1-i;
+         TEST( 1 == ((multistate_node_t*)mst.root)->child[i]->level);
+         TEST( S == ((multistate_node_t*)mst.root)->child[i]->size);
+         for (unsigned s = 0; s < S; ++s, ++ichild) {
+            TEST( child[ichild] == ((multistate_node_t*)mst.root)->child[i]->child[s]);
+            if (s) {
+               state_t * key = ((multistate_node_t*)child[ichild])->state[0];
+               TEST( key == ((multistate_node_t*)mst.root)->child[i]->key[s-1]);
+            }
+         }
+      }
+      // check: leaf content
+      for (unsigned i = 0, istate=0; i < multistate_NROFCHILD+1; ++i) {
+         unsigned const S = i == pos ? multistate_NROFSTATE/2+1 : i == pos+1 ? multistate_NROFSTATE/2 : multistate_NROFSTATE;
+         TEST( 0 == ((multistate_node_t*)child[i])->level);
+         TEST( S == ((multistate_node_t*)child[i])->size);
+         TEST( (i==multistate_NROFCHILD?0:child[i+1]) == ((multistate_node_t*)child[i])->next);
+         for (unsigned s = 0; s < S; ++s, istate += (s<=2&&i==pos?1:2)) {
+            TEST( &state[istate] == ((multistate_node_t*)child[i])->state[s]);
+         }
+      }
+      // check: no overflow into surrounding memory
+      for (unsigned i = 0; i < multistate_NROFCHILD+2; ++i) {
+         TEST( ENDMARKER == *((void**)addr[i]));
+      }
+      // reset
+      TEST(0 == free_automatmman(&mman));
+   }
+
+   // TEST add_multistate: (level 2) split child(level 1) and add to root
+   for (unsigned nrchild=2; nrchild < multistate_NROFCHILD; ++nrchild) {
+      for (uintptr_t pos = 0; pos < nrchild; ++pos) {
+         void * addr;
+         void * child[multistate_NROFCHILD] = { 0 };
+         size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
+         TEST(0 == build2_multistate(&mst, &mman, 2, nrchild, child));
+         void * root = mst.root;
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+         void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(multistate_node_t)/*leaf*/;
+         // test add single state ==> split check split
+         TEST( 0 == add_multistate(&mst, (void*)(1+pos*(2*LEVEL1_NROFSTATE)), &mman));
+         // check: mman
+         TEST( sizeof(void*)+(1+2+nrchild+nrchild*multistate_NROFCHILD)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         // check: mst
+         TEST( SIZE == mst.size);
+         TEST( root == mst.root);
+         // check mst.root content
+         TEST( 2         == ((multistate_node_t*)mst.root)->level);
+         TEST( nrchild+1 == ((multistate_node_t*)mst.root)->size);
+         state_t * key;
+         for (uintptr_t i = 0; i <= pos; ++i) {
+            key = (state_t*)(void*)(i*(2*LEVEL1_NROFSTATE));
+            if (i) TEST( key == ((multistate_node_t*)mst.root)->key[i-1]);
+            TEST( child[i] == ((multistate_node_t*)mst.root)->child[i]);
+         }
+         key = (state_t*)(void*)(pos*(2*LEVEL1_NROFSTATE)+LEVEL1_NROFSTATE);
+         TEST( key == ((multistate_node_t*)mst.root)->key[pos]);
+         TEST( splitchild == ((multistate_node_t*)mst.root)->child[pos+1]);
+         for (uintptr_t i = pos+2; i < nrchild; ++i) {
+            key = (state_t*)(void*)((i-1)*(2*LEVEL1_NROFSTATE));
+            TEST( key == ((multistate_node_t*)mst.root)->key[i-1]);
+            TEST( child[i-1] == ((multistate_node_t*)mst.root)->child[i]);
+         }
+         // check node/leaf content
+         TEST( EEXIST == add_multistate(&mst, (void*)(1+pos*(2*LEVEL1_NROFSTATE)), &mman));
+         for (uintptr_t i = 0; i < LEVEL1_NROFSTATE*nrchild; ++i) {
+            TEST(EEXIST == add_multistate(&mst, (void*)(2*i), &mman));
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
 
    return 0;
 ONERR:

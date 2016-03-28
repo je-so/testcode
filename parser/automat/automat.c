@@ -24,11 +24,13 @@ struct memory_page_t;
 struct range_transition_t;
 union  transition_t;
 struct state_t;
+struct depthstack_entry_t;
+struct depthstack_t;
 struct multistate_node_t;
 struct multistate_t;
-struct range_t;            // TODO:
-struct rangeindex_node_t;  // TODO:
-struct rangeindex_t;       // TODO:
+struct range_t;
+struct rangemap_node_t;
+struct rangemap_t;
 
 /* enums: state_e
  * Beschreibt Typ eines <state_t>.
@@ -347,8 +349,34 @@ static void initcontinue_state(/*out*/state_t * state, state_t * target, uint8_t
 }
 
 
+typedef struct depthstack_entry_t {
+   void *   parent;
+   unsigned ichild;
+} depthstack_entry_t;
+
+typedef struct depthstack_t {
+   size_t             depth;
+   depthstack_entry_t entry[bitsof(size_t)];
+} depthstack_t;
+
+// group: lifetime
+
+static inline void init_depthstack(depthstack_t * stack)
+{
+   stack->depth = 0;
+}
+
+// group: update
+
+static inline void push_depthstack(depthstack_t * stack, void * node, unsigned ichild)
+{
+   stack->entry[stack->depth] = (depthstack_entry_t) { node, ichild };
+   ++ stack->depth;
+}
+
+
 /* struct: multistate_node_t
- * Knoten, der Teil eines B-Tree ist. */
+ * Der Datenknoten eines <multistate_t> B-Baumes. */
 typedef struct multistate_node_t {
    uint8_t level;
    uint8_t size;
@@ -363,32 +391,6 @@ typedef struct multistate_node_t {
       };
    };
 } multistate_node_t;
-
-
-typedef struct multistate_stack_entry_t {
-   multistate_node_t * parent;
-   unsigned            ichild;
-} multistate_stack_entry_t;
-
-typedef struct multistate_stack_t {
-   size_t                   depth;
-   multistate_stack_entry_t entry[bitsof(size_t)];
-} multistate_stack_t;
-
-// group: lifetime
-
-static inline void init_multistatestack(multistate_stack_t * stack)
-{
-   stack->depth = 0;
-}
-
-// group: update
-
-static inline void push_multistatestack(multistate_stack_t * stack, multistate_node_t * node, unsigned ichild)
-{
-   stack->entry[stack->depth] = (multistate_stack_entry_t) { node, ichild };
-   ++ stack->depth;
-}
 
 
 /* struct: multistate_t
@@ -412,12 +414,6 @@ typedef struct multistate_t {
 #define multistate_NROFCHILD \
          (lengthof(((multistate_node_t*)0)->child))
 
-/* define: multistate_NROFKEY
- * Nr of pointer array <multistate_node_t->key> could store. */
-#define multistate_NROFKEY \
-         (lengthof(((multistate_node_t*)0)->key))
-
-
 // group: lifetime
 
 #define multistate_INIT \
@@ -430,10 +426,11 @@ typedef struct multistate_t {
 // group: update
 
 // returns:
-// ENOMEM - Data structure may my be corrupt due to split operation (do not use it afterwards)
+// ENOMEM - Data structure may be corrupt due to split operation (do not use it afterwards)
 static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mman_t * mman)
 {
    int err;
+   uint16_t const SIZE = sizeof(multistate_node_t);
    void * node;
 
    // === 3 cases ===
@@ -444,8 +441,8 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
    if (1 < mst->size) {
       // === case 1 ===
       // search from mst->root node to leaf and store search path in stack
-      multistate_stack_t   stack;
-      init_multistatestack(&stack);
+      depthstack_t   stack;
+      init_depthstack(&stack);
       node = mst->root;
       if (((multistate_node_t*)node)->level >= (int) lengthof(stack.entry)) {
          return EINVARIANT;
@@ -462,13 +459,13 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
          for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
             // search state in node->key
             if (((multistate_node_t*)node)->key[mid] <= state) {
-               low = mid + 1; // low <= high
+               low = mid + 1; // low <= high (key[x] is first entry of leaf reachable from child[x+1])
             } else {
                high = mid;
             }
             if (low == high) break;
          }
-         push_multistatestack(&stack, node, low);
+         push_depthstack(&stack, node, low);
          node = ((multistate_node_t*)node)->child[low];
          if (((multistate_node_t*)node)->level != level) {
             return EINVARIANT;
@@ -482,7 +479,7 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
       unsigned high = ((multistate_node_t*)node)->size;
       unsigned low  = 0; // 0 <= low <= ((multistate_node_t*)node)->size
       for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
-         // search state in node->key
+         // search state in node->state[]
          if (((multistate_node_t*)node)->state[mid] < state) {
             low = mid + 1;
          } else if (((multistate_node_t*)node)->state[mid] == state) {
@@ -502,7 +499,6 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
       } else {
          // split leaf
          void * node2;
-         const uint16_t SIZE = sizeof(multistate_node_t);
          {
             err = allocmem_automatmman(mman, SIZE, &node2);
             if (err) goto ONERR;
@@ -540,11 +536,11 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
             }
          }
          // insert node2 into parent
-         state_t * key2 = ((multistate_node_t*)node2)->state[0]; // TODO: use it !!!!
+         state_t * key2 = ((multistate_node_t*)node2)->state[0];
          while (stack.depth) {
             node = stack.entry[--stack.depth].parent;
             low  = stack.entry[stack.depth].ichild;
-            if (multistate_NROFCHILD > ((multistate_node_t*)node)->size) {
+            if (((multistate_node_t*)node)->size < multistate_NROFCHILD) {
                // insert into parent (node)
                for (unsigned i = ((multistate_node_t*)node)->size-1u; i > low; --i) {
                   ((multistate_node_t*)node)->key[i] = ((multistate_node_t*)node)->key[i-1];
@@ -570,7 +566,7 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
                ((multistate_node_t*)node2)->size  = (uint8_t) NODE2_SIZE;
                ((multistate_node_t*)node)->size   = (uint8_t) NODE_SIZE;
                if (low + 1 < NODE_SIZE) {
-                  state_t ** node_key  = &((multistate_node_t*)node)->key[multistate_NROFKEY];
+                  state_t ** node_key  = &((multistate_node_t*)node)->key[multistate_NROFCHILD-1];
                   state_t ** node2_key = &((multistate_node_t*)node2)->key[NODE2_SIZE-1];
                   multistate_node_t ** node2_child = &((multistate_node_t*)node2)->child[NODE2_SIZE];
                   multistate_node_t ** node_child  = &((multistate_node_t*)node)->child[multistate_NROFCHILD];
@@ -634,7 +630,6 @@ static int add_multistate(multistate_t * mst, /*in*/state_t * state, automat_mma
 
    } else {
       // === case 3 ===
-      const uint16_t SIZE = sizeof(multistate_node_t);
       err = allocmem_automatmman(mman, SIZE, &node);
       if (err) goto ONERR;
       ((multistate_node_t*)node)->level = 0;
@@ -674,6 +669,321 @@ typedef struct range_t {
 #define range_INIT(from, to) \
          { from, to, multistate_INIT }
 
+
+/* struct: rangemap_node_t
+ * Der Datenknoten eines <rangemap_t> B-Baumes. */
+typedef struct rangemap_node_t {
+   uint8_t level;
+   uint8_t size;
+   union {
+      struct { // level > 0  (inner node)
+         char32_t key[19]; // key[i] == child[i+1]->child[/*(level > 0)*/0]->...->range.from[/*(level == 0)*/0]
+         struct rangemap_node_t * child[20];
+      };
+      struct { // level == 0 (leaf node)
+         struct rangemap_node_t * next;
+         range_t range[10];
+      };
+   };
+} rangemap_node_t;
+
+
+/* struct: rangemap_t
+ * Eine Map (B-Tree), der range_t auf multistate_t abbildet.
+ * Wird für Optimierung des Automaten in einen DFA benötigt. */
+typedef struct rangemap_t {
+   size_t            size;
+   rangemap_node_t * root;
+} rangemap_t;
+
+// group: constants
+
+/* define: rangemap_NROFRANGE
+ * Nr of ranges array <rangemap_node_t->range> could store. */
+#define rangemap_NROFRANGE \
+         (lengthof(((rangemap_node_t*)0)->range))
+
+/* define: rangemap_NROFCHILD
+ * Nr of pointer array <rangemap_node_t->child> could store. */
+#define rangemap_NROFCHILD \
+         (lengthof(((rangemap_node_t*)0)->child))
+
+// group: lifetime
+
+/* define: rangemap_INIT
+ * Initialisiert eine <rangemap_t>. */
+#define rangemap_INIT \
+         { 0, (void*)0 }
+
+// group: query
+
+// TODO:
+
+// group: update
+
+// returns:
+// ENOMEM - Data structure may be corrupt due to split operation (do not use it afterwards)
+// EAGAIN - Work is done for range [from..next_from-1] but function has to be
+//          called again with range set to [next_from..to]
+static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t from, char32_t to, /*err*/char32_t * next_from)
+{
+   int err;
+   uint16_t const SIZE = sizeof(rangemap_node_t);
+   char32_t nextFrom = to + 1;
+   bool  isNextFrom = false;
+   void* memblock;
+   rangemap_node_t * node;
+
+   // === 2 cases ===
+   // 1: 0 == mst->size ==> allocate root leaf and store range into leaf
+   // 2: 1 <= mst->size ==> insert into leaf (general case)
+
+   if (! rmap->size) {
+      // === case 1
+      err = allocmem_automatmman(mman, SIZE, &memblock);
+      if (err) goto ONERR;
+      node = memblock;
+      node->level = 0;
+      node->size  = 1;
+      node->next  = 0;
+      node->range[0] = (range_t) range_INIT(from, to);
+      rmap->root = node;
+
+   } else {
+      // === case 2
+      depthstack_t   stack;
+      init_depthstack(&stack);
+      node = rmap->root;
+      if (node->level >= (int) lengthof(stack.entry)) {
+         return EINVARIANT;
+      }
+      for (unsigned level = node->level; (level--) > 0; ) {
+         if (node->size > rangemap_NROFCHILD || node->size < 2) return EINVARIANT;
+         unsigned high = node->size -1u; // size >= 2 ==> high >= 1
+         unsigned low  = 0; // low < high cause high >= 1
+         // node->child[0..high] are valid
+         // node->key[0..high-1] are valid
+         for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
+            // search from in node->key
+            if (node->key[mid] <= from) {
+               low = mid + 1; // low <= high (key[x] is first entry of leaf reachable from child[x+1])
+            } else {
+               high = mid;
+            }
+            if (low == high) break;
+         }
+         if (low < node->size-1u && node->key[low] <= to) {
+            isNextFrom = true;
+            nextFrom = node->key[low];
+            to = node->key[low]-1;
+         }
+         push_depthstack(&stack, node, low);
+         node = node->child[low];
+         if (node->level != level) return EINVARIANT;
+      }
+      if (node->size > rangemap_NROFRANGE) return EINVARIANT;
+      // find range in leaf node. The index »low« is the offset where «from..to» has to be inserted !
+      unsigned high = node->size;
+      unsigned low  = 0; // 0 <= low <= node->size
+      for (unsigned mid = high / 2u; low < high; mid = (high + low) / 2u) {
+         if (node->range[mid].to < from) {
+            low = mid + 1;
+         } else {
+            high = mid;
+         }
+      }
+      while (low < node->size && node->range[low].from <= from) {
+         if (node->range[low].from == from) {
+            if (to >= node->range[low].to) {
+               if (to == node->range[low].to) goto DONE_NO_INSERT;
+               from = node->range[low].to+1; // from <= to
+               ++low; // low <= node->size
+            } else {
+               // split node->range[low] insert from..to
+               node->range[low].from = to+1; // to+1 <= [].to ==> [].from <= [].to
+               goto SKIP_2nd_CHECK;
+            }
+         } else {
+            // split node->range[low] insert [].from..from
+            isNextFrom = true;
+            nextFrom = from;
+            from = node->range[low].from;
+            to = nextFrom-1;
+            node->range[low].from = nextFrom; // from <= [].to ==> [].from <= [].to
+            goto SKIP_2nd_CHECK;
+         }
+      }
+      if (low < node->size && node->range[low].from <= to) {
+         isNextFrom = true;
+         nextFrom = node->range[low].from;
+         to = node->range[low].from-1; // from < node->range[low].from ==> from <= to
+      }
+      SKIP_2nd_CHECK:
+      if (node->size < rangemap_NROFRANGE) {
+         // insert into leaf
+         for (unsigned i = node->size; i > low; --i) {
+            node->range[i] = node->range[i-1];
+         }
+         node->range[low] = (range_t) range_INIT(from, to);
+         ++ node->size;
+      } else {
+         // split leaf
+         rangemap_node_t * node2;
+         {
+            err = allocmem_automatmman(mman, SIZE, &memblock);
+            if (err) goto ONERR;
+            node2 = memblock;
+            const unsigned NODE2_SIZE = ((rangemap_NROFRANGE+1) / 2);
+            const unsigned NODE_SIZE  = ((rangemap_NROFRANGE+1) - NODE2_SIZE);
+            node2->level = 0;
+            node2->size  = (uint8_t) NODE2_SIZE;
+            node2->next  = node->next;
+            node->size   = (uint8_t) NODE_SIZE;
+            node->next   = node2;
+            // low <  rangemap_NROFRANGE
+            // ==> node->range[0], ..., from..to, node->range[low], ..., node->range[rangemap_NROFRANGE-1]
+            // low == rangemap_NROFRANGE
+            // ==> node->range[0], ..., node->range[rangemap_NROFRANGE-1], from..to
+            if (low < NODE_SIZE) {
+               range_t * node_range  = &node->range[rangemap_NROFRANGE];
+               range_t * node2_range = &node2->range[NODE2_SIZE];
+               for (unsigned i = NODE2_SIZE; i; --i) {
+                  *(--node2_range) = *(--node_range);
+               }
+               for (unsigned i = NODE_SIZE-1-low; i > 0; --i, --node_range) {
+                  *node_range = node_range[-1];
+               }
+               *node_range = (range_t) range_INIT(from, to);
+            } else {
+               range_t * node_range  = &node->range[NODE_SIZE];
+               range_t * node2_range = &node2->range[0];
+               for (unsigned i = low-NODE_SIZE; i; --i, ++node_range, ++node2_range) {
+                  *node2_range = *node_range;
+               }
+               *node2_range++ = (range_t) range_INIT(from, to);
+               for (unsigned i = rangemap_NROFRANGE-low; i; --i, ++node_range, ++node2_range) {
+                  *node2_range = *node_range;
+               }
+            }
+         }
+         // insert node2 into parent
+         char32_t key2 = node2->range[0].from;
+         while (stack.depth) {
+            assert(0); // TODO:
+            #if 0
+            node = stack.entry[--stack.depth].parent;
+            low  = stack.entry[stack.depth].ichild;
+            if (((multistate_node_t*)node)->size < multistate_NROFCHILD) {
+               // insert into parent (node)
+               for (unsigned i = ((multistate_node_t*)node)->size-1u; i > low; --i) {
+                  ((multistate_node_t*)node)->key[i] = ((multistate_node_t*)node)->key[i-1];
+               }
+               ((multistate_node_t*)node)->key[low] = key2;
+               ++ low;
+               for (unsigned i = ((multistate_node_t*)node)->size; i > low; --i) {
+                  ((multistate_node_t*)node)->child[i] = ((multistate_node_t*)node)->child[i-1];
+               }
+               ((multistate_node_t*)node)->child[low] = node2;
+               ++ ((multistate_node_t*)node)->size;
+               goto DONE_INSERT;
+            } else {
+               // split node
+               void * child = node2;
+               state_t * child_key = key2;
+               // ENOMEM ==> information in child(former node2) is lost !! (corrupt data structure)
+               err = allocmem_automatmman(mman, SIZE, &node2);
+               if (err) goto ONERR;
+               const unsigned NODE2_SIZE = ((multistate_NROFCHILD+1) / 2);
+               const unsigned NODE_SIZE  = ((multistate_NROFCHILD+1) - NODE2_SIZE);
+               ((multistate_node_t*)node2)->level = ((multistate_node_t*)node)->level;
+               ((multistate_node_t*)node2)->size  = (uint8_t) NODE2_SIZE;
+               ((multistate_node_t*)node)->size   = (uint8_t) NODE_SIZE;
+               if (low + 1 < NODE_SIZE) {
+                  state_t ** node_key  = &((multistate_node_t*)node)->key[multistate_NROFCHILD-1];
+                  state_t ** node2_key = &((multistate_node_t*)node2)->key[NODE2_SIZE-1];
+                  multistate_node_t ** node2_child = &((multistate_node_t*)node2)->child[NODE2_SIZE];
+                  multistate_node_t ** node_child  = &((multistate_node_t*)node)->child[multistate_NROFCHILD];
+                  for (unsigned i = NODE2_SIZE-1; i; --i) {
+                     *(--node2_key) = *(--node_key);
+                     *(--node2_child) = *(--node_child);
+                  }
+                  key2 = *(--node_key);
+                  *(--node2_child) = *(--node_child);
+                  for (unsigned i = NODE_SIZE-2-low; i; --i, --node_key, --node_child) {
+                     *node_key  = node_key[-1];
+                     *node_child  = node_child[-1];
+                  }
+                  *node_key = child_key;
+                  *node_child = child;
+               } else {
+                  state_t ** node_key  = &((multistate_node_t*)node)->key[NODE_SIZE-1];
+                  state_t ** node2_key = &((multistate_node_t*)node2)->key[0];
+                  multistate_node_t ** node_child  = &((multistate_node_t*)node)->child[NODE_SIZE];
+                  multistate_node_t ** node2_child = &((multistate_node_t*)node2)->child[0];
+                  unsigned I = low-(NODE_SIZE-1);
+                  if (I) {
+                     key2 = *node_key++;
+                     *node2_child++ = *node_child++;
+                     for (unsigned i = I-1; i; --i, ++node_key, ++node2_key, ++node_child, ++node2_child) {
+                        *node2_key = *node_key;
+                        *node2_child = *node_child;
+                     }
+                     *node2_key++ = child_key;
+                  } else {
+                     // key2 = child_key; // already equal
+                  }
+                  *node2_child++ = child;
+                  for (unsigned i = (multistate_NROFCHILD-1)-low; i; --i, ++node_child, ++node2_child) {
+                     *node2_key = *node_key;
+                     *node2_child = *node_child;
+                  }
+               }
+            }
+            #endif
+         }
+
+         // increment depth by 1: alloc root node pointing to child and split child
+         rangemap_node_t * root;
+         // ENOMEM ==> information in node2 is lost !! (corrupt data structure)
+         err = allocmem_automatmman(mman, SIZE, &memblock);
+         if (err) goto ONERR;
+         root = memblock;
+         root->level = (uint8_t) (node2->level + 1);
+         root->size  = 2;
+         root->key[0]   = key2;
+         root->child[0] = node;
+         root->child[1] = node2;
+         rmap->root = root;
+      }
+   }
+
+DONE_INSERT:
+   ++ rmap->size;
+
+DONE_NO_INSERT:
+   if (isNextFrom) *next_from = nextFrom;
+   return isNextFrom ? EAGAIN : 0;
+ONERR:
+   return err;
+}
+
+static int addrange_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t from, char32_t to)
+{
+   int err;
+   char32_t next_from = from;
+
+   if (from > to) { err = EINVAL; goto ONERR; }
+
+   for (;;) {
+      err = addrange2_rangemap(rmap, mman, next_from, to, &next_from);
+      if (! err) break;
+      if (err != EAGAIN) goto ONERR;
+   }
+
+   return 0;
+ONERR:
+   return err;
+}
 
 
 // section: automat_t
@@ -1018,6 +1328,81 @@ static int build2_multistate(
          prevleaf = leaf;
       }
    }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
+static int build3_recursive(
+   /*out*/rangemap_node_t ** root,
+   automat_mman_t * mman,
+   unsigned keyoffset,
+   unsigned level,
+   unsigned interval_per_child,
+   /*inout*/rangemap_node_t ** child)
+{
+   void * node;
+   const uint16_t SIZE = sizeof(rangemap_node_t);
+   rangemap_node_t * parent;
+   TEST(level >= 1);
+
+   TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+   *root  = node;
+   parent = node;
+   parent->level = (uint8_t) level;
+   parent->size  = 4;
+
+   if (level > 1) {
+      for (unsigned i = 0; i < 4; ++i) {
+         unsigned keyoffset2 = (1u<<(2*(level-1))) * i * interval_per_child;
+         if (i) parent->key[i-1] = keyoffset + keyoffset2;
+         TEST(0 == build3_recursive(&parent->child[i], mman, keyoffset + keyoffset2, level-1, interval_per_child, child));
+      }
+   } else {
+      for (unsigned i = 0; i < 4; ++i) {
+         if (i) parent->key[i-1] = keyoffset + i * interval_per_child;
+         parent->child[i] = *child;
+         *child = (*child)->next;
+      }
+   }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
+static int build_rangemap(
+   /*out*/rangemap_t * rmap,
+   automat_mman_t * mman,
+   unsigned level,
+   unsigned from[1<<(2*level)],
+   unsigned to[1<<(2*level)],
+   unsigned interval_per_child,
+   /*out*/rangemap_node_t ** first_child)
+{
+   void * node;
+   const uint16_t SIZE = sizeof(rangemap_node_t);
+   const unsigned S = 1u<<(2*level);
+
+   rangemap_node_t * child;
+   rangemap_node_t * prev_child = 0;
+   for (unsigned i = 0; i < S; ++i, prev_child = child) {
+      TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+      child = node;
+      if (!i) *first_child = child;
+      else    prev_child->next = child;
+      child->level = 0;
+      child->size  = 1;
+      child->next  = 0;
+      child->range[0] = (range_t) range_INIT(from[i], to[i]);
+      prev_child = child;
+   }
+
+   child = *first_child;
+   TEST(0 == build3_recursive(&rmap->root, mman, 0, level, interval_per_child, &child));
+   TEST(0 == child);
+   rmap->size = S;
 
    return 0;
 ONERR:
@@ -1515,9 +1900,6 @@ static int test_multistate(void)
    // TEST multistate_NROFCHILD
    TEST( lengthof(((multistate_node_t*)0)->child) == multistate_NROFCHILD);
 
-   // TEST multistate_NROFKEY
-   TEST( lengthof(((multistate_node_t*)0)->key)   == multistate_NROFKEY);
-
    // TEST multistate_INIT
    TEST(0 == mst.size);
    TEST(0 == mst.root);
@@ -1998,6 +2380,311 @@ ONERR:
    return EINVAL;
 }
 
+static int test_rangemap(void)
+{
+   rangemap_t     rmap = rangemap_INIT;
+   automat_mman_t mman = automat_mman_INIT;
+   void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
+
+   // prepare
+
+   // TEST rangemap_NROFRANGE
+   TEST( lengthof(((rangemap_node_t*)0)->range) == rangemap_NROFRANGE);
+
+   // TEST rangemap_NROFCHILD
+   TEST( lengthof(((rangemap_node_t*)0)->child) == rangemap_NROFCHILD);
+
+   // TEST rangemap_INIT
+   TEST(0 == rmap.size);
+   TEST(0 == rmap.root);
+
+   // TEST addrange_rangemap: EINVAL
+   TEST( EINVAL == addrange_rangemap(&rmap, &mman, 1, 0));
+   TEST( EINVAL == addrange_rangemap(&rmap, &mman, UINT32_MAX, 0));
+
+   // TEST addrange_rangemap: multistate_t.size == 0
+   for (unsigned from = 0; from < 256; from += 16) {
+      for (unsigned to = from; to < 256; to += 32) {
+         void * addr[2];
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         // assumes big blocks + no free block header stored in free memory
+         addr[1] = (uint8_t*)addr[0] + sizeof(rangemap_node_t);
+         for (unsigned i = 0; i < lengthof(addr); ++i) {
+            *(void**)addr[i] = ENDMARKER;
+         }
+         // test
+         rmap = (rangemap_t) rangemap_INIT;
+         TEST( 0 == addrange_rangemap(&rmap, &mman, from, to));
+         // check mman: root allocated
+         TEST( sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         // check rmap
+         TEST( rmap.size == 1);
+         TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
+         // check mst.root content
+         TEST( 0 == rmap.root->level);
+         TEST( 1 == rmap.root->size);
+         TEST( 0 == rmap.root->next);
+         TEST( from == rmap.root->range[0].from);
+         TEST( to == rmap.root->range[0].to);
+         TEST( 0  == rmap.root->range[0].state.size);
+         // no overflow to adjacent block
+         for (unsigned i = 0; i < lengthof(addr); ++i) {
+            TEST( ENDMARKER == *(void**)addr[i]);
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST addrange_rangemap: insert non-overlapping ranges into single node
+   for (unsigned S = 2; S <= rangemap_NROFRANGE; ++S) {
+      for (unsigned pos = 0; pos < S; ++pos) {
+         // prepare
+         void * addr[2];
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         *(void**)addr[0] = ENDMARKER;
+         rmap = (rangemap_t) rangemap_INIT;
+         for (unsigned i = 0; i < S; ++i) {
+            if (i == pos) continue;
+            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)i, (char32_t)i));
+         }
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         *(void**)addr[1] = ENDMARKER;
+         // test
+         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)pos, (char32_t)pos));
+         // check mman: only root allocated
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         // check rmap
+         TEST( rmap.size == S);
+         TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
+         // check mst.root content
+         TEST( 0 == rmap.root->level);
+         TEST( S == rmap.root->size);
+         TEST( 0 == rmap.root->next);
+         for (unsigned i = 0; i < S; ++i) {
+            TEST( i == rmap.root->range[i].from);
+            TEST( i == rmap.root->range[i].to);
+            TEST( 0 == rmap.root->range[i].state.size);
+         }
+         // no overflow to adjacent block
+         for (unsigned i = 0; i < lengthof(addr); ++i) {
+            TEST( ENDMARKER == *(void**)addr[i]);
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST addrange_rangemap: insert range overlapping with ranges and holes
+   for (unsigned S = 1; S <= rangemap_NROFRANGE/2-1; ++S) {
+      for (unsigned from = 0; from <= 2*S; ++from) {
+         for (unsigned to = from; to <= 2*S; ++to) {
+            // prepare
+            void * addr[2];
+            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+            *(void**)addr[0] = ENDMARKER;
+            rmap = (rangemap_t) rangemap_INIT;
+            for (unsigned i = 0; i < S; ++i) {
+               TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(1+2*i), (char32_t)(1+2*i)));
+            }
+            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+            *(void**)addr[1] = ENDMARKER;
+            // test
+            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)from, (char32_t)to));
+            // check mman
+            TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+            // check rmap
+            unsigned const D = to-from+1;
+            unsigned const S2 = S + D/2 + (D&1?!(from&1):0);
+            TESTP( rmap.size == S2, "rmap.size:%zd S2:%d S:%d to:%d from:%d", rmap.size, S2, S, to, from);
+            TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
+            // check mst.root content
+            TEST( 0  == rmap.root->level);
+            TEST( S2 == rmap.root->size);
+            TEST( 0  == rmap.root->next);
+            for (unsigned i = 0, N = from < 1 ? from : 1; i < S2; ++i, ++N) {
+               N += !(N&1) && (N < from || N > to);
+               TESTP( N == rmap.root->range[i].from, "from:%d to:%d N:%d != [%d]:%d", from, to, N, i, rmap.root->range[i].from);
+               TEST( N == rmap.root->range[i].to);
+               TEST( 0 == rmap.root->range[i].state.size);
+            }
+            // no overflow to adjacent block
+            for (unsigned i = 0; i < lengthof(addr); ++i) {
+               TEST( ENDMARKER == *(void**)addr[i]);
+            }
+            // reset
+            TEST(0 == free_automatmman(&mman));
+         }
+      }
+   }
+
+   // TEST addrange_rangemap: insert range fully overlapping with one or more ranges
+   for (unsigned from = 0; from < rangemap_NROFRANGE; ++from) {
+      for (unsigned to = from; to < rangemap_NROFRANGE; ++to) {
+         const unsigned S = rangemap_NROFRANGE;
+         // prepare
+         void * addr[2];
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         *(void**)addr[0] = ENDMARKER;
+         rmap = (rangemap_t) rangemap_INIT;
+         for (unsigned i = 0; i < rangemap_NROFRANGE; ++i) {
+            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*i), (char32_t)(3+4*i)));
+         }
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         *(void**)addr[1] = ENDMARKER;
+         // test
+         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*from), (char32_t)(4*to+3)));
+         // check mman: unchanged
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         // check rmap: unchanged
+         TEST( rmap.size == S);
+         TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
+         // check mst.root content: unchanged
+         TEST( 0 == rmap.root->level);
+         TEST( S == rmap.root->size);
+         TEST( 0 == rmap.root->next);
+         for (unsigned i = 0; i < S; ++i) {
+            TEST( 4*i   == rmap.root->range[i].from);
+            TEST( 4*i+3 == rmap.root->range[i].to);
+            TEST( 0 == rmap.root->range[i].state.size);
+         }
+         // no overflow to adjacent block
+         for (unsigned i = 0; i < lengthof(addr); ++i) {
+            TEST( ENDMARKER == *(void**)addr[i]);
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST addrange_rangemap: insert range partially overlapping with one or more ranges
+   for (unsigned from = 0; from < 3*4; ++from) {
+      for (unsigned to = from; to < 3*4; ++to) {
+         const unsigned S = 3u + (0 != from % 4) + (3 != to % 4);
+         // prepare
+         void * addr[2];
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         *(void**)addr[0] = ENDMARKER;
+         rmap = (rangemap_t) rangemap_INIT;
+         for (unsigned i = 0; i < 3; ++i) {
+            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*i), (char32_t)(3+4*i)));
+         }
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         *(void**)addr[1] = ENDMARKER;
+         // test
+         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)from, (char32_t)to));
+         // check mman: unchanged
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         // check rmap: unchanged
+         TEST( rmap.size == S);
+         TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
+         // check mst.root content: unchanged
+         TEST( 0 == rmap.root->level);
+         TEST( S == rmap.root->size);
+         TEST( 0 == rmap.root->next);
+         for (unsigned i = 0, f = 0, next_t = 3, t; i < S; ++i, f = t+1, next_t += (t == next_t)?4:0) {
+            t = (f < from && from <= next_t) ? from-1 : (f <= to && to < next_t) ? to : next_t;
+            TEST( f == rmap.root->range[i].from);
+            TEST( t == rmap.root->range[i].to);
+            TEST( 0 == rmap.root->range[i].state.size);
+         }
+         // no overflow to adjacent block
+         for (unsigned i = 0; i < lengthof(addr); ++i) {
+            TEST( ENDMARKER == *(void**)addr[i]);
+         }
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST addrange_rangemap: insert overlapping range in tree with root->level > 0
+   for (unsigned level = 1; level <= 4; ++level) {
+      // range 0..8 overlaps 3..5
+      unsigned const S = 1u<<(2*level);
+      unsigned from[256];
+      unsigned to[256];
+      for (unsigned i = 0; i < S; ++i) {
+         from[i] = 3 + 9*i;
+         to[i]   = 5 + 9*i;
+      }
+      rangemap_node_t * child = 0;
+      TEST(0 == build_rangemap(&rmap, &mman, level, from, to, 9, &child));
+      void * const root = rmap.root;
+      size_t const MMSIZE = sizeallocated_automatmman(&mman);
+      TEST(S == rmap.size);
+      // test
+      TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)0, (char32_t)(S*9-1)));
+      // check mman: unchanged
+      TEST( MMSIZE == sizeallocated_automatmman(&mman));
+      // check rmap
+      TEST( rmap.size == 3/*two additional range per child node*/*S);
+      TEST( rmap.root == root);
+      // check chain of child content
+      for (unsigned c = 0; c < S; ++c, child = child->next) {
+         TEST( 0 != child); // value from child->next
+         TEST( 0 == child->level);
+         TEST( 3 == child->size);
+         for (unsigned i = 0, f = 9*c; i < 3; ++i, f += 3) {
+            TEST( f   == child->range[i].from);
+            TEST( f+2 == child->range[i].to);
+            TEST( 0   == child->range[i].state.size);
+         }
+      }
+      TEST( 0 == child);   // value from child->next
+      // reset
+      TEST(0 == free_automatmman(&mman));
+   }
+
+   // TEST addrange_rangemap: insert overlapping range in tree with root->level > 0
+   for (unsigned level = 1; level <= 4; ++level) {
+      for (unsigned tc = 1; tc <= 2; ++tc) {
+         // range 0..9 overlaps 0..4 or 5..9
+         unsigned const S = 1u<<(2*level);
+         unsigned from[256];
+         unsigned to[256];
+         for (unsigned i = 0; i < S; ++i) {
+            from[i] = (tc==1?0:5) + 10*i;
+            to[i]   = (tc==1?4:9) + 10*i;
+         }
+         rangemap_node_t * child = 0;
+         TEST(0 == build_rangemap(&rmap, &mman, level, from, to, 10, &child));
+         void * const root = rmap.root;
+         size_t const MMSIZE = sizeallocated_automatmman(&mman);
+         TEST(S == rmap.size);
+         // test
+         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)0, (char32_t)(S*10-1)));
+         // check mman: unchanged
+         TEST( MMSIZE == sizeallocated_automatmman(&mman));
+         // check rmap
+         TEST( rmap.size == 2/*additional range per child node*/*S);
+         TEST( rmap.root == root);
+         // check chain of child content
+         for (unsigned c = 0; c < S; ++c, child = child->next) {
+            TEST( 0 != child); // value from child->next
+            TEST( 0 == child->level);
+            TEST( 2 == child->size);
+            for (unsigned i = 0, f = 10*c; i < 2; ++i, f += 5) {
+               TEST( f   == child->range[i].from);
+               TEST( f+4 == child->range[i].to);
+               TEST( 0   == child->range[i].state.size);
+            }
+         }
+         TEST( 0 == child);   // value from child->next
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
+
+   // TEST addrange_rangemap: TODO:
+
+   // TEST addrange_rangemap: TODO:
+   // TEST addrange_rangemap: TODO:
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
 static int test_initfree(void)
 {
    automat_t      ndfa = automat_FREE;
@@ -2347,6 +3034,7 @@ int unittest_proglang_automat()
    if (test_automatmman()) goto ONERR;
    if (test_state())       goto ONERR;
    if (test_multistate())  goto ONERR;
+   if (test_rangemap())    goto ONERR;
    if (test_initfree())    goto ONERR;
    if (test_query())       goto ONERR;
    if (test_update())      goto ONERR;

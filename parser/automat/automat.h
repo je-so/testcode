@@ -17,9 +17,11 @@
 
 #include "slist.h"
 
+// forward
+struct automat_mman_t;
+
 // === exported types
 struct automat_t;
-struct automat_mman_t;
 
 
 // section: Functions
@@ -33,46 +35,19 @@ int unittest_proglang_automat(void);
 #endif
 
 
-/* struct: automat_mman_t
- *
- * TODO: replace automat_mman_t with general stream_memory_manager_t
- *
- * */
-typedef struct automat_mman_t {
-   slist_t  pagelist;   // list of allocated memory pages
-   slist_t  pagecache;  // list of free pages not freed, waiting to be reused
-   size_t   refcount;   // number of <automat_t> which use resources managed by this object
-   uint8_t* freemem;    // freemem points to end of memory_page_t
-                        // addr_next_free_memblock == freemem - freesize
-   size_t   freesize;   // 0 <= freesize <= memory_page_SIZE - offsetof(memory_page_t, data)
-   size_t   allocated;  // total amount of allocated memory
-} automat_mman_t;
-
-// group: lifetime
-
-/* define: automat_mman_INIT
- * Statischer Initialisierer. */
-#define automat_mman_INIT \
-         { slist_INIT, slist_INIT, 0, 0, 0, 0 }
-
-/* function: free_automatmman
- * Gibt alle belegten (Speicher-)Ressourcen frei. */
-int free_automatmman(automat_mman_t * mman);
-
-// group: query
-
-/* function: sizeallocated_automatmman
- * Gibt insgesamt allokierten Speicher in Bytes zurück. */
-size_t sizeallocated_automatmman(const automat_mman_t * mman);
-
-
 /* struct: automat_t
  * Verwaltet (nicht-)deterministische endliche Automaten.
  * Siehe auch <Zustandsdiagramm at https://de.wikipedia.org/wiki/Zustandsdiagramm_(UML)>
  *
+ * Der Automat hat genau einen Startzustand und genau einen Endzustand.
+ * Im Falle eines optimierten Automaten, der optimalerweise mehrere Endzustände hätte,
+ * verweisen diese per zusätzlicher "empty transition" auf den einzigen nicht
+ * wegoptimierten Endzustand.
+ *
  * */
 typedef struct automat_t {
    // group: private
+   struct
    automat_mman_t *  mman;
    size_t            nrstate;
    /* variable: states
@@ -89,7 +64,22 @@ typedef struct automat_t {
 
 /* function: initmatch_automat
  * TODO: Describe Initializes object. */
-int initmatch_automat(/*out*/automat_t* ndfa, automat_mman_t * mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+int initempty_automat(/*out*/automat_t* ndfa);
+
+/* function: initmatch_automat
+ * TODO: Describe Initializes object. */
+int initmatch_automat(/*out*/automat_t* ndfa, struct automat_mman_t * mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+
+/* function: initcopy_automat
+ * Makes dest_ndfa a copy of src_ndfa.
+ * The memory for building dest_ndfa is allocated from the
+ * same memory heap as determined by use_mman_from.
+ * This function is used internally cause a every state of a single automat must
+ * be located on the same memory heap. Any operation applied to two different automat
+ * makes sure that the result of the operation is located on the same heap. */
+int initcopy_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa, const automat_t* use_mman_from);
+
+// group: update
 
 /* function: initsequence_automat
  * TODO: Describe Initializes object.

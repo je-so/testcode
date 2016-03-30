@@ -885,8 +885,6 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
                ++ node->size;
                goto DONE_INSERT;
             } else {
-               assert(0); // TODO:
-               #if 0
                // split node
                rangemap_node_t * child = node2;
                char32_t      child_key = key2;
@@ -900,7 +898,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
                node2->size  = (uint8_t) NODE2_SIZE;
                node->size   = (uint8_t) NODE_SIZE;
                if (low + 1 < NODE_SIZE) {
-                  char32_t * node_key  = &node->key[multistate_NROFCHILD-1];
+                  char32_t * node_key  = &node->key[rangemap_NROFCHILD-1];
                   char32_t * node2_key = &node2->key[NODE2_SIZE-1];
                   rangemap_node_t ** node2_child = &node2->child[NODE2_SIZE];
                   rangemap_node_t ** node_child  = &node->child[rangemap_NROFCHILD];
@@ -939,7 +937,6 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
                      *node2_child = *node_child;
                   }
                }
-               #endif
             }
          }
 
@@ -1462,6 +1459,62 @@ static int build1_rangemap(
 
    for (unsigned i = 0; i < nrchild+2; ++i) {
       *((void**)addr[i]) = ENDMARKER;
+   }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
+/* function: build2_rangemap
+ * Build level 2 b-tree (root + nrchild nodes + full leaves).
+ * Inserted ranges are generated beginning from 0 up to
+ * (nrchild*range_width*rangemap_NROFCHILD*rangemap_NROFRANGE). */
+static int build2_rangemap(
+   /*out*/rangemap_t * rmap,
+   automat_mman_t * mman,
+   unsigned range_width,
+   unsigned nrchild,
+   /*out*/rangemap_node_t* child[nrchild])
+{
+   void * node;
+   const uint16_t SIZE = sizeof(rangemap_node_t);
+   size_t level1_size = rangemap_NROFCHILD*rangemap_NROFRANGE;
+   TEST(nrchild >= 2);
+   TEST(nrchild <= rangemap_NROFCHILD);
+
+   TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+   rmap->root = node;
+   rmap->size = nrchild * level1_size;
+   rmap->root->level = 2;
+   rmap->root->size  = (uint8_t) nrchild;
+
+   for (unsigned i = 0; i < nrchild; ++i) {
+      TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+      child[i] = node;
+      if (i) rmap->root->key[i-1] = (char32_t) (i*range_width*level1_size);
+      rmap->root->child[i] = child[i];
+      child[i]->level = 1;
+      child[i]->size  = rangemap_NROFCHILD;
+   }
+
+   unsigned f = 0;
+   rangemap_node_t * prevleaf = 0;
+   for (unsigned i = 0; i < nrchild; ++i) {
+      for (unsigned c = 0; c < rangemap_NROFCHILD; ++c) {
+         TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+         rangemap_node_t * leaf = node;
+         if (c) child[i]->key[c-1] = f;
+         child[i]->child[c] = leaf;
+         leaf->level = 0;
+         leaf->size  = rangemap_NROFRANGE;
+         leaf->next  = 0;
+         for (unsigned r = 0; r < rangemap_NROFRANGE; ++r, f += range_width) {
+            leaf->range[r] = (range_t) range_INIT(f, f+range_width-1);
+         }
+         if (prevleaf) prevleaf->next = leaf;
+         prevleaf = leaf;
+      }
    }
 
    return 0;
@@ -2843,11 +2896,107 @@ static int test_rangemap(void)
       }
    }
 
-   // TEST addrange_rangemap: TODO:
+   // TEST addrange_rangemap: split root node (level 1)
+   for (unsigned pos = 0; pos < rangemap_NROFCHILD; ++pos) {
+      rangemap_node_t* child[rangemap_NROFCHILD+2/*last entry is 0*/] = { 0 };
+      void * addr[rangemap_NROFCHILD+2] = { 0 };
+      // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild splitroot new-root
+      TEST(0 == build1_rangemap(&rmap, &mman, 4/*range-width*/, ENDMARKER, rangemap_NROFCHILD, addr, child));
+      void *   const oldroot = rmap.root;
+      void *   const splitchild = (uint8_t*)addr[rangemap_NROFCHILD+1] + sizeof(void*);
+      void *   const splitroot = (uint8_t*)splitchild + sizeof(rangemap_node_t);
+      void *   const root = (uint8_t*)splitroot + sizeof(rangemap_node_t);
+      unsigned const SIZE = rangemap_NROFCHILD * rangemap_NROFRANGE + 1;
+      char32_t const splitchild_key = (char32_t) (pos*(4*rangemap_NROFRANGE)+2*rangemap_NROFRANGE);
+      char32_t const splitroot_key  = (char32_t) (pos < rangemap_NROFCHILD/2 ? (rangemap_NROFCHILD/2)*(4*rangemap_NROFRANGE)
+                                    : pos == rangemap_NROFCHILD/2 ? splitchild_key
+                                    : (rangemap_NROFCHILD/2+1)*(4*rangemap_NROFRANGE));
+      memmove(&child[pos+2], &child[pos+1], (rangemap_NROFCHILD-1-pos)*sizeof(child[0]));
+      child[pos+1] = splitchild;
+      // test add single state ==> split check split
+      char32_t r = (char32_t) (pos*(4*rangemap_NROFRANGE));
+      TEST( 0 == addrange_rangemap(&rmap, &mman, r, r+1));
+      // check: mman
+      TEST( (rangemap_NROFCHILD+2)*sizeof(void*)+(rangemap_NROFCHILD+4)*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+      // check rmap
+      TEST( rmap.size == SIZE);
+      TEST( rmap.root == root);
+      // check rmap.root content
+      TEST( rmap.root->level == 2);
+      TEST( rmap.root->size  == 2);
+      TEST( rmap.root->key[0] == splitroot_key);
+      TEST( rmap.root->child[0] == oldroot);
+      TEST( rmap.root->child[1] == splitroot);
+      // check oldroot / splitroot content
+      for (unsigned i = 0, ichild = 0; i < 2; ++i) {
+         const unsigned S = rangemap_NROFCHILD/2+1-i;
+         TEST( rmap.root->child[i]->level == 1);
+         TEST( rmap.root->child[i]->size  == S);
+         TEST( rmap.root->child[i]->child[0] == child[ichild++]);
+         for (unsigned s = 1; s < S; ++s) {
+            TEST( rmap.root->child[i]->key[s-1] == child[ichild]->range[0].from);
+            TEST( rmap.root->child[i]->child[s] == child[ichild++]);
+         }
+      }
+      // check: leaf content
+      for (unsigned i = 0, f=0; i < rangemap_NROFCHILD+1; ++i) {
+         unsigned const S = i == pos ? rangemap_NROFRANGE/2+1 : i == pos+1 ? rangemap_NROFRANGE/2 : rangemap_NROFRANGE;
+         TEST( child[i]->level == 0);
+         TEST( child[i]->size  == S);
+         TEST( child[i]->next  == child[i+1]/*last entry 0*/);
+         for (unsigned s = 0, t; s < S; ++s, f = t+1) {
+            t = f + (s<2&&i==pos?1:3);
+            TEST( child[i]->range[s].from       == f);
+            TEST( child[i]->range[s].to         == t);
+            TEST( child[i]->range[s].state.size == 0);
+         }
+      }
+      // check: no overflow into surrounding memory
+      for (unsigned i = 0; i < rangemap_NROFCHILD+2; ++i) {
+         TEST( ENDMARKER == *((void**)addr[i]));
+      }
+      // reset
+      TEST(0 == free_automatmman(&mman));
+   }
 
-   // TEST addrange_rangemap: TODO:
-   // TEST addrange_rangemap: TODO:
-   // TEST addrange_rangemap: TODO:
+   // TEST addrange_rangemap: (level 2) split child(level 1) and add to root
+   for (unsigned nrchild=2; nrchild < rangemap_NROFCHILD; ++nrchild) {
+      for (uintptr_t pos = 0; pos < nrchild; ++pos) {
+         rangemap_node_t * child[rangemap_NROFCHILD] = { 0 };
+         const unsigned LEVEL1_NROFSTATE = rangemap_NROFRANGE * rangemap_NROFCHILD;
+         size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
+         TEST(0 == build2_rangemap(&rmap, &mman, 2, nrchild, child));
+         void * root = rmap.root;
+         void * addr;
+         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+         void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(rangemap_node_t)/*leaf*/;
+         // test add single state ==> split
+         char32_t r = (char32_t) (pos*(2*LEVEL1_NROFSTATE));
+         TEST( 0 == addrange_rangemap(&rmap, &mman, r, r));
+         // check: mman
+         TEST( sizeof(void*)+(1+2+nrchild+nrchild*rangemap_NROFCHILD)*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         // check rmap
+         TEST( rmap.size == SIZE);
+         TEST( rmap.root == root);
+         // check rmap.root content
+         TEST( rmap.root->level == 2);
+         TEST( rmap.root->size  == nrchild+1);
+         TEST( rmap.root->child[0] == child[0]);
+         for (uintptr_t i = 1; i <= pos; ++i) {
+            TEST( rmap.root->key[i-1] == (char32_t) (i*(2*LEVEL1_NROFSTATE)));
+            TEST( rmap.root->child[i] == child[i]);
+         }
+         TEST( rmap.root->key[pos]     == (char32_t) (pos*(2*LEVEL1_NROFSTATE)+LEVEL1_NROFSTATE));
+         TEST( rmap.root->child[pos+1] == splitchild);
+         for (unsigned i = pos+2; i < nrchild; ++i) {
+            TEST( rmap.root->key[i-1] == (char32_t) ((i-1)*(2*LEVEL1_NROFSTATE)));
+            TEST( rmap.root->child[i] == child[i-1]);
+         }
+         // skip check other node/leaf content
+         // reset
+         TEST(0 == free_automatmman(&mman));
+      }
+   }
 
    return 0;
 ONERR:

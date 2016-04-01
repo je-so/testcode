@@ -50,7 +50,7 @@ struct rangemap_t;
 typedef enum {
    state_EMPTY,
    state_RANGE,
-   state_RANGE_CONTINUE
+   state_RANGE_CONTINUE // extends previous state_EMPTY or state_RANGE with addtional up to 255 range transitions
 } state_e;
 
 
@@ -230,7 +230,7 @@ typedef struct multistate_t {
 
 // returns:
 // ENOMEM - Data structure may be corrupt due to split operation (do not use it afterwards)
-static int add_multistate(multistate_t * mst, automat_mman_t * mman, /*in*/state_t * state)
+static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in*/state_t * state)
 {
    int err;
    uint16_t const SIZE = sizeof(multistate_node_t);
@@ -816,24 +816,81 @@ static inline const void* endstate_automat(const automat_t* ndfa)
 
 int free_automat(automat_t* ndfa)
 {
+   int err;
    if (ndfa->mman) {
-      decruse_automatmman(ndfa->mman);
+      err = 0;
+      incrwasted_automatmman(ndfa->mman, ndfa->allocated);
+      if (0 == decruse_automatmman(ndfa->mman)) {
+         if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+            err = delete_automatmman(&ndfa->mman);
+         }
+      }
       *ndfa = (automat_t) automat_FREE;
+
+      if (err) goto ONERR;
    }
 
    return 0;
+ONERR:
+   TRACEEXITFREE_ERRLOG(err);
+   return err;
 }
 
-// TODO: int initempty_automat(/*out*/automat_t* ndfa);
-// TODO: implement
-// TODO: TEST
-
-int initmatch_automat(/*out*/automat_t* ndfa, automat_mman_t * mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
+int initempty_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman)
 {
    int err;
    void * startstate;
+   automat_mman_t * mman;
 
+   if (use_mman) {
+      mman = use_mman->mman;
+   } else {
+      mman = 0;
+      err = new_automatmman(&mman);
+      if (err) goto ONERR;
+   }
+
+   const uint16_t SIZE = (uint16_t) (2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
+   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+      err = allocmem_automatmman(mman, SIZE, &startstate);
+   }
+   if (err) goto ONERR;
+
+   state_t * endstate = (void*) ((uint8_t*)startstate + 1*(state_SIZE + state_SIZE_EMPTYTRANS(1)));
+   initempty_state(startstate, endstate);
+   initempty_state(endstate, endstate);
+
+   // set out
    incruse_automatmman(mman);
+   ndfa->mman = mman;
+   ndfa->nrstate = 2;
+   ndfa->allocated = SIZE;
+   initsingle_statelist(&ndfa->states, endstate);
+   insertfirst_statelist(&ndfa->states, startstate);
+
+   return 0;
+ONERR:
+   if (! use_mman) {
+      delete_automatmman(&mman);
+   }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
+{
+   int err;
+   void * startstate;
+   automat_mman_t * mman;
+
+   if (use_mman) {
+      mman = use_mman->mman;
+   } else {
+      mman = 0;
+      err = new_automatmman(&mman);
+      if (err) goto ONERR;
+   }
+
    const uint16_t SIZE = (uint16_t) (3*state_SIZE + 2*state_SIZE_EMPTYTRANS(1) + 1*state_SIZE_RANGETRANS(nrmatch));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
       err = allocmem_automatmman(mman, SIZE, &startstate);
@@ -847,15 +904,19 @@ int initmatch_automat(/*out*/automat_t* ndfa, automat_mman_t * mman, uint8_t nrm
    initrange_state(matchstate, endstate, nrmatch, match_from, match_to);
 
    // set out
+   incruse_automatmman(mman);
    ndfa->mman = mman;
    ndfa->nrstate = 3;
+   ndfa->allocated = SIZE;
    initsingle_statelist(&ndfa->states, matchstate);
    insertfirst_statelist(&ndfa->states, endstate);
    insertfirst_statelist(&ndfa->states, startstate);
 
    return 0;
 ONERR:
-   decruse_automatmman(mman);
+   if (! use_mman) {
+      delete_automatmman(&mman);
+   }
    TRACEEXIT_ERRLOG(err);
    return err;
 }
@@ -863,8 +924,6 @@ ONERR:
 // TODO: int initcopy_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa, const automat_t* use_mman_from);
 // TODO: implement
 // TODO: TEST
-
-// group: update
 
 int initsequence_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/)
 {
@@ -899,6 +958,7 @@ int initsequence_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after r
    // set out
    ndfa->mman = ndfa1->mman;
    ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2->allocated;
    initsingle_statelist(&ndfa->states, endstate);
    insertfirst_statelist(&ndfa->states, startstate);
    insertlastPlist_slist(&ndfa->states, &ndfa1->states);
@@ -942,6 +1002,7 @@ int initrepeat_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after ret
    // set out
    ndfa->mman = ndfa1->mman;
    ndfa->nrstate = 2 + ndfa1->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated;
    initsingle_statelist(&ndfa->states, endstate);
    insertfirst_statelist(&ndfa->states, startstate);
    insertlastPlist_slist(&ndfa->states, &ndfa1->states);
@@ -989,6 +1050,7 @@ int initor_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*
    // set out
    ndfa->mman = ndfa1->mman;
    ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2->allocated;
    initsingle_statelist(&ndfa->states, endstate);
    insertfirst_statelist(&ndfa->states, startstate);
    insertlastPlist_slist(&ndfa->states, &ndfa1->states);
@@ -1008,7 +1070,7 @@ ONERR:
 
 // group: update
 
-int addmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
+int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
 {
    int err;
    void * matchstate;
@@ -1031,6 +1093,7 @@ int addmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmat
 
    // set out
    ndfa->nrstate += 1;
+   ndfa->allocated += SIZE;
    insertlast_statelist(&ndfa->states, matchstate);
 
    return 0;
@@ -1467,7 +1530,7 @@ static int test_multistate(void)
    const unsigned NROFSTATE = 256;
    state_t        state[NROFSTATE];
    multistate_t   mst = multistate_INIT;
-   automat_mman_t mman = automat_mman_INIT;
+   automat_mman_t* mman = 0;
    void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
    const unsigned LEVEL1_NROFSTATE = multistate_NROFSTATE * multistate_NROFCHILD;
 
@@ -1478,6 +1541,7 @@ static int test_multistate(void)
 
    // prepare
    memset(&state, 0, sizeof(state));
+   TEST(0 == new_automatmman(&mman));
 
    // TEST multistate_NROFSTATE
    TEST( lengthof(((multistate_node_t*)0)->state) == multistate_NROFSTATE);
@@ -1492,9 +1556,9 @@ static int test_multistate(void)
    // TEST add_multistate: multistate_t.size == 0
    for (unsigned i = 0; i < NROFSTATE; ++i) {
       mst = (multistate_t) multistate_INIT;
-      TEST( 0 == add_multistate(&mst, &mman, &state[i]));
+      TEST( 0 == add_multistate(&mst, mman, &state[i]));
       // check mman: nothing allocated
-      TEST( 0 == sizeallocated_automatmman(&mman));
+      TEST( 0 == sizeallocated_automatmman(mman));
       // check mst
       TEST( 1 == mst.size);
       TEST( &state[i] == mst.root);
@@ -1505,11 +1569,11 @@ static int test_multistate(void)
       for (unsigned order = 0; order <= 1; ++order) {
          // prepare
          mst = (multistate_t) multistate_INIT;
-         TEST(0 == add_multistate(&mst, &mman, &state[i + !order]));
+         TEST(0 == add_multistate(&mst, mman, &state[i + !order]));
          // test
-         TEST( 0 == add_multistate(&mst, &mman, &state[i + order]));
+         TEST( 0 == add_multistate(&mst, mman, &state[i + order]));
          // check mman
-         TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check mst
          TEST( 2 == mst.size);
          TEST( 0 != mst.root);
@@ -1519,7 +1583,8 @@ static int test_multistate(void)
          TEST( &state[i] == ((multistate_node_t*)mst.root)->state[0]);
          TEST( &state[i+1] == ((multistate_node_t*)mst.root)->state[1]);
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -1529,15 +1594,15 @@ static int test_multistate(void)
       mst = (multistate_t) multistate_INIT;
       for (unsigned i = 0; i < multistate_NROFSTATE; ++i) {
          // test
-         TEST( 0 == add_multistate(&mst, &mman, &state[asc ? i : multistate_NROFSTATE-1-i]));
+         TEST( 0 == add_multistate(&mst, mman, &state[asc ? i : multistate_NROFSTATE-1-i]));
          if (1 == i) {  // set end marker at end of node
-            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
             *((void**)addr) = ENDMARKER;
             // check that end marker is effective !!
             TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
          }
          // check mman
-         TEST( (i > 0 ? sizeof(void*)+sizeof(multistate_node_t) : 0) == sizeallocated_automatmman(&mman));
+         TEST( (i > 0 ? sizeof(void*)+sizeof(multistate_node_t) : 0) == sizeallocated_automatmman(mman));
          // check mst
          TEST( i+1 == mst.size);
          TEST( 0   != mst.root);
@@ -1552,7 +1617,8 @@ static int test_multistate(void)
          }
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST add_multistate: single leaf && add states unordered
@@ -1561,16 +1627,16 @@ static int test_multistate(void)
          // prepare
          mst = (multistate_t) multistate_INIT;
          for (unsigned i = 0; i < S; ++i) {
-            if (i != pos) { TEST(0 == add_multistate(&mst, &mman, &state[i])); }
+            if (i != pos) { TEST(0 == add_multistate(&mst, mman, &state[i])); }
          }
          void * addr = 0;
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
          *((void**)addr) = ENDMARKER;
          TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
          // test
-         TEST( 0 == add_multistate(&mst, &mman, &state[pos]));
+         TEST( 0 == add_multistate(&mst, mman, &state[pos]));
          // check: mman
-         TEST( sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
          TEST( S == mst.size);
          TEST( 0 != mst.root);
@@ -1583,7 +1649,8 @@ static int test_multistate(void)
          // check: no overflow into following memory block
          TEST( ENDMARKER == *((void**)addr));
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -1592,17 +1659,17 @@ static int test_multistate(void)
       // prepare
       mst = (multistate_t) multistate_INIT;
       for (unsigned i = 0; i < multistate_NROFSTATE; ++i) {
-         TEST(0 == add_multistate(&mst, &mman, &state[i]));
+         TEST(0 == add_multistate(&mst, mman, &state[i]));
       }
       void * addr = 0;
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
       *((void**)addr) = ENDMARKER;
       TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       for (unsigned i = 0; i < multistate_NROFSTATE; ++i) {
          // test
-         TEST( EEXIST == add_multistate(&mst, &mman, &state[i]));
+         TEST( EEXIST == add_multistate(&mst, mman, &state[i]));
          // check mman
-         TEST( sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check mst
          TEST( multistate_NROFSTATE == mst.size);
          TEST( 0 != mst.root);
@@ -1616,30 +1683,31 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr)); // no overflow into following memory block
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST add_multistate: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
    for (unsigned splitidx = 0; splitidx <= multistate_NROFSTATE; ++splitidx) {
       void * addr[2] = { 0 };
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       // prepare
       mst = (multistate_t) multistate_INIT;
       for (unsigned i = 0, next = 0; i < multistate_NROFSTATE; ++i, ++next) {
          if (next == splitidx) ++next;
-         TEST(0 == add_multistate(&mst, &mman, &state[next]));
+         TEST(0 == add_multistate(&mst, mman, &state[next]));
       }
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       TEST(addr[1] == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       TEST(addr[0] == &((void**)mst.root)[-1]);
       // test
       void * oldroot = mst.root;
-      TEST( 2*sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
-      TEST( 0 == add_multistate(&mst, &mman, &state[splitidx]));
+      TEST( 2*sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
+      TEST( 0 == add_multistate(&mst, mman, &state[splitidx]));
       // check: mman
-      TEST( 2*sizeof(void*)+3*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+      TEST( 2*sizeof(void*)+3*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
       // check: mst
       TEST( mst.size == multistate_NROFSTATE+1);
       TEST( mst.root != 0);
@@ -1672,14 +1740,15 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) ascending/descending
    for (unsigned desc = 0; desc <= 1; ++desc) {
       void * child[multistate_NROFCHILD] = { 0 };
       void * addr[multistate_NROFCHILD] = { 0 };
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       child[0] = (uint8_t*)addr[0] + sizeof(void*);
       child[1] = (uint8_t*)child[0] + sizeof(multistate_node_t);
@@ -1687,10 +1756,10 @@ static int test_multistate(void)
       // prepare
       mst = (multistate_t) multistate_INIT;
       for (unsigned i = 0; i < multistate_NROFSTATE+1; ++i) {
-         TEST(0 == add_multistate(&mst, &mman, &state[desc?NROFSTATE-1-i:i]));
+         TEST(0 == add_multistate(&mst, mman, &state[desc?NROFSTATE-1-i:i]));
       }
       unsigned SIZE = multistate_NROFSTATE+1;
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       for (unsigned nrchild = 2; nrchild <= multistate_NROFCHILD; ) {
          for (unsigned nrstate = 1; nrstate <= multistate_NROFSTATE/2+(desc==0); ++nrstate) {
@@ -1702,16 +1771,16 @@ static int test_multistate(void)
                break;
             }
             // test add to last(desc==0)/first(desc==1) leaf
-            TEST( 0 == add_multistate(&mst, &mman, &state[desc?NROFSTATE-1-SIZE:SIZE]));
+            TEST( 0 == add_multistate(&mst, mman, &state[desc?NROFSTATE-1-SIZE:SIZE]));
             if (isSplit) {
                if (desc) memmove(&child[2], &child[1], (nrchild-1)*sizeof(child[0]));
                child[desc?1:nrchild] = (uint8_t*)addr[nrchild-1] + sizeof(void*);
-               TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[nrchild]));
+               TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[nrchild]));
                *((void**)addr[nrchild]) = ENDMARKER;
                ++ nrchild;
             }
             // check: mman
-            TEST( nrchild*sizeof(void*)+(nrchild+1)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+            TEST( nrchild*sizeof(void*)+(nrchild+1)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
             // check: mst
             ++ SIZE;
             TEST( SIZE == mst.size);
@@ -1745,7 +1814,8 @@ static int test_multistate(void)
          }
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) unordered
@@ -1754,13 +1824,13 @@ static int test_multistate(void)
          void * child[multistate_NROFCHILD] = { 0 };
          void * addr[multistate_NROFCHILD+1] = { 0 };
          // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild
-         TEST(0 == build1_multistate(&mst, &mman, state, 2/*every 2nd*/, ENDMARKER, nrchild, addr, child));
+         TEST(0 == build1_multistate(&mst, mman, state, 2/*every 2nd*/, ENDMARKER, nrchild, addr, child));
          void *   const root = mst.root;
          unsigned const SIZE = nrchild * multistate_NROFSTATE + 1;
          // test add single state ==> split check split
-         TEST( 0 == add_multistate(&mst, &mman, &state[1+pos*(2*multistate_NROFSTATE)]));
+         TEST( 0 == add_multistate(&mst, mman, &state[1+pos*(2*multistate_NROFSTATE)]));
          // check: mman
-         TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
          TEST( SIZE == mst.size);
          TEST( root == mst.root);
@@ -1790,7 +1860,8 @@ static int test_multistate(void)
             TEST( ENDMARKER == *((void**)addr[i]));
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -1799,7 +1870,7 @@ static int test_multistate(void)
       void * child[multistate_NROFCHILD+1] = { 0 };
       void * addr[multistate_NROFCHILD+2] = { 0 };
       // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild splitroot new-root
-      TEST(0 == build1_multistate(&mst, &mman, state, 2/*every 2nd*/, ENDMARKER, multistate_NROFCHILD, addr, child));
+      TEST(0 == build1_multistate(&mst, mman, state, 2/*every 2nd*/, ENDMARKER, multistate_NROFCHILD, addr, child));
       void *   const oldroot = mst.root;
       void *   const splitchild = (uint8_t*)addr[multistate_NROFCHILD+1] + sizeof(void*);
       void *   const splitroot = (uint8_t*)splitchild + sizeof(multistate_node_t);
@@ -1812,9 +1883,9 @@ static int test_multistate(void)
       memmove(&child[pos+2], &child[pos+1], (multistate_NROFCHILD-1-pos)*sizeof(child[0]));
       child[pos+1] = splitchild;
       // test add single state ==> split check split
-      TEST( 0 == add_multistate(&mst, &mman, &state[1+pos*(2*multistate_NROFSTATE)]));
+      TEST( 0 == add_multistate(&mst, mman, &state[1+pos*(2*multistate_NROFSTATE)]));
       // check: mman
-      TEST( (multistate_NROFCHILD+2)*sizeof(void*)+(multistate_NROFCHILD+4)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+      TEST( (multistate_NROFCHILD+2)*sizeof(void*)+(multistate_NROFCHILD+4)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
       // check: mst
       TEST( SIZE == mst.size);
       TEST( root == mst.root);
@@ -1852,7 +1923,8 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST add_multistate: (level 2) split child(level 1) and add to root
@@ -1861,14 +1933,14 @@ static int test_multistate(void)
          void * addr;
          void * child[multistate_NROFCHILD] = { 0 };
          size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
-         TEST(0 == build2_multistate(&mst, &mman, 2, nrchild, child));
+         TEST(0 == build2_multistate(&mst, mman, 2, nrchild, child));
          void * root = mst.root;
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
          void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(multistate_node_t)/*leaf*/;
          // test add single state ==> split check split
-         TEST( 0 == add_multistate(&mst, &mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
+         TEST( 0 == add_multistate(&mst, mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
          // check: mman
-         TEST( sizeof(void*)+(1+2+nrchild+nrchild*multistate_NROFCHILD)*sizeof(multistate_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(void*)+(1+2+nrchild+nrchild*multistate_NROFCHILD)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
          TEST( SIZE == mst.size);
          TEST( root == mst.root);
@@ -1890,18 +1962,22 @@ static int test_multistate(void)
             TEST( child[i-1] == ((multistate_node_t*)mst.root)->child[i]);
          }
          // check node/leaf content
-         TEST( EEXIST == add_multistate(&mst, &mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
+         TEST( EEXIST == add_multistate(&mst, mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
          for (uintptr_t i = 0; i < LEVEL1_NROFSTATE*nrchild; ++i) {
-            TEST(EEXIST == add_multistate(&mst, &mman, (void*)(2*i)));
+            TEST(EEXIST == add_multistate(&mst, mman, (void*)(2*i)));
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+
    return 0;
 ONERR:
-   free_automatmman(&mman);
+   delete_automatmman(&mman);
    return EINVAL;
 }
 
@@ -1967,10 +2043,11 @@ ONERR:
 static int test_rangemap(void)
 {
    rangemap_t     rmap = rangemap_INIT;
-   automat_mman_t mman = automat_mman_INIT;
+   automat_mman_t*mman = 0;
    void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
 
    // prepare
+   TEST(0 == new_automatmman(&mman));
 
    // TEST rangemap_NROFRANGE
    TEST( lengthof(((rangemap_node_t*)0)->range) == rangemap_NROFRANGE);
@@ -1983,14 +2060,14 @@ static int test_rangemap(void)
    TEST(0 == rmap.root);
 
    // TEST addrange_rangemap: EINVAL
-   TEST( EINVAL == addrange_rangemap(&rmap, &mman, 1, 0));
-   TEST( EINVAL == addrange_rangemap(&rmap, &mman, UINT32_MAX, 0));
+   TEST( EINVAL == addrange_rangemap(&rmap, mman, 1, 0));
+   TEST( EINVAL == addrange_rangemap(&rmap, mman, UINT32_MAX, 0));
 
    // TEST addrange_rangemap: multistate_t.size == 0
    for (unsigned from = 0; from < 256; from += 16) {
       for (unsigned to = from; to < 256; to += 32) {
          void * addr[2];
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
          // assumes big blocks + no free block header stored in free memory
          addr[1] = (uint8_t*)addr[0] + sizeof(rangemap_node_t);
          for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -1998,9 +2075,9 @@ static int test_rangemap(void)
          }
          // test
          rmap = (rangemap_t) rangemap_INIT;
-         TEST( 0 == addrange_rangemap(&rmap, &mman, from, to));
+         TEST( 0 == addrange_rangemap(&rmap, mman, from, to));
          // check mman: root allocated
-         TEST( sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap
          TEST( rmap.size == 1);
          TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
@@ -2016,7 +2093,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -2025,19 +2103,19 @@ static int test_rangemap(void)
       for (unsigned pos = 0; pos < S; ++pos) {
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < S; ++i) {
             if (i == pos) continue;
-            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)i, (char32_t)i));
+            TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)i, (char32_t)i));
          }
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
-         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)pos, (char32_t)pos));
+         TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)pos, (char32_t)pos));
          // check mman: only root allocated
-         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap
          TEST( rmap.size == S);
          TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
@@ -2055,7 +2133,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -2065,18 +2144,18 @@ static int test_rangemap(void)
          for (unsigned to = from; to <= 2*S; ++to) {
             // prepare
             void * addr[2];
-            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
             *(void**)addr[0] = ENDMARKER;
             rmap = (rangemap_t) rangemap_INIT;
             for (unsigned i = 0; i < S; ++i) {
-               TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(1+2*i), (char32_t)(1+2*i)));
+               TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(1+2*i), (char32_t)(1+2*i)));
             }
-            TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
             *(void**)addr[1] = ENDMARKER;
             // test
-            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)from, (char32_t)to));
+            TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)from, (char32_t)to));
             // check mman
-            TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+            TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
             // check rmap
             unsigned const D = to-from+1;
             unsigned const S2 = S + D/2 + (D&1?!(from&1):0);
@@ -2097,7 +2176,8 @@ static int test_rangemap(void)
                TEST( ENDMARKER == *(void**)addr[i]);
             }
             // reset
-            TEST(0 == free_automatmman(&mman));
+            TEST(0 == delete_automatmman(&mman));
+            TEST(0 == new_automatmman(&mman));
          }
       }
    }
@@ -2108,18 +2188,18 @@ static int test_rangemap(void)
          const unsigned S = rangemap_NROFRANGE;
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < rangemap_NROFRANGE; ++i) {
-            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*i), (char32_t)(3+4*i)));
+            TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*i), (char32_t)(3+4*i)));
          }
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
-         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*from), (char32_t)(4*to+3)));
+         TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*from), (char32_t)(4*to+3)));
          // check mman: unchanged
-         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap: unchanged
          TEST( rmap.size == S);
          TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
@@ -2137,7 +2217,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -2147,18 +2228,18 @@ static int test_rangemap(void)
          const unsigned S = 3u + (0 != from % 4) + (3 != to % 4);
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < 3; ++i) {
-            TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)(4*i), (char32_t)(3+4*i)));
+            TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*i), (char32_t)(3+4*i)));
          }
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
-         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)from, (char32_t)to));
+         TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)from, (char32_t)to));
          // check mman: unchanged
-         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( 2*sizeof(void*) + sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap: unchanged
          TEST( rmap.size == S);
          TEST( rmap.root == (rangemap_node_t*)((uint8_t*)addr[0] + sizeof(void*)));
@@ -2177,7 +2258,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -2192,14 +2274,14 @@ static int test_rangemap(void)
          to[i]   = 5 + 9*i;
       }
       rangemap_node_t * child = 0;
-      TEST(0 == build_rangemap(&rmap, &mman, level, from, to, 9, &child));
+      TEST(0 == build_rangemap(&rmap, mman, level, from, to, 9, &child));
       void * const root = rmap.root;
-      size_t const MMSIZE = sizeallocated_automatmman(&mman);
+      size_t const MMSIZE = sizeallocated_automatmman(mman);
       TEST(S == rmap.size);
       // test
-      TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)0, (char32_t)(S*9-1)));
+      TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)0, (char32_t)(S*9-1)));
       // check mman: unchanged
-      TEST( MMSIZE == sizeallocated_automatmman(&mman));
+      TEST( MMSIZE == sizeallocated_automatmman(mman));
       // check rmap
       TEST( rmap.size == 3/*two additional range per child node*/*S);
       TEST( rmap.root == root);
@@ -2216,7 +2298,8 @@ static int test_rangemap(void)
       }
       TEST( 0 == child);   // value from child->next
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST addrange_rangemap: insert overlapping range in tree with root->level > 0
@@ -2231,14 +2314,14 @@ static int test_rangemap(void)
             to[i]   = (tc==1?4:9) + 10*i;
          }
          rangemap_node_t * child = 0;
-         TEST(0 == build_rangemap(&rmap, &mman, level, from, to, 10, &child));
+         TEST(0 == build_rangemap(&rmap, mman, level, from, to, 10, &child));
          void * const root = rmap.root;
-         size_t const MMSIZE = sizeallocated_automatmman(&mman);
+         size_t const MMSIZE = sizeallocated_automatmman(mman);
          TEST(S == rmap.size);
          // test
-         TEST( 0 == addrange_rangemap(&rmap, &mman, (char32_t)0, (char32_t)(S*10-1)));
+         TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)0, (char32_t)(S*10-1)));
          // check mman: unchanged
-         TEST( MMSIZE == sizeallocated_automatmman(&mman));
+         TEST( MMSIZE == sizeallocated_automatmman(mman));
          // check rmap
          TEST( rmap.size == 2/*additional range per child node*/*S);
          TEST( rmap.root == root);
@@ -2255,31 +2338,32 @@ static int test_rangemap(void)
          }
          TEST( 0 == child);   // value from child->next
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
    // TEST addrange_rangemap: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
    for (unsigned pos = 0; pos <= rangemap_NROFRANGE; ++pos) {
       void * addr[2] = { 0 };
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[0]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       // prepare
       rmap = (rangemap_t) rangemap_INIT;
       for (unsigned i = 0; i <= rangemap_NROFRANGE; ++i) {
          if (i == pos) continue;
-         TEST(0 == addrange_rangemap(&rmap, &mman, (char32_t)i, (char32_t)i));
+         TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)i, (char32_t)i));
       }
-      TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr[1]));
+      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       TEST(addr[1] == &rmap.root->range[rangemap_NROFRANGE]);
       TEST(addr[0] == &((void**)rmap.root)[-1]);
       // test
       void * oldroot = rmap.root;
-      TEST( 2*sizeof(void*)+sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
-      TEST(0 == addrange_rangemap(&rmap, &mman, (char32_t)pos, (char32_t)pos));
+      TEST( 2*sizeof(void*)+sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)pos, (char32_t)pos));
       // check: mman
-      TEST( 2*sizeof(void*)+3*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+      TEST( 2*sizeof(void*)+3*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
       // check: rmap
       TEST( rmap.size == rangemap_NROFRANGE+1);
       TEST( rmap.root != 0);
@@ -2316,7 +2400,8 @@ static int test_rangemap(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST addrange_rangemap: build root node (level 1) + many leafs (level 0) unordered
@@ -2325,14 +2410,14 @@ static int test_rangemap(void)
          rangemap_node_t * child[rangemap_NROFCHILD+1/*last entry is alwys 0*/] = { 0 };
          void * addr[rangemap_NROFCHILD+1] = { 0 };
          // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild
-         TEST(0 == build1_rangemap(&rmap, &mman, 4/*range-width*/, ENDMARKER, nrchild, addr, child));
+         TEST(0 == build1_rangemap(&rmap, mman, 4/*range-width*/, ENDMARKER, nrchild, addr, child));
          void *   const root = rmap.root;
          unsigned const SIZE = nrchild * rangemap_NROFRANGE + 1;
          // test add single state ==> split check split
          char32_t r = (char32_t) (pos*(4*rangemap_NROFRANGE));
-         TEST( 0 == addrange_rangemap(&rmap, &mman, r, r+1));
+         TEST( 0 == addrange_rangemap(&rmap, mman, r, r+1));
          // check: mman
-         TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check: rmap
          TEST( rmap.size == SIZE);
          TEST( rmap.root == root);
@@ -2364,7 +2449,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *((void**)addr[i]));
          }
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
@@ -2373,7 +2459,7 @@ static int test_rangemap(void)
       rangemap_node_t* child[rangemap_NROFCHILD+2/*last entry is 0*/] = { 0 };
       void * addr[rangemap_NROFCHILD+2] = { 0 };
       // addr[0] root addr[1] child[0] addr[2] child[1] addr[3] ... splitchild splitroot new-root
-      TEST(0 == build1_rangemap(&rmap, &mman, 4/*range-width*/, ENDMARKER, rangemap_NROFCHILD, addr, child));
+      TEST(0 == build1_rangemap(&rmap, mman, 4/*range-width*/, ENDMARKER, rangemap_NROFCHILD, addr, child));
       void *   const oldroot = rmap.root;
       void *   const splitchild = (uint8_t*)addr[rangemap_NROFCHILD+1] + sizeof(void*);
       void *   const splitroot = (uint8_t*)splitchild + sizeof(rangemap_node_t);
@@ -2387,9 +2473,9 @@ static int test_rangemap(void)
       child[pos+1] = splitchild;
       // test add single state ==> split check split
       char32_t r = (char32_t) (pos*(4*rangemap_NROFRANGE));
-      TEST( 0 == addrange_rangemap(&rmap, &mman, r, r+1));
+      TEST( 0 == addrange_rangemap(&rmap, mman, r, r+1));
       // check: mman
-      TEST( (rangemap_NROFCHILD+2)*sizeof(void*)+(rangemap_NROFCHILD+4)*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+      TEST( (rangemap_NROFCHILD+2)*sizeof(void*)+(rangemap_NROFCHILD+4)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
       // check rmap
       TEST( rmap.size == SIZE);
       TEST( rmap.root == root);
@@ -2428,7 +2514,8 @@ static int test_rangemap(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == free_automatmman(&mman));
+      TEST(0 == delete_automatmman(&mman));
+      TEST(0 == new_automatmman(&mman));
    }
 
    // TEST addrange_rangemap: (level 2) split child(level 1) and add to root
@@ -2437,16 +2524,16 @@ static int test_rangemap(void)
          rangemap_node_t * child[rangemap_NROFCHILD] = { 0 };
          const unsigned LEVEL1_NROFSTATE = rangemap_NROFRANGE * rangemap_NROFCHILD;
          size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
-         TEST(0 == build2_rangemap(&rmap, &mman, 2, nrchild, child));
+         TEST(0 == build2_rangemap(&rmap, mman, 2, nrchild, child));
          void * root = rmap.root;
          void * addr;
-         TEST(0 == allocmem_automatmman(&mman, sizeof(void*), &addr));
+         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
          void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(rangemap_node_t)/*leaf*/;
          // test add single state ==> split
          char32_t r = (char32_t) (pos*(2*LEVEL1_NROFSTATE));
-         TEST( 0 == addrange_rangemap(&rmap, &mman, r, r));
+         TEST( 0 == addrange_rangemap(&rmap, mman, r, r));
          // check: mman
-         TEST( sizeof(void*)+(1+2+nrchild+nrchild*rangemap_NROFCHILD)*sizeof(rangemap_node_t) == sizeallocated_automatmman(&mman));
+         TEST( sizeof(void*)+(1+2+nrchild+nrchild*rangemap_NROFCHILD)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap
          TEST( rmap.size == SIZE);
          TEST( rmap.root == root);
@@ -2466,12 +2553,17 @@ static int test_rangemap(void)
          }
          // skip check other node/leaf content
          // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
       }
    }
 
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+
    return 0;
 ONERR:
+   delete_automatmman(&mman);
    return EINVAL;
 }
 
@@ -2480,87 +2572,121 @@ static int test_initfree(void)
    automat_t      ndfa = automat_FREE;
    automat_t      ndfa1, ndfa2;
    size_t         S;
-   automat_mman_t mman = automat_mman_INIT;
-   automat_mman_t mman2 = automat_mman_INIT;
+   automat_mman_t*mman = 0;
+   automat_mman_t*mman2 = 0;
+   automat_t      use_mman = automat_FREE;
+   automat_t      use_mman2 = automat_FREE;
    char32_t       from[256];
    char32_t       to[256];
    helper_state_t helperstate[10];
    size_t         target_state[256];
 
-   // TEST automat_FREE
-   TEST( 0 == ndfa.mman);
-   TEST( 0 == ndfa.nrstate);
-   TEST( 1 == isempty_slist(&ndfa.states));
-
    // prepare
+   TEST(0 == new_automatmman(&mman));
+   TEST(0 == new_automatmman(&mman2));
+   use_mman.mman  = mman;
+   use_mman2.mman = mman2;
    for (unsigned i = 0; i < lengthof(target_state); ++i) {
       target_state[i] = 1;
    }
+   for (unsigned i = 0; i < lengthof(from); ++i) {
+      from[i] = i;
+      to[i]   = 3*i;
+   }
+
+   // TEST automat_FREE
+   TEST( 0 == ndfa.mman);
+   TEST( 0 == ndfa.nrstate);
+   TEST( 0 == ndfa.allocated);
+   TEST( 1 == isempty_slist(&ndfa.states));
 
    for (size_t i = 0; i < 256; ++i) {
-      // prepare
-      for (unsigned r = 0; r < i; ++r) {
-         from[r] = r;
-         to[r] = 3*r;
+      for (unsigned tc = 0; tc <= 1; ++tc) {
+         size_t const SIZE_PAGE = SIZEALLOCATED_PAGECACHE();
+
+         // TEST initmatch_automat
+         TESTP( 0 == initmatch_automat(&ndfa, tc ? 0 : &use_mman, (uint8_t) i, from, to), "i:%zd", i);
+         automat_mman_t * mm = ndfa.mman;
+         TEST( 0 != mm);
+         // check mman
+         TEST( 1 == refcount_automatmman(mm));
+         S = (unsigned) (3*(sizeof(state_t) - sizeof(transition_t)))
+           + (unsigned) (2*sizeof(empty_transition_t) + i*sizeof(range_transition_t));
+         TEST( sizeallocated_automatmman(mm) == S);
+         // check ndfa
+         TEST( ndfa.mman      == (tc ? mm : mman));
+         TEST( ndfa.nrstate   == 3);
+         TEST( ndfa.allocated == S);
+         TEST( ! isempty_slist(&ndfa.states));
+         // check ndfa.states
+         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+         helperstate[2] = (helper_state_t) { state_RANGE, (uint8_t) i, target_state, from, to };
+         TEST( 0 == helper_compare_states(&ndfa, 3, helperstate))
+
+         // TEST free_automat: free and double free
+         // prepare
+         incruse_automatmman(mm);
+         TEST( 2 == refcount_automatmman(mm));
+         for (unsigned r = 0; r <= 1; ++r) {
+            // test
+            TEST( 0 == free_automat(&ndfa));
+            // check mman
+            TEST( refcount_automatmman(mm) == 1);
+            TEST( sizeallocated_automatmman(mm) == S);
+            TEST( wasted_automatmman(mm) == S);
+            // check ndfa
+            TEST( ndfa.mman    == 0);
+            TEST( ndfa.nrstate == 0);
+            TEST( isempty_slist(&ndfa.states));
+         }
+
+         if (mm != mman) {
+            // TEST free_automat: free deletes memory manager if refcount == 0
+            TEST( 1 == refcount_automatmman(mm));
+            ndfa.mman = mm;
+            // test
+            TEST( 0 == free_automat(&ndfa));
+            // check ndfa
+            TEST( 0 == ndfa.mman);
+            // check env (mm freed)
+            TEST( SIZE_PAGE == SIZEALLOCATED_PAGECACHE());
+         } else {
+            // reset
+            decruse_automatmman(mm);
+         }
       }
-
-      // TEST initmatch_automat
-      TESTP( 0 == initmatch_automat(&ndfa, &mman, (uint8_t) i, from, to), "i:%zd", i);
-      // check mman
-      TEST( 1 == mman.refcount);
-      S = (unsigned) (3*(sizeof(state_t) - sizeof(transition_t)))
-        + (unsigned) (2*sizeof(empty_transition_t) + i*sizeof(range_transition_t));
-      TEST( S == sizeallocated_automatmman(&mman));
-      // check ndfa
-      TEST( &mman == ndfa.mman);
-      TEST( 3     == ndfa.nrstate);
-      TEST( 0     == isempty_slist(&ndfa.states));
-      // check ndfa.states
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-      helperstate[2] = (helper_state_t) { state_RANGE, (uint8_t) i, target_state, from, to };
-      TEST( 0 == helper_compare_states(&ndfa, 3, helperstate))
-
-      // TEST free_automat
-      TEST( 0 == free_automat(&ndfa));
-      // check mman
-      TEST( 0 == mman.refcount);
-      // check ndfa
-      TEST( 0 == ndfa.mman);
-      TEST( 0 == ndfa.nrstate);
-      TEST( 1 == isempty_slist(&ndfa.states));
-
-      // TEST free_automat: double free
-      TEST( 0 == free_automat(&ndfa));
-      // check mman
-      TEST( 0 == mman.refcount);
-      // check ndfa
-      TEST( 0 == ndfa.mman);
-      TEST( 0 == ndfa.nrstate);
-      TEST( 1 == isempty_slist(&ndfa.states));
    }
+
+   // TEST free_automat: simulated ERROR
+   // TODO: TEST initempty_automat
+
+
+   // TEST initempty_automat
+   // TODO: TEST initempty_automat
 
    // TEST initsequence_automat
    // prepare
-   TEST(0 == initmatch_automat(&ndfa1, &mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
-   TEST(0 == initmatch_automat(&ndfa2, &mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
-   TEST(2 == mman.refcount);
-   S = sizeallocated_automatmman(&mman);
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
+   TEST(2 == refcount_automatmman(mman));
+   S = sizeallocated_automatmman(mman);
    // test
    TEST( 0 == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
    // check mman
-   TEST( 1 == mman.refcount);
+   TEST( refcount_automatmman(mman) == 1);
    S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
       + (unsigned) (2*sizeof(empty_transition_t));
-   TEST( S == sizeallocated_automatmman(&mman));
+   TEST( sizeallocated_automatmman(mman) == S);
    // check ndfa1
    TEST( 0 == ndfa1.mman);
    // check ndfa2
    TEST( 0 == ndfa2.mman);
    // check ndfa
-   TEST( &mman == ndfa.mman);
-   TEST( 8     == ndfa.nrstate);
-   TEST( 0     == isempty_slist(&ndfa.states));
+   TEST( ndfa.mman    == mman);
+   TEST( ndfa.nrstate == 8);
+   TEST( ndfa.allocated == S);
+   TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
    helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 }; // ndfa
    helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
@@ -2572,26 +2698,29 @@ static int test_initfree(void)
    helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
    TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
    // reset
+   incruse_automatmman(mman);
    TEST(0 == free_automat(&ndfa));
+   decruse_automatmman(mman);
 
    // TEST initrepeat_automat
    // prepare
-   TEST(0 == initmatch_automat(&ndfa1, &mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
-   TEST(1 == mman.refcount);
-   S = sizeallocated_automatmman(&mman);
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+   TEST(1 == refcount_automatmman(mman));
+   S = sizeallocated_automatmman(mman);
    // test
    TEST( 0 == initrepeat_automat(&ndfa, &ndfa1));
    // check mman
-   TEST( 1 == mman.refcount);
+   TEST( refcount_automatmman(mman) == 1);
    S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
       + (unsigned) (3*sizeof(empty_transition_t));
-   TEST( S == sizeallocated_automatmman(&mman));
+   TEST( sizeallocated_automatmman(mman) == S);
    // check ndfa1
    TEST( 0 == ndfa1.mman);
    // check ndfa
-   TEST( &mman == ndfa.mman);
-   TEST( 5     == ndfa.nrstate);
-   TEST( 0     == isempty_slist(&ndfa.states));
+   TEST( ndfa.mman    == mman);
+   TEST( ndfa.nrstate == 5);
+   TEST( ndfa.allocated == S);
+   TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
    helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 1 }, 0, 0 }; // ndfa
    helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
@@ -2600,29 +2729,33 @@ static int test_initfree(void)
    helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
    TEST(0 == helper_compare_states(&ndfa, 5, helperstate))
    // reset
+   incruse_automatmman(mman);
    TEST(0 == free_automat(&ndfa));
+   decruse_automatmman(mman);
+
 
    // TEST initor_automat
    // prepare
-   TEST(0 == initmatch_automat(&ndfa1, &mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
-   TEST(0 == initmatch_automat(&ndfa2, &mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
-   TEST(2 == mman.refcount);
-   S = sizeallocated_automatmman(&mman);
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
+   TEST(2 == refcount_automatmman(mman));
+   S = sizeallocated_automatmman(mman);
    // test
    TEST( 0 == initor_automat(&ndfa, &ndfa1, &ndfa2));
    // check mman
-   TEST( 1 == mman.refcount);
+   TEST( refcount_automatmman(mman) == 1);
    S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
       + (unsigned) (3*sizeof(empty_transition_t));
-   TEST( S == sizeallocated_automatmman(&mman));
+   TEST( sizeallocated_automatmman(mman) == S);
    // check ndfa1
    TEST( 0 == ndfa1.mman);
    // check ndfa2
    TEST( 0 == ndfa2.mman);
    // check ndfa
-   TEST( &mman == ndfa.mman);
-   TEST( 8     == ndfa.nrstate);
-   TEST( 0     == isempty_slist(&ndfa.states));
+   TEST( ndfa.mman    == mman);
+   TEST( ndfa.nrstate == 8);
+   TEST( ndfa.allocated == S);
+   TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
    helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 5 }, 0, 0 }; // ndfa
    helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
@@ -2634,94 +2767,111 @@ static int test_initfree(void)
    helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
    TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
    // reset
+   incruse_automatmman(mman);
    TEST(0 == free_automat(&ndfa));
-   TEST(0 == free_automatmman(&mman));
+   decruse_automatmman(mman);
 
    // === simulated ERROR / EINVAL
 
    for (unsigned err = 13; err < 15; ++err) {
       for (unsigned tc = 0, isDone = 0; !isDone; ++tc) {
          // prepare
-         mman = (automat_mman_t) automat_mman_INIT;
+         incruse_automatmman(mman);
+         incruse_automatmman(mman2);
          switch (tc) {
          case 0:  // TEST initmatch_automat: simulated ERROR
                   init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  TEST( (int)err == initmatch_automat(&ndfa, &mman, 1, from, to));
+                  TEST( (int)err == initmatch_automat(&ndfa, &use_mman, 1, from, to));
+                  TEST( 0 == wasted_automatmman(mman));
                   break;
          case 1:  // TEST initsequence_automat: simulated ERROR
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &mman, 1, from+2, to+2));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, from+2, to+2));
                   init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  mman.freesize = 0; // ==> new allocation needed ==> error
                   TEST( (int)err == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
                   // reset
                   TEST(0 == free_automat(&ndfa2));
                   TEST(0 == free_automat(&ndfa1));
                   break;
          case 2:  // TEST initor_automat: simulated ERROR
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &mman, 1, from+2, to+2));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, from+2, to+2));
                   init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  mman.freesize = 0; // ==> new allocation needed ==> error
                   TEST( (int)err == initor_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
                   // reset
                   TEST(0 == free_automat(&ndfa2));
                   TEST(0 == free_automat(&ndfa1));
                   break;
          case 3:  // TEST initsequence_automat: EINVAL empty ndfa
                   TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
                   break;
          case 4:  // TEST initrepeat_automat: EINVAL empty ndfa
                   TEST( EINVAL == initrepeat_automat(&ndfa, &ndfa1));
+                  TEST( 0 == wasted_automatmman(mman));
                   break;
          case 5:  // TEST initor_automat: EINVAL empty ndfa
                   TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
                   break;
          case 6:  // TEST initsequence_automat: EINVAL (sequence of same automat)
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
                   TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa1));
+                  TEST( 0 == wasted_automatmman(mman));
                   TEST(0 == free_automat(&ndfa1));
                   break;
          case 7:  // TEST initor_automat: EINVAL (sequence of same automat)
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
                   TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa1));
+                  TEST( 0 == wasted_automatmman(mman));
                   TEST(0 == free_automat(&ndfa1));
                   break;
          case 8:  // TEST initsequence_automat: EINVAL (different mman)
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &mman2, 1, from+2, to+2));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa2, &use_mman2, 1, from+2, to+2));
                   TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
+                  TEST( 0 == wasted_automatmman(mman2));
                   TEST(0 == free_automat(&ndfa2));
                   TEST(0 == free_automat(&ndfa1));
-                  TEST(0 == free_automatmman(&mman2));
                   break;
          case 9:  // TEST initor_automat: EINVAL (different mman)
-                  TEST(0 == initmatch_automat(&ndfa1, &mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &mman2, 1, from+2, to+2));
+                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+                  TEST(0 == initmatch_automat(&ndfa2, &use_mman2, 1, from+2, to+2));
                   TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa2));
+                  TEST( 0 == wasted_automatmman(mman));
+                  TEST( 0 == wasted_automatmman(mman2));
                   TEST(0 == free_automat(&ndfa2));
                   TEST(0 == free_automat(&ndfa1));
-                  TEST(0 == free_automatmman(&mman2));
                   break;
          default: isDone = 1;
                   break;
          }
          // check mman
-         TEST( 0 == refcount_automatmman(&mman));
-         TEST( 0 == sizeallocated_automatmman(&mman));
+         decruse_automatmman(mman);
+         decruse_automatmman(mman2);
+         TEST( 0 == refcount_automatmman(mman));
+         TEST( 0 == sizeallocated_automatmman(mman));
+         TEST( 0 == refcount_automatmman(mman2));
+         TEST( 0 == sizeallocated_automatmman(mman2));
          // check ndfa
-         TEST( 0 == ndfa.mman);
-         TEST( 0 == ndfa.nrstate);
-         TEST( 1 == isempty_slist(&ndfa.states));
-         // reset
-         TEST(0 == free_automatmman(&mman));
+         TEST( ndfa.mman    == 0);
+         TEST( ndfa.nrstate == 0);
+         TEST( ndfa.allocated == 0);
+         TEST( isempty_slist(&ndfa.states));
       }
    }
 
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+   TEST(0 == delete_automatmman(&mman2));
+
    return 0;
 ONERR:
-   free_automatmman(&mman);
-   free_automatmman(&mman2);
+   delete_automatmman(&mman);
+   delete_automatmman(&mman2);
    return EINVAL;
 }
 
@@ -2761,11 +2911,12 @@ static int test_update(void)
 {
    automat_t      ndfa = automat_FREE;
    automat_t      ndfa2 = automat_FREE;
-   automat_mman_t mman = automat_mman_INIT;
+   automat_mman_t*mman = 0;
    char32_t       from[256];
    char32_t       to[256];
    size_t         target[255];
    helper_state_t helperstate[3+255];
+   size_t         S;
 
    // prepare
    for (unsigned i = 0; i < lengthof(target); ++i) {
@@ -2775,52 +2926,54 @@ static int test_update(void)
       from[i] = 1 + i;
       to[i]   = 1 + 2*i;
    }
-   TEST(0 == initmatch_automat(&ndfa, &mman, 15, from, to));
+   TEST(0 == initmatch_automat(&ndfa, 0, 15, from, to));
    helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
    helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
    helperstate[2] = (helper_state_t) { state_RANGE, 15, target, from, to };
    TEST(0 == helper_compare_states(&ndfa, 3, helperstate))
+   mman = ndfa.mman;
+   S = sizeallocated_automatmman(mman);
 
-   size_t S = sizeallocated_automatmman(&mman);
+   // TEST extendmatch_automat: EINVAL (freed ndfa)
+   TEST( EINVAL == extendmatch_automat(&ndfa2, 1, from, to));
+   TEST( 1 == refcount_automatmman(mman));
+   TEST( S == sizeallocated_automatmman(mman));
 
-   // TEST addmatch_automat: EINVAL (freed ndfa)
-   TEST( EINVAL == addmatch_automat(&ndfa2, 1, from, to));
-   TEST( 1 == refcount_automatmman(&mman));
-   TEST( S == sizeallocated_automatmman(&mman));
+   // TEST extendmatch_automat: EINVAL (nrmatch == 0)
+   TEST( EINVAL == extendmatch_automat(&ndfa, 0, from, to));
+   TEST( mman == ndfa.mman);
+   TEST( 1 == refcount_automatmman(mman));
+   TEST( S == sizeallocated_automatmman(mman));
 
-   // TEST addmatch_automat: EINVAL (nrmatch == 0)
-   TEST( EINVAL == addmatch_automat(&ndfa, 0, from, to));
-   TEST( 1 == refcount_automatmman(&mman));
-   TEST( S == sizeallocated_automatmman(&mman));
-
-   // TEST addmatch_automat: ENOMEM
+   // TEST extendmatch_automat: ENOMEM
    init_testerrortimer(&s_automat_errtimer, 1, ENOMEM);
-   TEST( ENOMEM == addmatch_automat(&ndfa, 1, from, to));
-   TEST( 1 == refcount_automatmman(&mman));
-   TEST( S == sizeallocated_automatmman(&mman));
+   TEST( ENOMEM == extendmatch_automat(&ndfa, 1, from, to));
+   TEST( mman == ndfa.mman);
+   TEST( 1 == refcount_automatmman(mman));
+   TEST( S == sizeallocated_automatmman(mman));
 
-   // TEST addmatch_automat
+   // TEST extendmatch_automat
    for (unsigned i = 1; i < lengthof(from); ++i) {
-      TEST( 0 == addmatch_automat(&ndfa, (uint8_t)i, from, to))
+      TEST( 0 == extendmatch_automat(&ndfa, (uint8_t)i, from, to))
       // check mman
       S += state_SIZE + i * sizeof(range_transition_t);
-      TEST( 1 == mman.refcount);
-      TEST( S == sizeallocated_automatmman(&mman));
+      TEST( 1 == refcount_automatmman(mman));
+      TEST( S == sizeallocated_automatmman(mman));
       // check ndfa
-      TEST( &mman == ndfa.mman);
-      TEST( 3+i   == ndfa.nrstate);
-      TEST( 0     == isempty_slist(&ndfa.states));
+      TEST( mman == ndfa.mman);
+      TEST( 3+i  == ndfa.nrstate);
+      TEST( 0    == isempty_slist(&ndfa.states));
       // check ndfa.states
       helperstate[2+i] = (helper_state_t) { state_RANGE_CONTINUE, (uint8_t) i, target, from, to };
       TESTP( 0 == helper_compare_states(&ndfa, ndfa.nrstate, helperstate), "i:%d", i);
    }
 
    // reset
-   TEST(0 == free_automatmman(&mman));
+   TEST(0 == free_automat(&ndfa));
 
    return 0;
 ONERR:
-   free_automatmman(&mman);
+   free_automat(&ndfa);
    return EINVAL;
 }
 

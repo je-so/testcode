@@ -50,6 +50,7 @@ typedef struct automat_t {
    struct
    automat_mman_t *  mman;
    size_t            nrstate;
+   size_t            allocated;
    /* variable: states
     * Liste aller Automaten-Zustände. */
    slist_t           states;
@@ -60,26 +61,24 @@ typedef struct automat_t {
 /* define: automat_FREE
  * Static initializer. */
 #define automat_FREE \
-         { 0, 0, slist_INIT }
+         { 0, 0, 0, slist_INIT }
 
 /* function: initmatch_automat
  * TODO: Describe Initializes object. */
-int initempty_automat(/*out*/automat_t* ndfa);
+int initempty_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman);
 
 /* function: initmatch_automat
  * TODO: Describe Initializes object. */
-int initmatch_automat(/*out*/automat_t* ndfa, struct automat_mman_t * mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
 
 /* function: initcopy_automat
  * Makes dest_ndfa a copy of src_ndfa.
  * The memory for building dest_ndfa is allocated from the
- * same memory heap as determined by use_mman_from.
+ * same memory heap as determined by use_mman.
  * This function is used internally cause a every state of a single automat must
  * be located on the same memory heap. Any operation applied to two different automat
  * makes sure that the result of the operation is located on the same heap. */
-int initcopy_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa, const automat_t* use_mman_from);
-
-// group: update
+int initcopy_automat(/*out*/automat_t* dest_ndfa, const automat_t* use_mman, automat_t* src_ndfa);
 
 /* function: initsequence_automat
  * TODO: Describe Initializes object.
@@ -128,7 +127,7 @@ size_t nrstate_automat(const automat_t* ndfa);
 
 // group: update
 
-/* function: addmatch_automat
+/* function: extendmatch_automat
  * Erweitert den Automaten um weiter zu matchende Characters.
  * Wird nur dann verwendet, falls <initmatch_automat> nicht ausreicht,
  * um alle Characterbereiche aufzuzählen. Ein Aufruf in anderen Fällen führt
@@ -136,7 +135,7 @@ size_t nrstate_automat(const automat_t* ndfa);
  *
  * Precondition:
  * - ndfa initialized with initmatch_automat */
-int addmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
 
 
 // section: inline implementation

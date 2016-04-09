@@ -62,7 +62,7 @@ int unittest_ds_inmem_slist(void);
  * */
 typedef struct slist_iterator_t {
    struct slist_node_t * next;
-   struct slist_t      * list;
+   struct slist_t const * list;
 } slist_iterator_t;
 
 // group: lifetime
@@ -73,7 +73,7 @@ typedef struct slist_iterator_t {
 
 /* function: initfirst_slistiterator
  * Initializes an iterator for <slist_t>. */
-int initfirst_slistiterator(/*out*/slist_iterator_t * iter, struct slist_t * list);
+int initfirst_slistiterator(/*out*/slist_iterator_t * iter, const struct slist_t * list);
 
 /* function: free_slistiterator
  * Frees an iterator of <slist_t>. This is a no-op. */
@@ -451,7 +451,7 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
 #define slist_IMPLEMENT(_fsuffix, object_t, name_nextptr) \
    typedef slist_iterator_t   iteratortype##_fsuffix; \
    typedef object_t        *  iteratedtype##_fsuffix; \
-   static inline int  initfirst##_fsuffix##iterator(slist_iterator_t * iter, slist_t * list) __attribute__ ((always_inline)); \
+   static inline int  initfirst##_fsuffix##iterator(slist_iterator_t * iter, const slist_t * list) __attribute__ ((always_inline)); \
    static inline int  free##_fsuffix##iterator(slist_iterator_t * iter) __attribute__ ((always_inline)); \
    static inline bool next##_fsuffix##iterator(slist_iterator_t * iter, object_t ** node) __attribute__ ((always_inline)); \
    static inline void init##_fsuffix(slist_t * list) __attribute__ ((always_inline)); \
@@ -526,7 +526,7 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
    static inline void insertlastPlist##_fsuffix(slist_t * list, slist_t * list2) { \
       insertlastPlist_slist(list, list2); \
    } \
-   static inline int initfirst##_fsuffix##iterator(slist_iterator_t * iter, slist_t * list) { \
+   static inline int initfirst##_fsuffix##iterator(slist_iterator_t * iter, const slist_t * list) { \
       return initfirst_slistiterator(iter, list); \
    } \
    static inline int free##_fsuffix##iterator(slist_iterator_t * iter) { \

@@ -32,6 +32,7 @@ struct depthstack_entry_t;
 struct depthstack_t;
 struct multistate_node_t;
 struct multistate_t;
+struct multistate_iter_t;
 struct range_t;
 struct rangemap_node_t;
 struct rangemap_t;
@@ -83,7 +84,12 @@ typedef union transition_t {
 } transition_t;
 
 /* struct: state_t
- * Beschreibt einen Zustand des Automaten. */
+ * Beschreibt einen Zustand des Automaten.
+ * Ein Zustand beginnt mit type == state_EMPTY oder type == state_RANGE
+ * und der folgende Zustand setzt diesen Zustand fort, wenn type == state_RANGE_CONTINUE.
+ * Dies ist typeof(nrtrans) == uint8_t geschuldet, so dass zu viele Transitionen pro Zustand
+ * aufgeteilt werden müssen. Dies war unumgänglich, damit die Speicherverwaltung mit
+ * Blöcken konstanter Größe arbeiten kann. */
 typedef struct state_t {
    uint8_t  type;       // value from state_e
    uint8_t  nrtrans;    // number of transitions
@@ -444,10 +450,6 @@ typedef struct multistate_t {
 #define multistate_INIT \
          { 0, 0 }
 
-// group: query
-
-// TODO:
-
 // group: update
 
 // returns:
@@ -675,6 +677,63 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
    return 0;
 ONERR:
    return err;
+}
+
+/* struct: multistate_iter_t
+ * TODO: */
+typedef struct multistate_iter_t {
+   void*    next_node;
+   uint8_t  next_state;
+   uint8_t  is_single;
+} multistate_iter_t;
+
+// group: lifetime
+
+static void init_multistateiter(multistate_iter_t* iter, const multistate_t* mst)
+{
+   iter->next_node = 0;
+   iter->next_state = 0;
+   iter->is_single = 0;
+
+   if (mst->size == 1) {
+      iter->next_node = mst->root;
+      iter->is_single = 1;
+   } else if (mst->size) {
+      multistate_node_t* node = mst->root;
+      for (unsigned level = node->level; (level--) > 0; ) {
+         if (node->size > multistate_NROFCHILD || node->size < 2) goto ONERR;
+         node = node->child[0];
+         if (node->level != level) goto ONERR;
+      }
+      iter->next_node = node;
+   }
+
+ONERR:
+   return;
+}
+
+static bool next_multistateiter(multistate_iter_t* iter, state_t** state)
+{
+   if (iter->is_single) {
+      *state = iter->next_node;
+      iter->next_node = 0;
+      iter->is_single = 0;
+      return true;
+   }
+
+   multistate_node_t* node = iter->next_node;
+
+   while (node) {
+      if (iter->next_state < node->size) {
+         *state = node->state[iter->next_state++];
+         return true;
+      }
+      node = node->next;
+      iter->next_node  = node;
+      iter->next_state = 0;
+   }
+
+   return false;
 }
 
 
@@ -1204,6 +1263,175 @@ ONERR:
    return err;
 }
 
+int initsequence_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/)
+{
+   int err;
+   void * startstate;
+   automat_t copy;
+   automat_t * ndfa2cpy = ndfa2;
+
+   if (ndfa1->nrstate < 2 || ndfa2->nrstate < 2) {
+      err = EINVAL;
+      goto ONERR;
+   }
+
+   if (ndfa1->mman != ndfa2->mman) {
+      err = initcopy_automat(&copy, ndfa2, ndfa1);
+      if (err) goto ONERR;
+      ndfa2cpy = &copy; // (ndfa2cpy != ndfa2) ==> copy is marked as used
+      err = free_automat(ndfa2);
+      PROCESS_testerrortimer(&s_automat_errtimer, &err);
+      if (err) goto ONERR;
+   }
+
+   const uint16_t SIZE = (uint16_t) (2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
+   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+   }
+   if (err) goto ONERR;
+
+   state_t * endstate = (void*) ((uint8_t*)startstate + 1*(state_SIZE + state_SIZE_EMPTYTRANS(1)));
+   state_t * first1   = first_statelist(&ndfa1->states);
+
+   initempty_state(startstate, first1);
+   initempty_state(endstate, endstate);
+
+   state_t * last1  = next_statelist(first1);
+   state_t * first2 = first_statelist(&ndfa2cpy->states);
+   last1->trans.empty[0] = first2;
+
+   state_t * last2 = next_statelist(first2);
+   last2->trans.empty[0] = endstate;
+
+   // set out
+   ndfa->mman = ndfa1->mman;
+   ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2cpy->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2cpy->allocated;
+   initsingle_statelist(&ndfa->states, endstate);
+   insertfirst_statelist(&ndfa->states, startstate);
+   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
+   insertlastPlist_slist(&ndfa->states, &ndfa2cpy->states);
+
+   // fast free
+   decruse_automatmman(ndfa1->mman);
+   // 2nd decruse_automatmman not needed to avoid extra call to incruse_automatmman
+   *ndfa1 = (automat_t) automat_FREE;
+   if (ndfa2cpy == ndfa2) *ndfa2 = (automat_t) automat_FREE;
+
+   return 0;
+ONERR:
+   if (ndfa2cpy != ndfa2) {
+      initmove_automat(ndfa2, &copy);
+   }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int initrepeat_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/)
+{
+   int err;
+   void * startstate;
+
+   if (  ndfa1->nrstate < 2) {
+      err = EINVAL;
+      goto ONERR;
+   }
+
+   const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2)+state_SIZE_EMPTYTRANS(1));
+   err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+   if (err) goto ONERR;
+
+   state_t * endstate = (void*) ((uint8_t*)startstate + (state_SIZE + state_SIZE_EMPTYTRANS(2)));
+   state_t * first1   = first_statelist(&ndfa1->states);
+
+   initempty2_state(startstate, first1, endstate);
+   initempty_state(endstate, endstate);
+
+   state_t * last1  = next_statelist(first1);
+   last1->trans.empty[0] = startstate;
+
+   // set out
+   ndfa->mman = ndfa1->mman;
+   ndfa->nrstate = 2 + ndfa1->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated;
+   initsingle_statelist(&ndfa->states, endstate);
+   insertfirst_statelist(&ndfa->states, startstate);
+   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
+
+   // fast free
+   // decruse_automatmman not needed to avoid extra call to incruse_automatmman
+   *ndfa1 = (automat_t) automat_FREE;
+
+   return 0;
+ONERR:
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int initor_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/)
+{
+   int err;
+   void * startstate;
+   automat_t copy;
+   automat_t * ndfa2cpy = ndfa2;
+
+   if (ndfa1->nrstate < 2 || ndfa2->nrstate < 2) {
+      err = EINVAL;
+      goto ONERR;
+   }
+
+   if (ndfa1->mman != ndfa2->mman) {
+      err = initcopy_automat(&copy, ndfa2, ndfa1);
+      if (err) goto ONERR;
+      ndfa2cpy = &copy; // (ndfa2cpy != ndfa2) ==> copy is marked as used
+      err = free_automat(ndfa2);
+      PROCESS_testerrortimer(&s_automat_errtimer, &err);
+      if (err) goto ONERR;
+   }
+
+   const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2) + state_SIZE_EMPTYTRANS(1));
+   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+   }
+   if (err) goto ONERR;
+
+   state_t * endstate = (void*) ((uint8_t*)startstate + 1*(state_SIZE + state_SIZE_EMPTYTRANS(2)));
+   state_t * first1   = first_statelist(&ndfa1->states);
+   state_t * first2   = first_statelist(&ndfa2cpy->states);
+
+   initempty2_state(startstate, first1, first2);
+   initempty_state(endstate, endstate);
+
+   state_t * last1 = next_statelist(first1);
+   last1->trans.empty[0] = endstate;
+
+   state_t * last2 = next_statelist(first2);
+   last2->trans.empty[0] = endstate;
+
+   // set out
+   ndfa->mman = ndfa1->mman;
+   ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2cpy->nrstate;
+   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2cpy->allocated;
+   initsingle_statelist(&ndfa->states, endstate);
+   insertfirst_statelist(&ndfa->states, startstate);
+   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
+   insertlastPlist_slist(&ndfa->states, &ndfa2cpy->states);
+
+   // fast free
+   decruse_automatmman(ndfa1->mman);
+   // 2nd decruse_automatmman not needed to avoid extra call to incruse_automatmman
+   *ndfa1 = (automat_t) automat_FREE;
+   if (ndfa2cpy == ndfa2) *ndfa2 = (automat_t) automat_FREE;
+
+   return 0;
+ONERR:
+   if (ndfa2cpy != ndfa2) {
+      initmove_automat(ndfa2, &copy);
+   }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
 // group: query
 
 size_t matchchar32_automat(const automat_t* ndfa, size_t len, const char32_t str[len], bool matchLongest)
@@ -1298,151 +1526,6 @@ ONERR:
    return 0;
 }
 
-// group: update
-
-int initsequence_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/)
-{
-   int err;
-   void * startstate;
-
-   if (  ndfa1 == ndfa2 || ndfa1->mman != ndfa2->mman
-         || ndfa1->nrstate < 2 || ndfa2->nrstate < 2) {
-      err = EINVAL;
-      goto ONERR;
-   }
-
-   const uint16_t SIZE = (uint16_t) (2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
-   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
-   }
-   if (err) goto ONERR;
-
-   state_t * endstate = (void*) ((uint8_t*)startstate + 1*(state_SIZE + state_SIZE_EMPTYTRANS(1)));
-   state_t * first1   = first_statelist(&ndfa1->states);
-
-   initempty_state(startstate, first1);
-   initempty_state(endstate, endstate);
-
-   state_t * last1  = next_statelist(first1);
-   state_t * first2 = first_statelist(&ndfa2->states);
-   last1->trans.empty[0] = first2;
-
-   state_t * last2 = next_statelist(first2);
-   last2->trans.empty[0] = endstate;
-
-   // set out
-   ndfa->mman = ndfa1->mman;
-   ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2->nrstate;
-   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2->allocated;
-   initsingle_statelist(&ndfa->states, endstate);
-   insertfirst_statelist(&ndfa->states, startstate);
-   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
-   insertlastPlist_slist(&ndfa->states, &ndfa2->states);
-
-   // fast free
-   decruse_automatmman(ndfa1->mman);
-   // 2nd decruse_automatmman not needed to avoid extra call to incruse_automatmman
-   *ndfa1 = (automat_t) automat_FREE;
-   *ndfa2 = (automat_t) automat_FREE;
-
-   return 0;
-ONERR:
-   TRACEEXIT_ERRLOG(err);
-   return err;
-}
-
-int initrepeat_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/)
-{
-   int err;
-   void * startstate;
-
-   if (  ndfa1->nrstate < 2) {
-      err = EINVAL;
-      goto ONERR;
-   }
-
-   const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2)+state_SIZE_EMPTYTRANS(1));
-   err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
-   if (err) goto ONERR;
-
-   state_t * endstate = (void*) ((uint8_t*)startstate + (state_SIZE + state_SIZE_EMPTYTRANS(2)));
-   state_t * first1   = first_statelist(&ndfa1->states);
-
-   initempty2_state(startstate, first1, endstate);
-   initempty_state(endstate, endstate);
-
-   state_t * last1  = next_statelist(first1);
-   last1->trans.empty[0] = startstate;
-
-   // set out
-   ndfa->mman = ndfa1->mman;
-   ndfa->nrstate = 2 + ndfa1->nrstate;
-   ndfa->allocated = SIZE + ndfa1->allocated;
-   initsingle_statelist(&ndfa->states, endstate);
-   insertfirst_statelist(&ndfa->states, startstate);
-   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
-
-   // fast free
-   // decruse_automatmman not needed to avoid extra call to incruse_automatmman
-   *ndfa1 = (automat_t) automat_FREE;
-
-   return 0;
-ONERR:
-   TRACEEXIT_ERRLOG(err);
-   return err;
-}
-
-int initor_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/)
-{
-   int err;
-   void * startstate;
-
-   if (  ndfa1 == ndfa2 || ndfa1->mman != ndfa2->mman
-         || ndfa1->nrstate < 2 || ndfa2->nrstate < 2) {
-      err = EINVAL;
-      goto ONERR;
-   }
-
-   const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2) + state_SIZE_EMPTYTRANS(1));
-   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
-   }
-   if (err) goto ONERR;
-
-   state_t * endstate = (void*) ((uint8_t*)startstate + 1*(state_SIZE + state_SIZE_EMPTYTRANS(2)));
-   state_t * first1   = first_statelist(&ndfa1->states);
-   state_t * first2   = first_statelist(&ndfa2->states);
-
-   initempty2_state(startstate, first1, first2);
-   initempty_state(endstate, endstate);
-
-   state_t * last1 = next_statelist(first1);
-   last1->trans.empty[0] = endstate;
-
-   state_t * last2 = next_statelist(first2);
-   last2->trans.empty[0] = endstate;
-
-   // set out
-   ndfa->mman = ndfa1->mman;
-   ndfa->nrstate = 2 + ndfa1->nrstate + ndfa2->nrstate;
-   ndfa->allocated = SIZE + ndfa1->allocated + ndfa2->allocated;
-   initsingle_statelist(&ndfa->states, endstate);
-   insertfirst_statelist(&ndfa->states, startstate);
-   insertlastPlist_slist(&ndfa->states, &ndfa1->states);
-   insertlastPlist_slist(&ndfa->states, &ndfa2->states);
-
-   // fast free
-   decruse_automatmman(ndfa1->mman);
-   // 2nd decruse_automatmman not needed to avoid extra call to incruse_automatmman
-   *ndfa1 = (automat_t) automat_FREE;
-   *ndfa2 = (automat_t) automat_FREE;
-
-   return 0;
-ONERR:
-   TRACEEXIT_ERRLOG(err);
-   return err;
-}
-
 // group: extend
 
 int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch])
@@ -1477,7 +1560,79 @@ ONERR:
    return err;
 }
 
+// group: optimize
 
+int makedfa_automat(automat_t* ndfa)
+{
+   int err;
+   multistate_t nextmultistate = multistate_INIT;
+   statearray_t stateemptylist = statearray_FREE;
+   automat_mman_t * mman[2] = { 0 };
+   enum { NEXTMULTISTATE, UNUSED };
+   state_t *startstate, *endstate, *next;
+
+   startend_automat(ndfa, &startstate, &endstate);
+
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      err = new_automatmman(&mman[i]);
+      if (err) goto ONERR;
+   }
+
+   err = init_statearray(&stateemptylist);
+   if (err) goto ONERR;
+
+   err = add_multistate(&nextmultistate, mman[NEXTMULTISTATE], startstate);
+   if (err) goto ONERR;
+
+   for (;;) {
+      // === transfer states with empty transitions from nextemultistate into stateemptylist
+      {
+         multistate_iter_t iter;
+         init_multistateiter(&iter, &nextmultistate);
+         while (next_multistateiter(&iter, &next)) {
+            if (next->type == state_EMPTY) {
+               err = insert1_statearray(&stateemptylist, next);
+               if (err) goto ONERR;
+            }
+         }
+      }
+      swap1and2_statearray(&stateemptylist);
+
+      // === extend nextemultistate with empty transition targets ===
+      while (0 == remove2_statearray(&stateemptylist, &next)) {
+         do {
+            for (unsigned i = 0; i < next->nrtrans; ++i) {
+               state_t * target = next->trans.empty[i];
+               err = add_multistate(&nextmultistate, mman[NEXTMULTISTATE], target);
+               if (!err && target->type == state_EMPTY) {
+                  err = insert1_statearray(&stateemptylist, target);
+                  if (err) goto ONERR;
+                  // now target is followed in next iteration after swap1and2_statearray
+               }
+            }
+         } while (0 == remove2_statearray(&stateemptylist, &next));
+         swap1and2_statearray(&stateemptylist);
+      }
+
+      // === convert type from multistate_t into statevector_t
+
+   }
+
+
+
+   return 0;
+ONERR:
+   free_statearray(&stateemptylist);
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      err = delete_automatmman(&mman[i]);
+      if (err) goto ONERR;
+   }
+   foreach (_statelist, s, &ndfa->states) { // TODO: remove ?=
+      s->isused = 0;
+   }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
 
 
 // section: Functions
@@ -2306,6 +2461,7 @@ static int test_multistate(void)
    state_t        state[NROFSTATE];
    multistate_t   mst = multistate_INIT;
    automat_mman_t* mman = 0;
+   multistate_iter_t iter;
    void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
    const unsigned LEVEL1_NROFSTATE = multistate_NROFSTATE * multistate_NROFCHILD;
 
@@ -2745,6 +2901,76 @@ static int test_multistate(void)
          TEST(0 == delete_automatmman(&mman));
          TEST(0 == new_automatmman(&mman));
       }
+   }
+
+   // TEST init_multistateiter: multistate_INIT
+   mst = (multistate_t) multistate_INIT;
+   memset(&iter, 255, sizeof(iter));
+   init_multistateiter(&iter, &mst);
+   // check iter
+   TEST(0 == iter.next_node);
+   TEST(0 == iter.next_state);
+   TEST(0 == iter.is_single);
+
+   // TEST next_multistateiter: multistate_INIT
+   state_t * next = 0;
+   TEST(0 == next_multistateiter(&iter, &next));
+   // check next (unchanged)
+   TEST(0 == next);
+   // check iter
+   TEST(0 == iter.next_node);
+   TEST(0 == iter.next_state);
+   TEST(0 == iter.is_single);
+
+   // TEST init_multistateiter: single entry
+   TEST(0 == add_multistate(&mst, mman, (void*)5));
+   memset(&iter, 255, sizeof(iter));
+   init_multistateiter(&iter, &mst);
+   // check iter
+   TEST(5 == (uintptr_t)iter.next_node);
+   TEST(0 == iter.next_state);
+   TEST(1 == iter.is_single);
+
+   // TEST next_multistateiter: single entry
+   // test
+   TEST(1 == next_multistateiter(&iter, &next));
+   // check next
+   TEST(5 == (uintptr_t)next);
+   // check iter
+   TEST(0 == iter.next_node);
+   TEST(0 == iter.next_state);
+   TEST(0 == iter.is_single);
+
+   multistate_node_t * F = 0;
+   for (uintptr_t i=6; i <= 2*LEVEL1_NROFSTATE; ++i) {
+      // TEST init_multistateiter: one or more pages
+      TEST(0 == add_multistate(&mst, mman, (void*)i));
+      if (i == 6) F = mst.root;
+      memset(&iter, 255, sizeof(iter));
+      init_multistateiter(&iter, &mst);
+      // check iter
+      TEST(F == iter.next_node);
+      TEST(0 == iter.next_state);
+      TEST(0 == iter.is_single);
+
+      // TEST next_multistateiter: one or more pages
+      multistate_node_t * N = F;
+      for (uintptr_t i2 = 5, O = 1; i2 <= i; ++i2, O++) {
+         if (O > N->size) { O = 1; N = N->next; }
+         TEST(1 == next_multistateiter(&iter, &next));
+         // check next
+         TEST(i2 == (uintptr_t)next);
+         // check iter
+         TEST(N == iter.next_node);
+         TEST(O == iter.next_state);
+         TEST(0 == iter.is_single);
+      }
+      // test end of chain
+      TEST(0 == next_multistateiter(&iter, &next));
+      // check iter: reached end
+      TEST(0 == iter.next_node);
+      TEST(0 == iter.next_state);
+      TEST(0 == iter.is_single);
    }
 
    // reset
@@ -3526,45 +3752,47 @@ static int test_initfree(void)
 
    // TEST initsequence_automat
    // prepare
-   // TODO: for (unsigned tc = 0; tc <= 1; ++tc) {
-   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
-   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
-   TEST(2 == refcount_automatmman(mman));
-   S = sizeallocated_automatmman(mman);
-   // test
-   TEST( 0 == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
-   // check mman
-   TEST( refcount_automatmman(mman) == 1);
-   S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
-      + (unsigned) (2*sizeof(empty_transition_t));
-   TEST( sizeallocated_automatmman(mman) == S);
-   // check ndfa1
-   TEST( 0 == ndfa1.mman);
-   // check ndfa2
-   TEST( 0 == ndfa2.mman);
-   // check ndfa
-   TEST( ndfa.mman    == mman);
-   TEST( ndfa.nrstate == 8);
-   TEST( ndfa.allocated == S);
-   TEST( ! isempty_slist(&ndfa.states));
-   // check ndfa.states
-   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 }; // ndfa
-   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-   helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 }; // ndfa1
-   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
-   helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-   helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 7 }, 0, 0 }; // ndfa2
-   helperstate[6] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-   helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
-   TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
-   // reset
-   incruse_automatmman(mman);
-   TEST(0 == free_automat(&ndfa));
-   decruse_automatmman(mman);
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      incruse_automatmman(mman2);
+      TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+      TEST(0 == initmatch_automat(&ndfa2, tc ? &use_mman2 : &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
+      S = sizeallocated_automatmman(mman) + sizeallocated_automatmman(mman2);
+      // test
+      TEST( 0 == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+      // check mman
+      TEST( 1 == refcount_automatmman(mman));
+      TEST( 1 == refcount_automatmman(mman2)); // is copied or not used
+      S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
+         + (unsigned) (2*sizeof(empty_transition_t));
+      TEST( S == sizeallocated_automatmman(mman));
+      // check ndfa1
+      TEST( 0 == ndfa1.mman);
+      // check ndfa2
+      TEST( 0 == ndfa2.mman);
+      // check ndfa
+      TEST( ndfa.mman    == mman);
+      TEST( ndfa.nrstate == 8);
+      TEST( ndfa.allocated == S);
+      TEST( ! isempty_slist(&ndfa.states));
+      // check ndfa.states
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 }; // ndfa
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 }; // ndfa1
+      helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
+      helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 7 }, 0, 0 }; // ndfa2
+      helperstate[6] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+      TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
+      // reset
+      incruse_automatmman(mman);
+      TEST(0 == free_automat(&ndfa));
+      decruse_automatmman(mman);
+      decruse_automatmman(mman2);
+   }
 
    // TEST initrepeat_automat
    // prepare
-   // TODO: for (unsigned tc = 0; tc <= 1; ++tc) {
    TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
    TEST(1 == refcount_automatmman(mman));
    S = sizeallocated_automatmman(mman);
@@ -3596,41 +3824,44 @@ static int test_initfree(void)
 
    // TEST initor_automat
    // prepare
-   // TODO: for (unsigned tc = 0; tc <= 1; ++tc) {
-   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
-   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
-   TEST(2 == refcount_automatmman(mman));
-   S = sizeallocated_automatmman(mman);
-   // test
-   TEST( 0 == initor_automat(&ndfa, &ndfa1, &ndfa2));
-   // check mman
-   TEST( refcount_automatmman(mman) == 1);
-   S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
-      + (unsigned) (3*sizeof(empty_transition_t));
-   TEST( sizeallocated_automatmman(mman) == S);
-   // check ndfa1
-   TEST( 0 == ndfa1.mman);
-   // check ndfa2
-   TEST( 0 == ndfa2.mman);
-   // check ndfa
-   TEST( ndfa.mman    == mman);
-   TEST( ndfa.nrstate == 8);
-   TEST( ndfa.allocated == S);
-   TEST( ! isempty_slist(&ndfa.states));
-   // check ndfa.states
-   helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 5 }, 0, 0 }; // ndfa
-   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-   helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 }; // ndfa1
-   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-   helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-   helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 7 }, 0, 0 }; // ndfa2
-   helperstate[6] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
-   helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
-   TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
-   // reset
-   incruse_automatmman(mman);
-   TEST(0 == free_automat(&ndfa));
-   decruse_automatmman(mman);
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      incruse_automatmman(mman2);
+      TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+      TEST(0 == initmatch_automat(&ndfa2, tc ? &use_mman2 : &use_mman, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
+      S = sizeallocated_automatmman(mman) + sizeallocated_automatmman(mman2);
+      // test
+      TEST( 0 == initor_automat(&ndfa, &ndfa1, &ndfa2));
+      // check mman
+      TEST( 1 == refcount_automatmman(mman));
+      TEST( 1 == refcount_automatmman(mman2)); // is copied or not used
+      S += (unsigned) (2*(sizeof(state_t) - sizeof(transition_t)))
+         + (unsigned) (3*sizeof(empty_transition_t));
+      TEST( S == sizeallocated_automatmman(mman));
+      // check ndfa1
+      TEST( 0 == ndfa1.mman);
+      // check ndfa2
+      TEST( 0 == ndfa2.mman);
+      // check ndfa
+      TEST( ndfa.mman    == mman);
+      TEST( ndfa.nrstate == 8);
+      TEST( ndfa.allocated == S);
+      TEST( ! isempty_slist(&ndfa.states));
+      // check ndfa.states
+      helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 5 }, 0, 0 }; // ndfa
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 }; // ndfa1
+      helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 7 }, 0, 0 }; // ndfa2
+      helperstate[6] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[7] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 6 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+      TEST(0 == helper_compare_states(&ndfa, 8, helperstate))
+      // reset
+      incruse_automatmman(mman);
+      TEST(0 == free_automat(&ndfa));
+      decruse_automatmman(mman);
+      decruse_automatmman(mman2);
+   }
 
    // TEST initand_automat
    // TODO: test initand_automat
@@ -3648,99 +3879,148 @@ static int test_initfree(void)
    // TODO: test initnot_automat (same as initandnot_automat with ndfa1 = ".*")
 
 
-   // === simulated ERROR / EINVAL
-   // TODO: remove check for different mman2 after updating initxxx_
+
+   // === simulated ERROR in copy operation
    // TODO: add check for initand, initandnot, and initnot
 
-   for (unsigned err = 13; err < 15; ++err) {
-      for (unsigned tc = 0, isDone = 0; !isDone; ++tc) {
+   for (unsigned count = 1; count <= 5; count += (count == 1 ? 3 : 1)) {
+      for (unsigned tc = 0; tc < 2; ++tc) {
          // prepare
+         int err = (int) (3+count);
          incruse_automatmman(mman);
          incruse_automatmman(mman2);
+         TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+         TEST(0 == initmatch_automat(&ndfa2, &use_mman2, 1, (char32_t[]) { 2 }, (char32_t[]) { 2 } ));
+         S = sizeallocated_automatmman(mman);
+         init_testerrortimer(&s_automat_errtimer, count, err);
          switch (tc) {
-         case 0:  // TEST initmatch_automat: simulated ERROR
-                  init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  TEST( (int)err == initmatch_automat(&ndfa, &use_mman, 1, from, to));
-                  TEST( 0 == wasted_automatmman(mman));
+         case 0:  // TEST initsequence_automat: ERROR in copy operation
+                  TEST( err == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
                   break;
-         case 1:  // TEST initsequence_automat: simulated ERROR
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, from+2, to+2));
-                  init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  TEST( (int)err == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  // reset
-                  TEST(0 == free_automat(&ndfa2));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         case 2:  // TEST initor_automat: simulated ERROR
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, from+2, to+2));
-                  init_testerrortimer(&s_automat_errtimer, 1, (int) err);
-                  TEST( (int)err == initor_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  // reset
-                  TEST(0 == free_automat(&ndfa2));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         case 3:  // TEST initsequence_automat: EINVAL empty ndfa
-                  TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  break;
-         case 4:  // TEST initrepeat_automat: EINVAL empty ndfa
-                  TEST( EINVAL == initrepeat_automat(&ndfa, &ndfa1));
-                  TEST( 0 == wasted_automatmman(mman));
-                  break;
-         case 5:  // TEST initor_automat: EINVAL empty ndfa
-                  TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  break;
-         case 6:  // TEST initsequence_automat: EINVAL (sequence of same automat)
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa1));
-                  TEST( 0 == wasted_automatmman(mman));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         case 7:  // TEST initor_automat: EINVAL (sequence of same automat)
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa1));
-                  TEST( 0 == wasted_automatmman(mman));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         case 8:  // TEST initsequence_automat: EINVAL (different mman)
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &use_mman2, 1, from+2, to+2));
-                  TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  TEST( 0 == wasted_automatmman(mman2));
-                  TEST(0 == free_automat(&ndfa2));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         case 9:  // TEST initor_automat: EINVAL (different mman)
-                  TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
-                  TEST(0 == initmatch_automat(&ndfa2, &use_mman2, 1, from+2, to+2));
-                  TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa2));
-                  TEST( 0 == wasted_automatmman(mman));
-                  TEST( 0 == wasted_automatmman(mman2));
-                  TEST(0 == free_automat(&ndfa2));
-                  TEST(0 == free_automat(&ndfa1));
-                  break;
-         default: isDone = 1;
+         case 1:  // TEST initor_automat: ERROR in copy operation
+                  TEST( err == initor_automat(&ndfa, &ndfa1, &ndfa2));
                   break;
          }
-         // check mman
-         decruse_automatmman(mman);
-         decruse_automatmman(mman2);
-         TEST( 0 == refcount_automatmman(mman));
-         TEST( 0 == sizeallocated_automatmman(mman));
-         TEST( 0 == refcount_automatmman(mman2));
-         TEST( 0 == sizeallocated_automatmman(mman2));
          // check ndfa
          TEST( ndfa.mman    == 0);
          TEST( ndfa.nrstate == 0);
          TEST( ndfa.allocated == 0);
          TEST( isempty_slist(&ndfa.states));
+         // check ndfa1: not changed
+         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+         helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+         TEST( 0 == helper_compare_states(&ndfa1, 3, helperstate))
+         // check ndfa2: not changed
+         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+         helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+         TEST( 0 == helper_compare_states(&ndfa2, 3, helperstate))
+         // check mman, mman2
+         TEST( refcount_automatmman(mman)      == (count == 1 ? 2 : 3));
+         TEST( sizeallocated_automatmman(mman) == (count == 1 ? S : 2*S));
+         TEST( wasted_automatmman(mman)        == 0);
+         TEST( refcount_automatmman(mman2)     == (count == 1 ? 2 : 1));
+         TEST( sizeallocated_automatmman(mman2) == S);
+         TEST( wasted_automatmman(mman2)       == (count == 1 ? 0 : S));
+         // reset
+         TEST(0 == free_automat(&ndfa1));
+         TEST(0 == free_automat(&ndfa2));
+         decruse_automatmman(mman);
+         decruse_automatmman(mman2);
+         TEST(0 == refcount_automatmman(mman));
+         TEST(0 == sizeallocated_automatmman(mman));
+         TEST(0 == refcount_automatmman(mman2));
+         TEST(0 == sizeallocated_automatmman(mman2));
       }
+   }
+
+   // === simulated ERROR (no copy)
+   // TODO: add check for initand, initandnot, and initnot
+
+   for (unsigned tc = 0; tc < 3; ++tc) {
+      // prepare
+      int err = (int) (tc+4);
+      incruse_automatmman(mman);
+      TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+      TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, from+2, to+2));
+      S = sizeallocated_automatmman(mman);
+      init_testerrortimer(&s_automat_errtimer, 1, (int) err);
+      switch (tc) {
+      case 0:  // TEST initmatch_automat: simulated ERROR
+               TEST( err == initmatch_automat(&ndfa, &use_mman, 1, from, to));
+               break;
+      case 1:  // TEST initsequence_automat: simulated ERROR
+               TEST( err == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+               break;
+      case 2:  // TEST initor_automat: simulated ERROR
+               TEST( err == initor_automat(&ndfa, &ndfa1, &ndfa2));
+               break;
+      }
+      // check ndfa
+      TEST( ndfa.mman    == 0);
+      TEST( ndfa.nrstate == 0);
+      TEST( ndfa.allocated == 0);
+      TEST( isempty_slist(&ndfa.states));
+      // check ndfa1: not changed
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { from[1] }, (char32_t[]) { to[1] } };
+      TEST( 0 == helper_compare_states(&ndfa1, 3, helperstate))
+      // check ndfa2: not changed
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { from[2] }, (char32_t[]) { to[2] } };
+      TEST( 0 == helper_compare_states(&ndfa2, 3, helperstate))
+      // check mman
+      TEST( 0 == wasted_automatmman(mman));
+      TEST( S == sizeallocated_automatmman(mman));
+      TEST( 3 == refcount_automatmman(mman));
+      // reset
+      TEST(0 == free_automat(&ndfa1));
+      TEST(0 == free_automat(&ndfa2));
+      decruse_automatmman(mman);
+      TEST(0 == refcount_automatmman(mman));
+      TEST(0 == sizeallocated_automatmman(mman));
+      TEST(0 == refcount_automatmman(mman2));
+      TEST(0 == sizeallocated_automatmman(mman2));
+   }
+
+   // === EINVAL
+   // TODO: add check for initand, initandnot, and initnot
+
+   for (unsigned tc = 0; tc < 3; ++tc) {
+      // prepare
+      incruse_automatmman(mman);
+      TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, from+1, to+1));
+      S = sizeallocated_automatmman(mman);
+      switch (tc) {
+      case 0:  // TEST initsequence_automat: EINVAL empty ndfa
+               TEST( EINVAL == initsequence_automat(&ndfa, &ndfa1, &ndfa2));
+               TEST( EINVAL == initsequence_automat(&ndfa, &ndfa2, &ndfa1));
+               break;
+      case 1:  // TEST initrepeat_automat: EINVAL empty ndfa
+               TEST( EINVAL == initrepeat_automat(&ndfa, &ndfa2));
+               break;
+      case 2:  // TEST initor_automat: EINVAL empty ndfa
+               TEST( EINVAL == initor_automat(&ndfa, &ndfa1, &ndfa2));
+               TEST( EINVAL == initor_automat(&ndfa, &ndfa2, &ndfa1));
+               break;
+      }
+      // check mman
+      TEST( 0 == wasted_automatmman(mman));
+      TEST( S == sizeallocated_automatmman(mman));
+      TEST( 2 == refcount_automatmman(mman));
+      // check ndfa
+      TEST( ndfa.mman    == 0);
+      TEST( ndfa.nrstate == 0);
+      TEST( ndfa.allocated == 0);
+      TEST( isempty_slist(&ndfa.states));
+      // reset
+      TEST(0 == free_automat(&ndfa1));
+      decruse_automatmman(mman);
+      TEST(0 == refcount_automatmman(mman));
+      TEST(0 == sizeallocated_automatmman(mman));
    }
 
    // TEST initmove_automat

@@ -99,8 +99,7 @@ int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_
 
 /* function: initsequence_automat
  * Erzeugt Automat ndfa = "(ndfa1)(ndfa2)"
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert.
- * TODO: copy ndfa2 if necessary */
+ * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
 int initsequence_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* restrict ndfa2/*freed after return*/);
 
 /* function: initrepeat_automat
@@ -110,8 +109,7 @@ int initrepeat_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa
 
 /* function: initor_automat
  * Erzeugt Automat ndfa = "(ndfa1)|(ndfa2)"
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert.
- * TODO: copy ndfa2 if necessary */
+ * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
 int initor_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* restrict ndfa2/*freed after return*/);
 
 /* function: initand_automat
@@ -161,6 +159,20 @@ size_t matchchar32_automat(const automat_t* ndfa, size_t len, const char32_t str
  * Unchecked Precondition:
  * - ndfa initialized with initmatch_automat */
 int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+
+// group: optimize
+
+/* function: makedfa_automat
+ * Wandelt ndfa in gleichwertigen deterministischen Automaten um.
+ * Leere Übergange (die keine Eingaben erwarten) und mehrdeutige Übergange
+ * werden eliminiert.
+ *
+ * Das folgende Beispiel zeigt die Transformation:
+ * nfa ( start: ""->m1; m1: "a"->m2, "a"->m3; m2: "b"->e; m3: "c"->e; e: <endstate> )
+ * dfa ( start: "a"->m23; m23: "b"->e, "c"->e; e: <endstate> )
+ * */
+int makedfa_automat(automat_t* ndfa);
+
 
 
 // section: inline implementation

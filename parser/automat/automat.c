@@ -15,6 +15,7 @@
 #include "config.h"
 #include "automat.h"
 #include "automat_mman.h"
+#include "patriciatrie.h"
 #include "foreach.h"
 #include "test_errortimer.h"
 
@@ -36,6 +37,7 @@ struct multistate_iter_t;
 struct range_t;
 struct rangemap_node_t;
 struct rangemap_t;
+struct statevector_t;
 
 /* enums: state_e
  * Beschreibt Typ eines <state_t>.
@@ -1054,7 +1056,7 @@ static int addrange_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t 
    int err;
    char32_t next_from = from;
 
-   if (from > to) { err = EINVAL; goto ONERR; }
+   VALIDATE_INPARAM_TEST(from <= to, ONERR, );
 
    for (;;) {
       err = addrange2_rangemap(rmap, mman, next_from, to, &next_from);
@@ -1066,6 +1068,58 @@ static int addrange_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t 
 ONERR:
    return err;
 }
+
+
+/* struct: statevector_t
+ * TODO: */
+typedef struct statevector_t {
+   patriciatrie_node_t  index;
+   size_t               nrstate;
+   state_t*             state[/*nrstate*/];
+} statevector_t;
+
+// group: constants
+
+#define statevector_MAX_NRSTATE \
+         ((UINT16_MAX - sizeof(statevector_t)) / sizeof(state_t*))
+
+// group: lifetime
+
+// TODO:
+int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multistate_t* multistate)
+{
+   int err;
+   void * newvec;
+   multistate_iter_t iter;
+
+   if (multistate->size > statevector_MAX_NRSTATE) {
+      err = EOVERFLOW;
+      goto ONERR;
+   }
+
+   const uint16_t SIZE = (uint16_t) (sizeof(statevector_t) + multistate->size * sizeof(state_t*));
+   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+      err = allocmem_automatmman(mman, SIZE, &newvec);
+   }
+   if (err) goto ONERR;
+
+   // copy states from multistate into newvec
+   ((statevector_t*)newvec)->index   = (patriciatrie_node_t) patriciatrie_node_INIT;
+   ((statevector_t*)newvec)->nrstate = multistate->size;
+   init_multistateiter(&iter, multistate);
+   for (size_t i = 0; next_multistateiter(&iter, &((statevector_t*)newvec)->state[i]); ++i) {
+      assert(i < multistate->size);
+   }
+
+   // set out
+   *svec = newvec;
+
+   return 0;
+ONERR:
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
 
 
 // section: automat_t
@@ -1562,13 +1616,72 @@ ONERR:
 
 // group: optimize
 
+static int follow_empty_transition(multistate_t *multistate, automat_mman_t *mman)
+{
+   int err;
+   statearray_t stateemptylist = statearray_FREE;
+   state_t *next;
+
+   err = init_statearray(&stateemptylist);
+   if (err) goto ONERR;
+
+   // === transfer states with empty transitions from multistate into stateemptylist
+   {
+      multistate_iter_t iter;
+      init_multistateiter(&iter, multistate);
+      while (next_multistateiter(&iter, &next)) {
+         if (next->type == state_EMPTY) {
+            err = insert1_statearray(&stateemptylist, next);
+            if (err) goto ONERR;
+         }
+      }
+   }
+   swap1and2_statearray(&stateemptylist);
+
+   // === extend multistate with empty transition targets ===
+   while (0 == remove2_statearray(&stateemptylist, &next)) {
+      do {
+         for (unsigned i = 0; i < next->nrtrans; ++i) {
+            state_t * target = next->trans.empty[i];
+            err = add_multistate(multistate, mman, target);
+            if (!err) {
+               if (target->type == state_EMPTY) {
+                  err = insert1_statearray(&stateemptylist, target);
+                  if (err) goto ONERR;
+                  // now target is followed in next iteration after swap1and2_statearray
+               }
+            } else if (err != EEXIST) {
+               goto ONERR;
+            }
+         }
+      } while (0 == remove2_statearray(&stateemptylist, &next));
+      swap1and2_statearray(&stateemptylist);
+   }
+
+   err = free_statearray(&stateemptylist);
+   if (err) goto ONERR;
+
+   return 0;
+ONERR:
+   free_statearray(&stateemptylist);
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+/* function: makedfa_automat
+ *
+ * Wie funktioniert das?
+ *
+ *
+ * */
 int makedfa_automat(automat_t* ndfa)
 {
    int err;
    multistate_t nextmultistate = multistate_INIT;
    statearray_t stateemptylist = statearray_FREE;
-   automat_mman_t * mman[2] = { 0 };
-   enum { NEXTMULTISTATE, UNUSED };
+   statevector_t   * statevect = 0;
+   automat_mman_t  * mman[5] = { 0 };
+   enum { DFA, STATEVEC, RANGEMAP, NEXTMULTISTATE, TEMP };
    state_t *startstate, *endstate, *next;
 
    startend_automat(ndfa, &startstate, &endstate);
@@ -1585,36 +1698,29 @@ int makedfa_automat(automat_t* ndfa)
    if (err) goto ONERR;
 
    for (;;) {
-      // === transfer states with empty transitions from nextemultistate into stateemptylist
-      {
-         multistate_iter_t iter;
-         init_multistateiter(&iter, &nextmultistate);
-         while (next_multistateiter(&iter, &next)) {
-            if (next->type == state_EMPTY) {
-               err = insert1_statearray(&stateemptylist, next);
-               if (err) goto ONERR;
-            }
-         }
-      }
-      swap1and2_statearray(&stateemptylist);
-
-      // === extend nextemultistate with empty transition targets ===
-      while (0 == remove2_statearray(&stateemptylist, &next)) {
-         do {
-            for (unsigned i = 0; i < next->nrtrans; ++i) {
-               state_t * target = next->trans.empty[i];
-               err = add_multistate(&nextmultistate, mman[NEXTMULTISTATE], target);
-               if (!err && target->type == state_EMPTY) {
-                  err = insert1_statearray(&stateemptylist, target);
-                  if (err) goto ONERR;
-                  // now target is followed in next iteration after swap1and2_statearray
-               }
-            }
-         } while (0 == remove2_statearray(&stateemptylist, &next));
-         swap1and2_statearray(&stateemptylist);
-      }
+      err = follow_empty_transition(&nextmultistate, mman[NEXTMULTISTATE]);
+      if (err) goto ONERR;
 
       // === convert type from multistate_t into statevector_t
+      err = init_statevector(&statevect, mman[TEMP], &nextmultistate);
+      if (err) goto ONERR;
+
+      assert(0 == refcount_automatmman(mman[NEXTMULTISTATE]));
+      reset_automatmman(mman[NEXTMULTISTATE]);
+
+      /*if statevector is new ==> insert into index and in list of unprocessed states*/
+
+      // process unprocess statevector
+      // build rangemap
+      // For every r in ranges:
+      //  target multistate of r into statevect
+      //  add r to temp-state with pointer to statevect
+      //  if temp-state contains 255 transitions or r is last in ranges
+      //     if temp-state is first then
+      //        add temp-state as state to dfa (state_RANGE)
+      //        set pointer in statevector
+      //     else
+      //        add temp-state as state to dfa (state_RANGE_CONTINUE)
 
    }
 
@@ -3613,6 +3719,23 @@ ONERR:
    return EINVAL;
 }
 
+static int test_statevector(void)
+{
+   automat_mman_t* mman = 0;
+
+   // prepare
+   TEST(0 == new_automatmman(&mman));
+
+
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+
+   return 0;
+ONERR:
+   delete_automatmman(&mman);
+   return EINVAL;
+}
+
 static int test_initfree(void)
 {
    automat_t      ndfa = automat_FREE;
@@ -4323,6 +4446,7 @@ int unittest_proglang_automat()
    if (test_statearray())  goto ONERR;
    if (test_multistate())  goto ONERR;
    if (test_rangemap())    goto ONERR;
+   if (test_statevector()) goto ONERR;
    if (test_initfree())    goto ONERR;
    if (test_query())       goto ONERR;
    if (test_update())      goto ONERR;

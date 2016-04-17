@@ -67,6 +67,14 @@ size_t wasted_automatmman(const struct automat_mman_t * mman);
 
 // group: update
 
+/* function: reset_automatmman
+ * Gibt alle Allokation frei.
+ *
+ * Attention:
+ * Call it only if refcount_automatmman(mman) == 0 or if you know that you do not access
+ * the allocated memory any more. */
+void reset_automatmman(automat_mman_t * mman);
+
 /* function: incruse_automatmman
  * Erhöht die Anzahl derer, die mman nutzen. */
 void incruse_automatmman(struct automat_mman_t * mman);

@@ -44,6 +44,15 @@ typedef uint32_t char32_t;
             " Some resources could not be freed.\n", \
             __FILE__, __LINE__, __FUNCTION__, err);
 
+#define VALIDATE_INPARAM_TEST(test, label, log) \
+         if (!(test)) { \
+            dprintf(STDERR_FILENO, \
+               "%s:%d: %s(): Wrong input arguments\n", \
+               __FILE__, __LINE__, __FUNCTION__); \
+            err = EINVAL; \
+            goto label; \
+         }
+
 #define ispowerof2_int(i) (0 == ((i)&((i)-1)))
 
 #define lengthof(a) (sizeof(a) / sizeof((a)[0]))

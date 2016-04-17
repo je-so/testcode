@@ -223,6 +223,20 @@ size_t wasted_automatmman(const struct automat_mman_t * mman)
 
 // group: update
 
+/* function: reset_automatmman
+ * Gibt alle allokierten Ressourcen frei. */
+void reset_automatmman(automat_mman_t * mman)
+{
+   memory_page_t * first_page = 0;
+   removefirst_pagelist(&mman->pagelist, &first_page);
+   insertlastPlist_pagelist(&mman->pagecache, &mman->pagelist);
+   initsingle_pagelist(&mman->pagelist, first_page);
+   mman->freemem   = memory_page_SIZE + (uint8_t*) first_page;
+   mman->freesize  = memory_page_SIZE - offsetof(memory_page_t, data) - sizeof(automat_mman_t);
+   mman->allocated = 0;
+   mman->wasted = 0;
+}
+
 /* function: incruse_automatmman
  * Markiert die Ressourcen, verwaltet von mman, als vom aufrufenden <automat_t> benutzt. */
 void incruse_automatmman(automat_mman_t * mman)
@@ -231,21 +245,14 @@ void incruse_automatmman(automat_mman_t * mman)
 }
 
 /* function: decruse_automatmman
- * Markiert die Ressourcen, verwaltet von mman, als vom aufrufenden <automat_t> unbenutzt. */
+ * Markiert die Ressourcen, verwaltet von mman, als vom Aufrufer (<automat_t>) unbenutzt. */
 size_t decruse_automatmman(automat_mman_t * mman)
 {
    assert(mman->refcount > 0);
    -- mman->refcount;
 
    if (mman->refcount == 0) {
-      memory_page_t * first_page = 0;
-      removefirst_pagelist(&mman->pagelist, &first_page);
-      insertlastPlist_pagelist(&mman->pagecache, &mman->pagelist);
-      initsingle_pagelist(&mman->pagelist, first_page);
-      mman->freemem   = memory_page_SIZE + (uint8_t*) first_page;
-      mman->freesize  = memory_page_SIZE - offsetof(memory_page_t, data) - sizeof(automat_mman_t);
-      mman->allocated = 0;
-      mman->wasted = 0;
+      reset_automatmman(mman);
    }
 
    return mman->refcount;
@@ -544,6 +551,49 @@ static int test_initfree(void)
          }
          // test refcount == 1
          TEST( 0 == decruse_automatmman(mman));
+         // check mman
+         TEST( ! isempty_slist(&mman->pagelist));
+         TEST( isempty_slist(&mman->pagecache) == (p_size == 0));
+         TEST( mman->refcount == 0);
+         TEST( mman->freemem  == (uint8_t*)mman + sizeof(automat_mman_t) + F);
+         TEST( mman->freesize  == F);
+         TEST( mman->allocated == 0);
+         TEST( mman->wasted == 0);
+         // check mman->pagelist content
+         TEST( last_pagelist(&mman->pagelist) == first_pagelist(&mman->pagelist));
+         TEST( last_pagelist(&mman->pagelist)->data == (void*) mman);
+         // check mman->pagecache content
+         slist_node_t * it = last_slist(&mman->pagecache);
+         for (unsigned i = 0; i < p_size; ++i) {
+            it = next_slist(it);
+            TEST( it == (void*) page[i]);
+         }
+         // reset
+         TEST(0 == delete_automatmman(&mman));
+         TEST(0 == new_automatmman(&mman));
+      }
+   }
+
+   // TEST reset_automatmman
+   for (size_t pl_size = 0; pl_size <= 3; pl_size += 3) {
+      for (size_t pc_size = 0; pc_size <= 2; pc_size += 2) {
+         memory_page_t * page[5] = { 0 };
+         size_t          p_size  = 0;
+         // prepare
+         for (unsigned i = 0; i < pc_size; ++i, ++p_size) {
+            TEST( 0 == new_memorypage(&page[p_size]));
+            insertlast_pagelist(&mman->pagecache, page[p_size]);
+         }
+         for (unsigned i = 0; i < pl_size; ++i, ++p_size) {
+            TEST(0 == new_memorypage(&page[p_size]));
+            insertlast_pagelist(&mman->pagelist, page[p_size]);
+         }
+         mman->freemem   = (void*)0;
+         mman->freesize  = 9;
+         mman->allocated = 8;
+         mman->wasted    = 7;
+         // test
+         reset_automatmman(mman);
          // check mman
          TEST( ! isempty_slist(&mman->pagelist));
          TEST( isempty_slist(&mman->pagecache) == (p_size == 0));

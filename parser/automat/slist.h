@@ -73,7 +73,7 @@ typedef struct slist_iterator_t {
 
 /* function: initfirst_slistiterator
  * Initializes an iterator for <slist_t>. */
-int initfirst_slistiterator(/*out*/slist_iterator_t * iter, const struct slist_t * list);
+int initfirst_slistiterator(/*out*/slist_iterator_t * iter, struct slist_t const * list);
 
 /* function: free_slistiterator
  * Frees an iterator of <slist_t>. This is a no-op. */
@@ -230,9 +230,11 @@ void insertafter_slist(slist_t * list, struct slist_node_t * prev_node, struct s
 
 /* function: removefirst_slist
  * Removes the first element from list.
- * If list contains no elements EINVAL is returned. If list contains elements removed_node points
- * to the removed first elementa and 0 is returned. Ownership of removed_node is transfered back to caller. */
-static inline int removefirst_slist(slist_t * list, struct slist_node_t ** removed_node);
+ * If list contains no elements undefined behaviour happens.
+ *
+ * Unchecked Precondition:
+ * - ! isempty_slist(list) */
+static inline slist_node_t* removefirst_slist(slist_t * list);
 
 /* function: removeafter_slist
  * Removes the next node coming after prev_node from the list.
@@ -258,8 +260,7 @@ int removeall_slist(slist_t * list, uint16_t nodeoffset, struct typeadapt_t * ty
  *
  * Logical Effect of Splice:
  * > while (!isempty_slist(list2)) {
- * >   struct slist_node_t * node;
- * >   removefirst_slist(list2, &node);
+ * >   struct slist_node_t * node = removefirst_slist(list2);
  * >   insertlast_slist(list1, node)
  * > }
  * */
@@ -398,25 +399,20 @@ static inline void insertlastPlist_slist(slist_t * list, slist_t * list2)
 
 /* define: removefirst_slist
  * Implements <slist_t.removefirst_slist>. */
-static inline int removefirst_slist(slist_t * list, struct slist_node_t ** removed_node)
+static inline slist_node_t* removefirst_slist(slist_t * list)
 {
-   // TODO: change implementation => return 0 if list is empty !
+         struct slist_node_t * const last  = list->last;
+         struct slist_node_t * const first = last->next;
 
-   if (isempty_slist(list)) return EINVAL;
+         if (first == last) {
+            list->last = 0;
+         } else {
+            last->next = first->next;
+         }
 
-   struct slist_node_t * const last  = list->last;
-   struct slist_node_t * const first = last->next;
+         first->next = 0;
 
-   if (first == last) {
-      list->last = 0;
-   } else {
-      last->next = first->next;
-   }
-
-   first->next    = 0;
-   *removed_node  = first;
-
-   return 0;
+         return first;
 }
 
 /* define: insertfirst_slist
@@ -451,7 +447,7 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
 #define slist_IMPLEMENT(_fsuffix, object_t, name_nextptr) \
    typedef slist_iterator_t   iteratortype##_fsuffix; \
    typedef object_t        *  iteratedtype##_fsuffix; \
-   static inline int  initfirst##_fsuffix##iterator(slist_iterator_t * iter, const slist_t * list) __attribute__ ((always_inline)); \
+   static inline int  initfirst##_fsuffix##iterator(slist_iterator_t * iter, slist_t const * list) __attribute__ ((always_inline)); \
    static inline int  free##_fsuffix##iterator(slist_iterator_t * iter) __attribute__ ((always_inline)); \
    static inline bool next##_fsuffix##iterator(slist_iterator_t * iter, object_t ** node) __attribute__ ((always_inline)); \
    static inline void init##_fsuffix(slist_t * list) __attribute__ ((always_inline)); \
@@ -464,7 +460,7 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
    static inline void insertfirst##_fsuffix(slist_t * list, object_t * new_node) __attribute__ ((always_inline)); \
    static inline void insertlast##_fsuffix(slist_t * list, object_t * new_node) __attribute__ ((always_inline)); \
    static inline void insertafter##_fsuffix(slist_t * list, object_t * prev_node, object_t * new_node) __attribute__ ((always_inline)); \
-   static inline int removefirst##_fsuffix(slist_t * list, object_t ** removed_node) __attribute__ ((always_inline)); \
+   static inline object_t* removefirst##_fsuffix(slist_t * list) __attribute__ ((always_inline)); \
    static inline int removeafter##_fsuffix(slist_t * list, object_t * prev_node, object_t ** removed_node) __attribute__ ((always_inline)); \
    static inline int removeall##_fsuffix(slist_t * list, struct typeadapt_t * typeadp) __attribute__ ((always_inline)); \
    static inline slist_node_t * cast2node##_fsuffix(object_t * object) { \
@@ -510,10 +506,8 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
    static inline void insertafter##_fsuffix(slist_t * list, object_t * prev_node, object_t * new_node) { \
       insertafter_slist(list, cast2node##_fsuffix(prev_node), cast2node##_fsuffix(new_node)); \
    } \
-   static inline int removefirst##_fsuffix(slist_t * list, object_t ** removed_node) { \
-      int err = removefirst_slist(list, (slist_node_t**)removed_node); \
-      if (!err) *removed_node = cast2object##_fsuffix(*(slist_node_t**)removed_node); \
-      return err; \
+   static inline object_t* removefirst##_fsuffix(slist_t * list) { \
+      return cast2object##_fsuffix(removefirst_slist(list)); \
    } \
    static inline int removeafter##_fsuffix(slist_t * list, object_t * prev_node, object_t ** removed_node) { \
       int err = removeafter_slist(list, cast2node##_fsuffix(prev_node), (slist_node_t**)removed_node); \
@@ -526,7 +520,7 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
    static inline void insertlastPlist##_fsuffix(slist_t * list, slist_t * list2) { \
       insertlastPlist_slist(list, list2); \
    } \
-   static inline int initfirst##_fsuffix##iterator(slist_iterator_t * iter, const slist_t * list) { \
+   static inline int initfirst##_fsuffix##iterator(slist_iterator_t * iter, slist_t const * list) { \
       return initfirst_slistiterator(iter, list); \
    } \
    static inline int free##_fsuffix##iterator(slist_iterator_t * iter) { \

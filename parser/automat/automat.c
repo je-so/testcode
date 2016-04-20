@@ -277,11 +277,11 @@ static int insert1_statearray(statearray_t * arr, state_t * state)
       statearray_block_t * newblock;
       if (isempty_blocklist(&arr->freelist)) {
          void * memblock;
-         err = allocmem_automatmman(arr->mman, (uint16_t) sizeblock_statearray(), &memblock);
+         err = malloc_automatmman(arr->mman, (uint16_t) sizeblock_statearray(), &memblock);
          if (err) goto ONERR;
          newblock = memblock;
       } else {
-         removefirst_blocklist(&arr->freelist, &newblock);
+         newblock = removefirst_blocklist(&arr->freelist);
       }
       insertlast_blocklist(&arr->addlist, newblock);
       newblock->nrstate = 0;
@@ -307,7 +307,7 @@ static int remove2_statearray(statearray_t * arr, state_t ** state)
       if (isempty_blocklist(&arr->dellist)) {
          return ENODATA;
       }
-      removefirst_blocklist(&arr->dellist, &arr->delblock);
+      arr->delblock = removefirst_blocklist(&arr->dellist);
       arr->delnext = &arr->delblock->state[0];
       arr->delend  = &arr->delblock->state[arr->delblock->nrstate];
    }
@@ -529,7 +529,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
          // split leaf
          void * node2;
          {
-            err = allocmem_automatmman(mman, SIZE, &node2);
+            err = malloc_automatmman(mman, SIZE, &node2);
             if (err) goto ONERR;
             const unsigned NODE2_SIZE = ((multistate_NROFSTATE+1) / 2);
             const unsigned NODE_SIZE  = ((multistate_NROFSTATE+1) - NODE2_SIZE);
@@ -587,7 +587,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
                void * child = node2;
                state_t * child_key = key2;
                // ENOMEM ==> information in child(former node2) is lost !! (corrupt data structure)
-               err = allocmem_automatmman(mman, SIZE, &node2);
+               err = malloc_automatmman(mman, SIZE, &node2);
                if (err) goto ONERR;
                const unsigned NODE2_SIZE = ((multistate_NROFCHILD+1) / 2);
                const unsigned NODE_SIZE  = ((multistate_NROFCHILD+1) - NODE2_SIZE);
@@ -640,7 +640,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
          // increment depth by 1: alloc root node pointing to child and split child
          void * root;
          // ENOMEM ==> information in node2 is lost !! (corrupt data structure)
-         err = allocmem_automatmman(mman, SIZE, &root);
+         err = malloc_automatmman(mman, SIZE, &root);
          if (err) goto ONERR;
          ((multistate_node_t*)root)->level = (uint8_t) (((multistate_node_t*)node2)->level + 1);
          ((multistate_node_t*)root)->size  = 2;
@@ -659,7 +659,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
 
    } else {
       // === case 3 ===
-      err = allocmem_automatmman(mman, SIZE, &node);
+      err = malloc_automatmman(mman, SIZE, &node);
       if (err) goto ONERR;
       ((multistate_node_t*)node)->level = 0;
       ((multistate_node_t*)node)->size  = 2;
@@ -826,7 +826,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
 
    if (! rmap->size) {
       // === case 1
-      err = allocmem_automatmman(mman, SIZE, &memblock);
+      err = malloc_automatmman(mman, SIZE, &memblock);
       if (err) goto ONERR;
       node = memblock;
       node->level = 0;
@@ -916,7 +916,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
          // split leaf
          rangemap_node_t * node2;
          {
-            err = allocmem_automatmman(mman, SIZE, &memblock);
+            err = malloc_automatmman(mman, SIZE, &memblock);
             if (err) goto ONERR;
             node2 = memblock;
             const unsigned NODE2_SIZE = ((rangemap_NROFRANGE+1) / 2);
@@ -975,7 +975,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
                rangemap_node_t * child = node2;
                char32_t      child_key = key2;
                // ENOMEM ==> information in child(former node2) is lost !! (corrupt data structure)
-               err = allocmem_automatmman(mman, SIZE, &memblock);
+               err = malloc_automatmman(mman, SIZE, &memblock);
                if (err) goto ONERR;
                node2 = memblock;
                const unsigned NODE2_SIZE = ((rangemap_NROFCHILD+1) / 2);
@@ -1029,7 +1029,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
          // increment depth by 1: alloc root node pointing to child and split child
          rangemap_node_t * root;
          // ENOMEM ==> information in node2 is lost !! (corrupt data structure)
-         err = allocmem_automatmman(mman, SIZE, &memblock);
+         err = malloc_automatmman(mman, SIZE, &memblock);
          if (err) goto ONERR;
          root = memblock;
          root->level = (uint8_t) (node2->level + 1);
@@ -1069,24 +1069,114 @@ ONERR:
    return err;
 }
 
+static int addstate_rangemap(rangemap_t *rmap, automat_mman_t *mman, char32_t from, char32_t to, state_t *state)
+{
+   int err;
+   rangemap_node_t *node;
+
+   VALIDATE_INPARAM_TEST(from <= to, ONERR, );
+
+   if (! rmap->size) {
+      err = EINVAL;
+      goto ONERR;
+   }
+
+   // !! copied from addrange2_rangemap !!
+   node = rmap->root;
+   for (unsigned level = node->level; (level--) > 0; ) {
+      if (node->size > rangemap_NROFCHILD || node->size < 2) return EINVARIANT;
+      unsigned high = node->size -1u;
+      unsigned low  = 0;
+      for (unsigned mid = high / 2u; /*low < high*/; mid = (high + low) / 2u) {
+         if (node->key[mid] <= from) {
+            low = mid + 1;
+         } else {
+            high = mid;
+         }
+         if (low == high) break;
+      }
+      node = node->child[low];
+      if (node->level != level) return EINVARIANT;
+   }
+   if (node->size > rangemap_NROFRANGE) return EINVARIANT;
+   unsigned high = node->size;
+   unsigned low  = 0;
+   for (unsigned mid = high / 2u; low < high; mid = (high + low) / 2u) {
+      if (node->range[mid].to < from) {
+         low = mid + 1;
+      } else {
+         high = mid;
+      }
+   }
+
+   size_t expect = from;
+   for (;;) {
+      if (  low >= node->size
+            || node->range[low].from != expect) {
+         return EINVAL;
+      }
+      expect = node->range[low].to + 1;
+      if (node->range[low].to > to) return EINVAL;
+      err = add_multistate(&node->range[low].state, mman, state);
+      if (err) goto ONERR;
+      if (node->range[low].to == to) break;
+      ++ low;
+      if (low >= node->size) {
+         low = 0;
+         node = node->next;
+         if (!node) return EINVAL;
+      }
+   }
+
+   return 0;
+ONERR:
+   return err;
+}
+
 
 /* struct: statevector_t
- * TODO: */
+ * Ein Array von Pointern auf <state_t>. */
 typedef struct statevector_t {
-   patriciatrie_node_t  index;
+   patriciatrie_node_t  index;   // permits storing in index of type patriciatrie_t
+   slist_node_t       * next;    // permits storing in single linked list of type slist_t
    size_t               nrstate;
    state_t*             state[/*nrstate*/];
 } statevector_t;
 
 // group: constants
 
+/* define: statevector_MAX_NRSTATE
+ * Definiert die maximale Anzahl an Zeigern (auf state_t), die in <statevector_t.state>
+ * gespeichert werden können, so dass immer gilt: (sizeof(statevector_t) <= UINT16_MAX). */
 #define statevector_MAX_NRSTATE \
          ((UINT16_MAX - sizeof(statevector_t)) / sizeof(state_t*))
+
+// group: types
+
+/* define: YYY_stateveclist
+ * Verwaltet <statevector_t> als Liste. */
+slist_IMPLEMENT(_stateveclist, statevector_t, next)
+
+// group: query
+
+/* function: getkey_statevector
+ * Gibt Schlüssel zurück, über den der <statevector_t> indiziert wird. */
+static void getkey_statevector(void *obj, getkey_data_t *key)
+{
+   // set out value
+   key->addr = (void*) ((statevector_t*)obj)->state;
+   key->size = ((statevector_t*)obj)->nrstate * sizeof(state_t*);
+}
+
+static inline getkey_adapter_t keyadapter_statevector(void)
+{
+   return (getkey_adapter_t) getkey_adapter_INIT(offsetof(statevector_t, index), &getkey_statevector);
+}
 
 // group: lifetime
 
 // TODO:
-int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multistate_t* multistate)
+static int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multistate_t* multistate)
 {
    int err;
    void * newvec;
@@ -1099,7 +1189,7 @@ int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multista
 
    const uint16_t SIZE = (uint16_t) (sizeof(statevector_t) + multistate->size * sizeof(state_t*));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(mman, SIZE, &newvec);
+      err = malloc_automatmman(mman, SIZE, &newvec);
    }
    if (err) goto ONERR;
 
@@ -1107,9 +1197,11 @@ int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multista
    ((statevector_t*)newvec)->index   = (patriciatrie_node_t) patriciatrie_node_INIT;
    ((statevector_t*)newvec)->nrstate = multistate->size;
    init_multistateiter(&iter, multistate);
-   for (size_t i = 0; next_multistateiter(&iter, &((statevector_t*)newvec)->state[i]); ++i) {
+   size_t i;
+   for (i = 0; next_multistateiter(&iter, &((statevector_t*)newvec)->state[i]); ++i) {
       assert(i < multistate->size);
    }
+   assert(i == multistate->size);
 
    // set out
    *svec = newvec;
@@ -1182,7 +1274,7 @@ int initempty_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman)
 
    const uint16_t SIZE = (uint16_t) (2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(mman, SIZE, &startstate);
+      err = malloc_automatmman(mman, SIZE, &startstate);
    }
    if (err) goto ONERR;
 
@@ -1223,7 +1315,7 @@ int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_
 
    const uint16_t SIZE = (uint16_t) (3*state_SIZE + 2*state_SIZE_EMPTYTRANS(1) + 1*state_SIZE_RANGETRANS(nrmatch));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(mman, SIZE, &startstate);
+      err = malloc_automatmman(mman, SIZE, &startstate);
    }
    if (err) goto ONERR;
 
@@ -1276,7 +1368,7 @@ int initcopy_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa, const aut
          SIZE = (uint16_t) (state_SIZE + state_SIZE_RANGETRANS(src_state->nrtrans));
       }
       if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-         err = allocmem_automatmman(mman, SIZE, &dest_state);
+         err = malloc_automatmman(mman, SIZE, &dest_state);
       }
       if (err) goto ONERR;
       ((state_t*)dest_state)->type    = src_state->type;
@@ -1340,7 +1432,7 @@ int initsequence_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after r
 
    const uint16_t SIZE = (uint16_t) (2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+      err = malloc_automatmman(ndfa1->mman, SIZE, &startstate);
    }
    if (err) goto ONERR;
 
@@ -1392,7 +1484,7 @@ int initrepeat_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after ret
    }
 
    const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2)+state_SIZE_EMPTYTRANS(1));
-   err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+   err = malloc_automatmman(ndfa1->mman, SIZE, &startstate);
    if (err) goto ONERR;
 
    state_t * endstate = (void*) ((uint8_t*)startstate + (state_SIZE + state_SIZE_EMPTYTRANS(2)));
@@ -1445,7 +1537,7 @@ int initor_automat(/*out*/automat_t* ndfa, automat_t* ndfa1/*freed after return*
 
    const uint16_t SIZE = (uint16_t) (2*state_SIZE + state_SIZE_EMPTYTRANS(2) + state_SIZE_EMPTYTRANS(1));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(ndfa1->mman, SIZE, &startstate);
+      err = malloc_automatmman(ndfa1->mman, SIZE, &startstate);
    }
    if (err) goto ONERR;
 
@@ -1594,7 +1686,7 @@ int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nr
 
    const uint16_t SIZE = (uint16_t) (state_SIZE + state_SIZE_RANGETRANS(nrmatch));
    if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      err = allocmem_automatmman(ndfa->mman, SIZE, &matchstate);
+      err = malloc_automatmman(ndfa->mman, SIZE, &matchstate);
    }
    if (err) goto ONERR;
 
@@ -1678,12 +1770,15 @@ int makedfa_automat(automat_t* ndfa)
 {
    int err;
    multistate_t nextmultistate = multistate_INIT;
-   statearray_t stateemptylist = statearray_FREE;
+   statearray_t stateemptylist = statearray_FREE; // TODO: remove?
    statevector_t   * statevect = 0;
-   automat_mman_t  * mman[5] = { 0 };
-   enum { DFA, STATEVEC, RANGEMAP, NEXTMULTISTATE, TEMP };
-   state_t *startstate, *endstate, *next;
+   automat_mman_t  * mman[4] = { 0 };
+   slist_t         unprocessed;
+   patriciatrie_t  svec_index;
+   enum { DFA, STATEVEC, RANGEMAP, NEXTMULTISTATE };
+   state_t *startstate, *endstate;
 
+   init_patriciatrie(&svec_index, keyadapter_statevector());
    startend_automat(ndfa, &startstate, &endstate);
 
    for (unsigned i = 0; i < lengthof(mman); ++i) {
@@ -1693,24 +1788,19 @@ int makedfa_automat(automat_t* ndfa)
 
    err = init_statearray(&stateemptylist);
    if (err) goto ONERR;
-
    err = add_multistate(&nextmultistate, mman[NEXTMULTISTATE], startstate);
    if (err) goto ONERR;
+   err = follow_empty_transition(&nextmultistate, mman[NEXTMULTISTATE]);
+   if (err) goto ONERR;
+   // === convert type from multistate_t into statevector_t
+   err = init_statevector(&statevect, mman[STATEVEC], &nextmultistate);
+   if (err) goto ONERR;
+   reset_automatmman(mman[NEXTMULTISTATE]);
+   initsingle_stateveclist(&unprocessed, statevect);
 
-   for (;;) {
-      err = follow_empty_transition(&nextmultistate, mman[NEXTMULTISTATE]);
-      if (err) goto ONERR;
+   while (! isempty_slist(&unprocessed)) {
+      statevector_t *nextstatevec = removefirst_stateveclist(&unprocessed);
 
-      // === convert type from multistate_t into statevector_t
-      err = init_statevector(&statevect, mman[TEMP], &nextmultistate);
-      if (err) goto ONERR;
-
-      assert(0 == refcount_automatmman(mman[NEXTMULTISTATE]));
-      reset_automatmman(mman[NEXTMULTISTATE]);
-
-      /*if statevector is new ==> insert into index and in list of unprocessed states*/
-
-      // process unprocess statevector
       // build rangemap
       // For every r in ranges:
       //  target multistate of r into statevect
@@ -1724,7 +1814,13 @@ int makedfa_automat(automat_t* ndfa)
 
    }
 
-
+   err = free_statearray(&stateemptylist);
+   if (err) goto ONERR;
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      assert(0 == refcount_automatmman(mman[i]));
+      err = delete_automatmman(&mman[i]);
+      if (err) goto ONERR;
+   }
 
    return 0;
 ONERR:
@@ -1767,17 +1863,17 @@ static int build1_multistate(
    TEST(nrchild >= 2);
    TEST(nrchild <= multistate_NROFCHILD);
 
-   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
-   TEST(0 == allocmem_automatmman(mman, SIZE, &mst->root));
+   TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
+   TEST(0 == malloc_automatmman(mman, SIZE, &mst->root));
    mst->size = nrchild * multistate_NROFSTATE;
-   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+   TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
    ((multistate_node_t*)mst->root)->level = 1;
    ((multistate_node_t*)mst->root)->size  = (uint8_t) nrchild;
 
    void * prevchild = 0;
    for (unsigned i = 0; i < nrchild; ++i) {
-      TEST(0 == allocmem_automatmman(mman, SIZE, &child[i]));
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[2+i]));
+      TEST(0 == malloc_automatmman(mman, SIZE, &child[i]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[2+i]));
       if (i) ((multistate_node_t*)mst->root)->key[i-1] = &state[S];
       ((multistate_node_t*)mst->root)->child[i] = child[i];
       ((multistate_node_t*)child[i])->level = 0;
@@ -1815,13 +1911,13 @@ static int build2_multistate(
    TEST(nrchild >= 2);
    TEST(nrchild <= multistate_NROFCHILD);
 
-   TEST(0 == allocmem_automatmman(mman, SIZE, &mst->root));
+   TEST(0 == malloc_automatmman(mman, SIZE, &mst->root));
    mst->size = nrchild * level1_size;
    ((multistate_node_t*)mst->root)->level = 2;
    ((multistate_node_t*)mst->root)->size  = (uint8_t) nrchild;
 
    for (uintptr_t i = 0; i < nrchild; ++i) {
-      TEST(0 == allocmem_automatmman(mman, SIZE, &child[i]));
+      TEST(0 == malloc_automatmman(mman, SIZE, &child[i]));
       if (i) ((multistate_node_t*)mst->root)->key[i-1] = (void*)(i*step*level1_size);
       ((multistate_node_t*)mst->root)->child[i] = child[i];
       ((multistate_node_t*)child[i])->level = 1;
@@ -1833,7 +1929,7 @@ static int build2_multistate(
    for (unsigned i = 0; i < nrchild; ++i) {
       for (unsigned c = 0; c < multistate_NROFCHILD; ++c) {
          void * leaf;
-         TEST(0 == allocmem_automatmman(mman, SIZE, &leaf));
+         TEST(0 == malloc_automatmman(mman, SIZE, &leaf));
          ((multistate_node_t*)child[i])->child[c] = leaf;
          if (c) ((multistate_node_t*)child[i])->key[c-1] = (void*)statenr;
          ((multistate_node_t*)leaf)->level = 0;
@@ -1865,7 +1961,7 @@ static int build_recursive(
    rangemap_node_t * parent;
    TEST(level >= 1);
 
-   TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+   TEST(0 == malloc_automatmman(mman, SIZE, &node));
    *root  = node;
    parent = node;
    parent->level = (uint8_t) level;
@@ -1911,7 +2007,7 @@ static int build_rangemap(
    rangemap_node_t * child;
    rangemap_node_t * prev_child = 0;
    for (unsigned i = 0; i < S; ++i, prev_child = child) {
-      TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+      TEST(0 == malloc_automatmman(mman, SIZE, &node));
       child = node;
       if (!i) *first_child = child;
       else    prev_child->next = child;
@@ -1952,17 +2048,17 @@ static int build1_rangemap(
    TEST(nrchild >= 2);
    TEST(nrchild <= rangemap_NROFCHILD);
 
-   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
-   TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+   TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
+   TEST(0 == malloc_automatmman(mman, SIZE, &node));
    rmap->root = node;
    rmap->size = nrchild * rangemap_NROFRANGE;
-   TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+   TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
    rmap->root->level = 1;
    rmap->root->size  = (uint8_t) nrchild;
 
    for (unsigned i = 0, f = 0; i < nrchild; ++i) {
-      TEST(0 == allocmem_automatmman(mman, SIZE, &node));
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[2+i]));
+      TEST(0 == malloc_automatmman(mman, SIZE, &node));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[2+i]));
       child[i] = node;
       if (i) {
          rmap->root->key[i-1] = f;
@@ -2003,14 +2099,14 @@ static int build2_rangemap(
    TEST(nrchild >= 2);
    TEST(nrchild <= rangemap_NROFCHILD);
 
-   TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+   TEST(0 == malloc_automatmman(mman, SIZE, &node));
    rmap->root = node;
    rmap->size = nrchild * level1_size;
    rmap->root->level = 2;
    rmap->root->size  = (uint8_t) nrchild;
 
    for (unsigned i = 0; i < nrchild; ++i) {
-      TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+      TEST(0 == malloc_automatmman(mman, SIZE, &node));
       child[i] = node;
       if (i) rmap->root->key[i-1] = (char32_t) (i*range_width*level1_size);
       rmap->root->child[i] = child[i];
@@ -2022,7 +2118,7 @@ static int build2_rangemap(
    rangemap_node_t * prevleaf = 0;
    for (unsigned i = 0; i < nrchild; ++i) {
       for (unsigned c = 0; c < rangemap_NROFCHILD; ++c) {
-         TEST(0 == allocmem_automatmman(mman, SIZE, &node));
+         TEST(0 == malloc_automatmman(mman, SIZE, &node));
          rangemap_node_t * leaf = node;
          if (c) child[i]->key[c-1] = f;
          child[i]->child[c] = leaf;
@@ -2385,8 +2481,8 @@ static int test_statearray(void)
       arr.addend = arr.addnext;
    }
    for (unsigned i = 0; i < lengthof(block)/2; ++i) {
-      statearray_block_t * firstblock = 0;
-      removefirst_blocklist(&arr.addlist, &firstblock);
+      statearray_block_t *firstblock;
+      firstblock = removefirst_blocklist(&arr.addlist);
       insertlast_blocklist(&arr.dellist, firstblock);
    }
    for (uintptr_t i = 1; i <= 4; ++i) {
@@ -2633,7 +2729,7 @@ static int test_multistate(void)
          // test
          TEST( 0 == add_multistate(&mst, mman, &state[asc ? i : multistate_NROFSTATE-1-i]));
          if (1 == i) {  // set end marker at end of node
-            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
+            TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
             *((void**)addr) = ENDMARKER;
             // check that end marker is effective !!
             TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
@@ -2667,7 +2763,7 @@ static int test_multistate(void)
             if (i != pos) { TEST(0 == add_multistate(&mst, mman, &state[i])); }
          }
          void * addr = 0;
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
          *((void**)addr) = ENDMARKER;
          TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
          // test
@@ -2699,7 +2795,7 @@ static int test_multistate(void)
          TEST(0 == add_multistate(&mst, mman, &state[i]));
       }
       void * addr = 0;
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
       *((void**)addr) = ENDMARKER;
       TEST(addr == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       for (unsigned i = 0; i < multistate_NROFSTATE; ++i) {
@@ -2727,7 +2823,7 @@ static int test_multistate(void)
    // TEST add_multistate: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
    for (unsigned splitidx = 0; splitidx <= multistate_NROFSTATE; ++splitidx) {
       void * addr[2] = { 0 };
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       // prepare
       mst = (multistate_t) multistate_INIT;
@@ -2735,7 +2831,7 @@ static int test_multistate(void)
          if (next == splitidx) ++next;
          TEST(0 == add_multistate(&mst, mman, &state[next]));
       }
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       TEST(addr[1] == &((multistate_node_t*)mst.root)->state[multistate_NROFSTATE]);
       TEST(addr[0] == &((void**)mst.root)[-1]);
@@ -2785,7 +2881,7 @@ static int test_multistate(void)
    for (unsigned desc = 0; desc <= 1; ++desc) {
       void * child[multistate_NROFCHILD] = { 0 };
       void * addr[multistate_NROFCHILD] = { 0 };
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       child[0] = (uint8_t*)addr[0] + sizeof(void*);
       child[1] = (uint8_t*)child[0] + sizeof(multistate_node_t);
@@ -2796,7 +2892,7 @@ static int test_multistate(void)
          TEST(0 == add_multistate(&mst, mman, &state[desc?NROFSTATE-1-i:i]));
       }
       unsigned SIZE = multistate_NROFSTATE+1;
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       for (unsigned nrchild = 2; nrchild <= multistate_NROFCHILD; ) {
          for (unsigned nrstate = 1; nrstate <= multistate_NROFSTATE/2+(desc==0); ++nrstate) {
@@ -2812,7 +2908,7 @@ static int test_multistate(void)
             if (isSplit) {
                if (desc) memmove(&child[2], &child[1], (nrchild-1)*sizeof(child[0]));
                child[desc?1:nrchild] = (uint8_t*)addr[nrchild-1] + sizeof(void*);
-               TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[nrchild]));
+               TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[nrchild]));
                *((void**)addr[nrchild]) = ENDMARKER;
                ++ nrchild;
             }
@@ -2972,7 +3068,7 @@ static int test_multistate(void)
          size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
          TEST(0 == build2_multistate(&mst, mman, 2, nrchild, child));
          void * root = mst.root;
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
          void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(multistate_node_t)/*leaf*/;
          // test add single state ==> split check split
          TEST( 0 == add_multistate(&mst, mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
@@ -3219,7 +3315,7 @@ static int test_rangemap(void)
    for (unsigned from = 0; from < 256; from += 16) {
       for (unsigned to = from; to < 256; to += 32) {
          void * addr[2];
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
          // assumes big blocks + no free block header stored in free memory
          addr[1] = (uint8_t*)addr[0] + sizeof(rangemap_node_t);
          for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -3245,8 +3341,7 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3255,14 +3350,14 @@ static int test_rangemap(void)
       for (unsigned pos = 0; pos < S; ++pos) {
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < S; ++i) {
             if (i == pos) continue;
             TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)i, (char32_t)i));
          }
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
          TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)pos, (char32_t)pos));
@@ -3285,8 +3380,7 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3296,13 +3390,13 @@ static int test_rangemap(void)
          for (unsigned to = from; to <= 2*S; ++to) {
             // prepare
             void * addr[2];
-            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+            TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
             *(void**)addr[0] = ENDMARKER;
             rmap = (rangemap_t) rangemap_INIT;
             for (unsigned i = 0; i < S; ++i) {
                TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(1+2*i), (char32_t)(1+2*i)));
             }
-            TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+            TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
             *(void**)addr[1] = ENDMARKER;
             // test
             TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)from, (char32_t)to));
@@ -3328,8 +3422,7 @@ static int test_rangemap(void)
                TEST( ENDMARKER == *(void**)addr[i]);
             }
             // reset
-            TEST(0 == delete_automatmman(&mman));
-            TEST(0 == new_automatmman(&mman));
+            reset_automatmman(mman);
          }
       }
    }
@@ -3340,13 +3433,13 @@ static int test_rangemap(void)
          const unsigned S = rangemap_NROFRANGE;
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < rangemap_NROFRANGE; ++i) {
             TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*i), (char32_t)(3+4*i)));
          }
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
          TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*from), (char32_t)(4*to+3)));
@@ -3369,8 +3462,7 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3380,13 +3472,13 @@ static int test_rangemap(void)
          const unsigned S = 3u + (0 != from % 4) + (3 != to % 4);
          // prepare
          void * addr[2];
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
          *(void**)addr[0] = ENDMARKER;
          rmap = (rangemap_t) rangemap_INIT;
          for (unsigned i = 0; i < 3; ++i) {
             TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)(4*i), (char32_t)(3+4*i)));
          }
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
          *(void**)addr[1] = ENDMARKER;
          // test
          TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t)from, (char32_t)to));
@@ -3410,8 +3502,7 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *(void**)addr[i]);
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3450,8 +3541,7 @@ static int test_rangemap(void)
       }
       TEST( 0 == child);   // value from child->next
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST addrange_rangemap: insert overlapping range in tree with root->level > 0
@@ -3490,15 +3580,14 @@ static int test_rangemap(void)
          }
          TEST( 0 == child);   // value from child->next
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
    // TEST addrange_rangemap: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
    for (unsigned pos = 0; pos <= rangemap_NROFRANGE; ++pos) {
       void * addr[2] = { 0 };
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[0]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[0]));
       *((void**)addr[0]) = ENDMARKER;
       // prepare
       rmap = (rangemap_t) rangemap_INIT;
@@ -3506,7 +3595,7 @@ static int test_rangemap(void)
          if (i == pos) continue;
          TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)i, (char32_t)i));
       }
-      TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr[1]));
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
       *((void**)addr[1]) = ENDMARKER;
       TEST(addr[1] == &rmap.root->range[rangemap_NROFRANGE]);
       TEST(addr[0] == &((void**)rmap.root)[-1]);
@@ -3552,8 +3641,7 @@ static int test_rangemap(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST addrange_rangemap: build root node (level 1) + many leafs (level 0) unordered
@@ -3601,8 +3689,7 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *((void**)addr[i]));
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3666,8 +3753,7 @@ static int test_rangemap(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST addrange_rangemap: (level 2) split child(level 1) and add to root
@@ -3679,7 +3765,7 @@ static int test_rangemap(void)
          TEST(0 == build2_rangemap(&rmap, mman, 2, nrchild, child));
          void * root = rmap.root;
          void * addr;
-         TEST(0 == allocmem_automatmman(mman, sizeof(void*), &addr));
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
          void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(rangemap_node_t)/*leaf*/;
          // test add single state ==> split
          char32_t r = (char32_t) (pos*(2*LEVEL1_NROFSTATE));
@@ -3705,12 +3791,111 @@ static int test_rangemap(void)
          }
          // skip check other node/leaf content
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
+   // TEST addstate_rangemap
+   // TODO TEST addstate_rangemap
+
+   // TEST addstate_rangemap
+   // TODO TEST addstate_rangemap
+
+   // TEST addstate_rangemap
+   // TODO TEST addstate_rangemap
+
+   // TEST addstate_rangemap: EINVAL (range[x].from < from && from < range[x].to)
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   TEST(0 == addrange_rangemap(&rmap, mman, 5, 9));
+   // test
+   for (unsigned from = 6; from <= 9; ++from) {
+      TEST( EINVAL == addstate_rangemap(&rmap, mman, from, 9, 0));
+      TEST( 1 == rmap.root->size);
+      TEST( 0 == rmap.root->range[0].state.size);
+   }
+
+   // TEST addstate_rangemap: EINVAL (range[x].to < from && from < range[x+1].from)
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i <= 1; ++i) {
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)(3*i), (char32_t)(3*i+1)));
+   }
+   // single node
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, 2, 4, 0));
+   TEST( 0 == rmap.root->range[0].state.size);
+   TEST( 0 == rmap.root->range[1].state.size);
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, 0, 4, 0));
+   TEST( 1 == rmap.root->range[0].state.size);
+   TEST( 0 == rmap.root->range[1].state.size);
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i <= rangemap_NROFRANGE; ++i) {
+      unsigned const off = (i == rangemap_NROFRANGE/2+1);
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)(2*i+off), (char32_t)(2*i+1)));
+   }
+   // split over two nodes
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, rangemap_NROFRANGE+2, rangemap_NROFRANGE+2, 0));
+   for (unsigned c = 0; c <= 1; ++c) {
+      for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
+         TEST( 0 == rmap.root->child[c]->range[i].state.size);
+      }
+   }
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, 0, 2*rangemap_NROFRANGE+1, 0));
+   for (unsigned c = 0; c <= 1; ++c) {
+      unsigned const S = (c == 0);
+      for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
+         TEST( S == rmap.root->child[c]->range[i].state.size);
+      }
+   }
    // reset
+   reset_automatmman(mman);
+
+   // TEST addstate_rangemap: EINVAL (range[x].from < to && to < range[x].to)
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   TEST(0 == addrange_rangemap(&rmap, mman, 5, 9));
+   // test (single node)
+   for (unsigned to = 5; to < 9; ++to) {
+      TEST( EINVAL == addstate_rangemap(&rmap, mman, 5, to, 0));
+      TEST( 1 == rmap.root->size);
+      TEST( 0 == rmap.root->range[0].state.size);
+   }
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i <= rangemap_NROFRANGE; ++i) {
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)(2*i), (char32_t)(2*i+1)));
+   }
+   // split over two nodes
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, (char32_t)0, (char32_t)(rangemap_NROFRANGE+2), 0));
+   // check rmap
+   for (unsigned c = 0; c <= 1; ++c) {
+      unsigned const S = (c == 0);
+      for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
+         TEST( S == rmap.root->child[c]->range[i].state.size);
+      }
+   }
+   // reset
+   reset_automatmman(mman);
+
+   // TEST addstate_rangemap: EINVAL (to > max(range[0..*].to))
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i <= rangemap_NROFRANGE; ++i) {
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t)(5*i), (char32_t)(5*i+4)));
+   }
+   // test
+   TEST( EINVAL == addstate_rangemap(&rmap, mman, 0, 5*rangemap_NROFRANGE+4+1, 0));
+   // check rmap
+   for (unsigned c = 0; c <= 1; ++c) {
+      for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
+         TEST( 1 == rmap.root->child[c]->range[i].state.size);
+      }
+   }
+   // reset
+   reset_automatmman(mman);
+
+   // free resources
    TEST(0 == delete_automatmman(&mman));
 
    return 0;

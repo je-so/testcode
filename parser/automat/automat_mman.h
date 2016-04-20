@@ -64,7 +64,6 @@ size_t sizeallocated_automatmman(const struct automat_mman_t * mman);
  * Gibt allokierten aber nicht mehr genutzten Speicher in Bytes zurück. */
 size_t wasted_automatmman(const struct automat_mman_t * mman);
 
-
 // group: update
 
 /* function: reset_automatmman
@@ -91,10 +90,17 @@ void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted);
 
 // group: memory-allocation
 
-/* function: allocmem_automatmman
+/* function: malloc_automatmman
  * Allokiert mem_size bytes Speicher und gibt Startadresse in mem_addr zurück.
  * Der allokierte Speicherbereich erstreckt sich über [mem_addr .. mem_addr+mem_size-1]. */
-int allocmem_automatmman(struct automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr);
+int malloc_automatmman(struct automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr);
+
+/* function: mfreelast_automatmman
+ * Gibt zuletzt allokierten Speicher wieder frei.
+ * Diese Funktion darf nur einmal nach einem Aufruf von <malloc_automatmman>
+ * aufgerufen werden. Weitere Aufrufe sind nicht erlaubt. Diese Funktion dient dazu,
+ * einen Speicherbereich wieder freizugeben, der nur temporär angelegt wurde. */
+int mfreelast_automatmman(struct automat_mman_t * mman, void * mem_addr);
 
 
 // section: inline implementation

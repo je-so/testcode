@@ -51,6 +51,9 @@ static size_t s_memory_page_sizeallocated = 0;
  * Die Größe in Bytes einer <memory_page_t>. */
 #define memory_page_SIZE (256*1024)
 
+#define memory_page_FREESIZE \
+         (memory_page_SIZE - offsetof(memory_page_t, data))
+
 // group: helper-types
 
 slist_IMPLEMENT(_pagelist, memory_page_t, next.next)
@@ -134,7 +137,7 @@ int new_automatmman(/*out*/struct automat_mman_t ** mman)
    automat_mman_t transient_mman = automat_mman_INIT;
    void * addr_mman;
 
-   err = allocmem_automatmman(&transient_mman, sizeof(automat_mman_t), &addr_mman);
+   err = malloc_automatmman(&transient_mman, sizeof(automat_mman_t), &addr_mman);
    if (err) goto ONERR;
 
    *(automat_mman_t*)addr_mman = transient_mman;
@@ -191,11 +194,11 @@ static inline int getfreepage_automatmman(automat_mman_t * mman, /*out*/memory_p
    int err;
 
    if (! isempty_slist(&mman->pagecache)) {
-      err = removefirst_pagelist(&mman->pagecache, free_page);
+      *free_page = removefirst_pagelist(&mman->pagecache);
    } else {
       err = new_memorypage(free_page);
+      if (err) goto ONERR;
    }
-   if (err) goto ONERR;
 
    insertlast_pagelist(&mman->pagelist, *free_page);
 
@@ -227,8 +230,8 @@ size_t wasted_automatmman(const struct automat_mman_t * mman)
  * Gibt alle allokierten Ressourcen frei. */
 void reset_automatmman(automat_mman_t * mman)
 {
-   memory_page_t * first_page = 0;
-   removefirst_pagelist(&mman->pagelist, &first_page);
+   memory_page_t * first_page;   // mman is located on first page
+   first_page = removefirst_pagelist(&mman->pagelist);
    insertlastPlist_pagelist(&mman->pagecache, &mman->pagelist);
    initsingle_pagelist(&mman->pagelist, first_page);
    mman->freemem   = memory_page_SIZE + (uint8_t*) first_page;
@@ -267,14 +270,13 @@ void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted)
 
 // group: memory-allocation
 
-int allocmem_automatmman(automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr)
+int malloc_automatmman(automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr)
 {
    int err;
 
    if (mman->freesize < mem_size) {
       memory_page_t * free_page;
-      #define FREE_PAGE_SIZE (memory_page_SIZE - offsetof(memory_page_t, data))
-      if (  FREE_PAGE_SIZE < UINT16_MAX && mem_size > FREE_PAGE_SIZE) {
+      if (  memory_page_FREESIZE < UINT16_MAX && mem_size > memory_page_FREESIZE) {
          // free page does not meet demand of mem_size bytes which could as big as UINT16_MAX
          err = ENOMEM;
          goto ONERR;
@@ -282,8 +284,7 @@ int allocmem_automatmman(automat_mman_t * mman, uint16_t mem_size, /*out*/void *
       err = getfreepage_automatmman(mman, &free_page);
       if (err) goto ONERR;
       mman->freemem  = memory_page_SIZE + (uint8_t*) free_page;
-      mman->freesize = FREE_PAGE_SIZE;
-      #undef FREE_PAGE_SIZE
+      mman->freesize = memory_page_FREESIZE;
    }
 
    size_t freesize = mman->freesize;
@@ -292,6 +293,28 @@ int allocmem_automatmman(automat_mman_t * mman, uint16_t mem_size, /*out*/void *
 
    // set out
    *mem_addr = mman->freemem - freesize;
+
+   return 0;
+ONERR:
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int mfreelast_automatmman(struct automat_mman_t * mman, void * mem_addr)
+{
+   int err;
+   size_t freesize = (size_t) (mman->freemem - (uint8_t*)mem_addr);
+   size_t diff     = (freesize - mman->freesize);
+
+   if (  mman->freemem - memory_page_FREESIZE <= (uint8_t*)mem_addr
+         && (uint8_t*)mem_addr <= mman->freemem - mman->freesize
+         && mman->allocated >= diff/*prevents deallocation of mman from first page*/) {
+      mman->freesize   = freesize;
+      mman->allocated -= diff;
+   } else {
+      err = EINVAL;
+      goto ONERR;
+   }
 
    return 0;
 ONERR:
@@ -325,6 +348,11 @@ static int test_memorypage(void)
    // TEST memory_page_SIZE
    TEST(0 < memory_page_SIZE);
    TEST(ispowerof2_int(memory_page_SIZE));
+
+   // TEST memory_page_FREESIZE
+   TEST(memory_page_FREESIZE > 0);
+   TEST(memory_page_FREESIZE < memory_page_SIZE);
+   TEST(memory_page_FREESIZE == memory_page_SIZE - offsetof(memory_page_t, data));
 
    // === group helper types
 
@@ -691,7 +719,7 @@ ONERR:
 
 static int test_allocate(void)
 {
-   automat_mman_t* mman  = 0;
+   automat_mman_t* mman = 0;
    const size_t    oldsize = SIZEALLOCATED_PAGECACHE();
    const size_t    F = memory_page_SIZE - offsetof(memory_page_t, data) - sizeof(automat_mman_t);
    void *          addr;
@@ -699,13 +727,13 @@ static int test_allocate(void)
 
    // prepare
    TEST( 0 == new_automatmman(&mman));
-   TEST( oldsize + memory_page_SIZE == SIZEALLOCATED_PAGECACHE());
+   TEST( SIZEALLOCATED_PAGECACHE() == oldsize + memory_page_SIZE);
 
-   // TEST allocmem_automatmman: size == 0/1
+   // TEST malloc_automatmman: size == 0/1
    for (unsigned size = 0; size <= 1; ++size) {
-      TEST( 0 == allocmem_automatmman(mman, (uint16_t)size, &addr));
+      TEST( 0 == malloc_automatmman(mman, (uint16_t)size, &addr));
       // check env
-      TEST( oldsize + memory_page_SIZE == SIZEALLOCATED_PAGECACHE());
+      TEST( SIZEALLOCATED_PAGECACHE() == oldsize + memory_page_SIZE);
       // check addr
       uint8_t * P = (uint8_t*)mman + sizeof(automat_mman_t);
       TEST( addr == P);
@@ -723,13 +751,13 @@ static int test_allocate(void)
       TEST(0 == new_automatmman(&mman));
    }
 
-   // TEST allocmem_automatmman: allocate new page
+   // TEST malloc_automatmman: allocate new page
    // prepare
    mman->freesize = 4;
    // test
-   TEST( 0 == allocmem_automatmman(mman, 5, &addr));
+   TEST( 0 == malloc_automatmman(mman, 5, &addr));
    // check env
-   TEST( oldsize + 2*memory_page_SIZE == SIZEALLOCATED_PAGECACHE());
+   TEST( SIZEALLOCATED_PAGECACHE() == oldsize + 2*memory_page_SIZE);
    // check addr
    TEST( addr == last_pagelist(&mman->pagelist)->data);
    // check mman
@@ -745,15 +773,15 @@ static int test_allocate(void)
    TEST(0 == delete_automatmman(&mman));
    TEST(0 == new_automatmman(&mman));
 
-   // TEST allocmem_automatmman: allocate cached page
+   // TEST malloc_automatmman: allocate cached page
    // prepare
    mman->freesize = 2;
    TEST(0 == new_memorypage(&page));
    insertlast_pagelist(&mman->pagecache, page);
    // test
-   TEST( 0 == allocmem_automatmman(mman, 3, &addr));
+   TEST( 0 == malloc_automatmman(mman, 3, &addr));
    // check env
-   TEST( oldsize + 2 * memory_page_SIZE + SIZEALLOCATED_PAGECACHE());
+   TEST( SIZEALLOCATED_PAGECACHE() == oldsize + 2 * memory_page_SIZE);
    // check addr
    TEST( addr == page->data);
    // check mman
@@ -764,10 +792,10 @@ static int test_allocate(void)
    TEST( mman->allocated == 3);
    TEST( mman->freesize == memory_page_SIZE - 3 - offsetof(memory_page_t, data));
 
-   // TEST allocmem_automatmman: allocate from current page
+   // TEST malloc_automatmman: allocate from current page
    for (unsigned i = 0, off = 3, A = 3; i <= UINT16_MAX; A += i, off += i, ++i) {
       if (256 == i) i = UINT16_MAX-2;
-      TESTP( 0 == allocmem_automatmman(mman, (uint16_t) i, &addr), "i:%d", i);
+      TESTP( 0 == malloc_automatmman(mman, (uint16_t) i, &addr), "i:%d", i);
       // check env
       TEST( SIZEALLOCATED_PAGECACHE() == oldsize + 2 * memory_page_SIZE);
       // check addr
@@ -780,6 +808,28 @@ static int test_allocate(void)
       TEST( mman->freesize == memory_page_SIZE - off - i - offsetof(memory_page_t, data));
       TEST( mman->allocated == A + i);
    }
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+   TEST(0 == new_automatmman(&mman));
+
+   // TEST mfreelast_automatmman: free last allocation
+   // prepare
+   automat_mman_t old = *mman;
+   memcpy(&old, mman, sizeof(old));
+   TEST(0 == malloc_automatmman(mman, 0, &addr));
+   TEST(0 == memcmp(&old, mman, sizeof(old)));
+   for (unsigned i = 0; i <= UINT16_MAX; i <<= 1, ++i) {
+      // prepare
+      TEST(0 == malloc_automatmman(mman, (uint16_t)i, &addr));
+      // test
+      TEST( 0 == mfreelast_automatmman(mman, addr));
+      // check mman not changed
+      TEST( 0 == memcmp(&old, mman, sizeof(old)));
+   }
+
+   // TEST mfreelast_automatmman: EINVAL
+   TEST( EINVAL == mfreelast_automatmman(mman, (uint8_t*)addr -1));
+   TEST( EINVAL == mfreelast_automatmman(mman, (uint8_t*)addr +1));
 
    // reset
    TEST(0 == delete_automatmman(&mman));

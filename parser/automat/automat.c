@@ -37,6 +37,7 @@ struct multistate_iter_t;
 struct range_t;
 struct rangemap_node_t;
 struct rangemap_t;
+struct rangemap_iter_t;
 struct statevector_t;
 
 /* enums: state_e
@@ -703,7 +704,7 @@ static void init_multistateiter(multistate_iter_t* iter, const multistate_t* mst
    } else if (mst->size) {
       multistate_node_t* node = mst->root;
       for (unsigned level = node->level; (level--) > 0; ) {
-         if (node->size > multistate_NROFCHILD || node->size < 2) goto ONERR;
+         if (node->size > multistate_NROFCHILD || ! node->size) goto ONERR;
          node = node->child[0];
          if (node->level != level) goto ONERR;
       }
@@ -1051,7 +1052,7 @@ ONERR:
    return err;
 }
 
-static int addrange_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t from, char32_t to)
+static int addrange_rangemap(rangemap_t* rmap, automat_mman_t* mman, char32_t from, char32_t to)
 {
    int err;
    char32_t next_from = from;
@@ -1133,9 +1134,55 @@ ONERR:
    return err;
 }
 
+/* struct: rangemap_iter_t
+ * Iteriert über alle in <rangemap_t> gespeicherten <range_t> in aufsteigender Reihenfolge.
+ * Es gilt: range[i].to < range[i+1].from */
+typedef struct rangemap_iter_t {
+   void*    next_node;
+   uint8_t  next_range;
+} rangemap_iter_t;
+
+// group: lifetime
+
+static void init_rangemapiter(rangemap_iter_t* iter, const rangemap_t* rmap)
+{
+   iter->next_node  = 0;
+   iter->next_range = 0;
+
+   if (rmap->size) {
+      rangemap_node_t* node = rmap->root;
+      for (unsigned level = node->level; (level--) > 0; ) {
+         if (node->size > rangemap_NROFCHILD || ! node->size) goto ONERR;
+         node = node->child[0];
+         if (node->level != level) goto ONERR;
+      }
+      iter->next_node = node;
+   }
+
+ONERR:
+   return;
+}
+
+static bool next_rangemapiter(rangemap_iter_t* iter, range_t** range)
+{
+   rangemap_node_t* node = iter->next_node;
+
+   while (node) {
+      if (iter->next_range < node->size) {
+         *range = &node->range[iter->next_range++];
+         return true;
+      }
+      node = node->next;
+      iter->next_node  = node;
+      iter->next_range = 0;
+   }
+
+   return false;
+}
+
 
 /* struct: statevector_t
- * Ein Array von Pointern auf <state_t>. */
+ * Ein Array von sortiertem Pointern auf <state_t>. */
 typedef struct statevector_t {
    patriciatrie_node_t  index;   // permits storing in index of type patriciatrie_t
    slist_node_t       * next;    // permits storing in single linked list of type slist_t
@@ -1175,7 +1222,9 @@ static inline getkey_adapter_t keyadapter_statevector(void)
 
 // group: lifetime
 
-// TODO:
+/* function: init_statevector
+ * Allokiert neuen statevector_t und kopiert states von multistate nach *svec.
+ * Die kopierten states sind in sortierten Reihenfolge gemäß ihrer Speicheradresse. */
 static int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multistate_t* multistate)
 {
    int err;
@@ -1195,10 +1244,12 @@ static int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, m
 
    // copy states from multistate into newvec
    ((statevector_t*)newvec)->index   = (patriciatrie_node_t) patriciatrie_node_INIT;
+   ((statevector_t*)newvec)->next    = 0;
    ((statevector_t*)newvec)->nrstate = multistate->size;
    init_multistateiter(&iter, multistate);
    size_t i;
    for (i = 0; next_multistateiter(&iter, &((statevector_t*)newvec)->state[i]); ++i) {
+      /*returned states are in sorted order*/
       assert(i < multistate->size);
    }
    assert(i == multistate->size);
@@ -3175,7 +3226,7 @@ static int test_multistate(void)
       TEST(0 == iter.is_single);
    }
 
-   // reset
+   // free resources
    TEST(0 == delete_automatmman(&mman));
 
    return 0;
@@ -3290,9 +3341,10 @@ ONERR:
 
 static int test_rangemap(void)
 {
-   rangemap_t     rmap = rangemap_INIT;
-   automat_mman_t*mman = 0;
-   void * const   ENDMARKER = (void*) (uintptr_t) 0x01234567;
+   rangemap_t      rmap = rangemap_INIT;
+   automat_mman_t *mman = 0;
+   rangemap_iter_t iter;
+   void * const    ENDMARKER = (void*) (uintptr_t) 0x01234567;
 
    // prepare
    TEST(0 == new_automatmman(&mman));
@@ -3795,14 +3847,87 @@ static int test_rangemap(void)
       }
    }
 
-   // TEST addstate_rangemap
-   // TODO TEST addstate_rangemap
+   // TEST addstate_rangemap: add to single range
+   // prepare
+   unsigned const NRRANGE = 3 * rangemap_NROFCHILD * rangemap_NROFRANGE;
+   rangemap_node_t *first = 0;
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i < NRRANGE; ++i) {
+      TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t) (2*i), (char32_t) (2*i)));
+      if (!i) first = rmap.root;
+      TEST(first != 0);
+      TEST(first->level == 0);
+   }
+   for (uintptr_t i = 0; i < NRRANGE; ++i) {
+      rangemap_t old;
+      // test
+      memcpy(&old, &rmap, sizeof(old));
+      TEST( 0 == addstate_rangemap(&rmap, mman, (char32_t) (2*i), (char32_t) (2*i), (state_t*)i));
+      // check rmap not changed
+      TEST( 0 == memcmp(&old, &rmap, sizeof(old)));
+      // check rmap leaves content
+      rangemap_node_t *next = first;
+      for (uintptr_t i2 = 0, r = 0; i2 < NRRANGE; ++i2) {
+         TEST(next != 0);
+         TEST(next->size > r);
+         TEST(next->range[r].from == (char32_t) (2*i2));
+         TEST(next->range[r].to   == (char32_t) (2*i2));
+         if (i2 <= i) {
+            TEST(next->range[r].state.size == 1);
+            TEST(next->range[r].state.root == (void*)i2);
+         } else {
+            TEST(next->range[r].state.size == 0);
+            TEST(next->range[r].state.root == 0);
+         }
+         if ( (++r) >= next->size) {
+            r = 0;
+            next = next->next;
+         }
+      }
+   }
+   // reset
+   reset_automatmman(mman);
 
-   // TEST addstate_rangemap
-   // TODO TEST addstate_rangemap
-
-   // TEST addstate_rangemap
-   // TODO TEST addstate_rangemap
+   // TEST addstate_rangemap: add to all ranges
+   // prepare
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i < NRRANGE; ++i) {
+      TEST( 0 == addrange_rangemap(&rmap, mman, (char32_t) (2*i), (char32_t) (2*i+1)));
+      if (!i) first = rmap.root;
+      TEST(first != 0);
+      TEST(first->level == 0);
+   }
+   for (uintptr_t i = 1; i <= 3; ++i) {
+      rangemap_t old;
+      // test
+      memcpy(&old, &rmap, sizeof(old));
+      TEST( 0 == addstate_rangemap(&rmap, mman, 0, 2*NRRANGE-1, (state_t*)i));
+      // check rmap not changed
+      TEST( 0 == memcmp(&old, &rmap, sizeof(old)));
+      // check rmap leaves content
+      rangemap_node_t *next = first;
+      for (uintptr_t i2 = 0, r = 0; i2 < NRRANGE; ++i2) {
+         TEST(next != 0);
+         TEST(next->size > r);
+         TEST(next->range[r].from == (char32_t) (2*i2));
+         TEST(next->range[r].to   == (char32_t) (2*i2+1));
+         TEST(next->range[r].state.size == i);
+         TEST(next->range[r].state.root != 0);
+         if (i == 1) {
+            TEST( (void*)i == next->range[r].state.root);
+         } else {
+            for (uintptr_t s = 1; s <= i; ++s) {
+               TEST( (state_t*)s == ((multistate_node_t*)next->range[r].state.root)->state[s-1]);
+            }
+         }
+         if ( (++r) >= next->size) {
+            r = 0;
+            next = next->next;
+         }
+      }
+   }
+   // reset
+   reset_automatmman(mman);
 
    // TEST addstate_rangemap: EINVAL (range[x].from < from && from < range[x].to)
    // prepare
@@ -3895,6 +4020,70 @@ static int test_rangemap(void)
    // reset
    reset_automatmman(mman);
 
+   // TEST init_rangemapiter: rangemap_INIT
+   rmap = (rangemap_t) rangemap_INIT;
+   memset(&iter, 255, sizeof(iter));
+   init_rangemapiter(&iter, &rmap);
+   // check iter
+   TEST(0 == iter.next_node);
+   TEST(0 == iter.next_range);
+
+   // TEST next_rangemapiter: rangemap_INIT
+   range_t * next = 0;
+   TEST(0 == next_rangemapiter(&iter, &next));
+   // check next (unchanged)
+   TEST(0 == next);
+   // check iter
+   TEST(0 == iter.next_node);
+   TEST(0 == iter.next_range);
+
+   // TEST init_rangemapiter: single entry
+   TEST(0 == addrange_rangemap(&rmap, mman, 1, 1));
+   memset(&iter, 255, sizeof(iter));
+   init_rangemapiter(&iter, &rmap);
+   // check iter
+   TEST(iter.next_node  == rmap.root);
+   TEST(iter.next_range == 0);
+
+   // TEST next_rangemapiter: single entry
+   // test
+   TEST(1 == next_rangemapiter(&iter, &next));
+   // check next
+   TEST(next == &rmap.root->range[0]);
+   // check iter
+   TEST(iter.next_node  == rmap.root);
+   TEST(iter.next_range == 1);
+
+   rangemap_node_t * F = rmap.root;
+   for (unsigned i=2; i <= NRRANGE; ++i) {
+      // TEST init_multistateiter: one or more pages
+      // prepare
+      TEST(0 == addrange_rangemap(&rmap, mman, i, i));
+      memset(&iter, 255, sizeof(iter));
+      // test
+      init_rangemapiter(&iter, &rmap);
+      // check iter
+      TEST(iter.next_node  == F);
+      TEST(iter.next_range == 0);
+
+      // TEST next_rangemapiter: one or more pages
+      rangemap_node_t* N = F;
+      for (uintptr_t i2 = 1, r = 1; i2 <= i; ++i2, r++) {
+         if (r > N->size) { r = 1; N = N->next; }
+         TEST(1 == next_rangemapiter(&iter, &next));
+         // check next
+         TEST(next == &N->range[r-1]);
+         // check iter
+         TEST(iter.next_node  == N);
+         TEST(iter.next_range == r);
+      }
+      // test end of chain
+      TEST(0 == next_rangemapiter(&iter, &next));
+      // check iter: reached end
+      TEST(iter.next_node  == 0);
+      TEST(iter.next_range == 0);
+   }
+
    // free resources
    TEST(0 == delete_automatmman(&mman));
 
@@ -3907,12 +4096,111 @@ ONERR:
 static int test_statevector(void)
 {
    automat_mman_t* mman = 0;
+   statevector_t*  svec = 0;
+   void*    const  MARKER = (void*) (uintptr_t) 0x718293a4;
 
    // prepare
    TEST(0 == new_automatmman(&mman));
 
+   // === group constants
 
-   // reset
+   // TEST statevector_MAX_NRSTATE: ensures statevector_t fits in uint16_t
+   TEST( UINT16_MAX > sizeof(statevector_t) + statevector_MAX_NRSTATE  * sizeof(svec->state[0]));
+   TEST( UINT16_MAX < sizeof(statevector_t) + (statevector_MAX_NRSTATE+1) * sizeof(svec->state[0]));
+
+   // === group types
+   {
+      void* buffer[sizeof(statevector_t) * 128/sizeof(void*)] = { 0 };
+      svec = (statevector_t*) buffer;
+
+      // TEST slist_IMPLEMENT: (_stateveclist, statevector_t, next)
+      slist_t list = slist_INIT;
+      for (unsigned i = 0; i < 128; ++i) {
+         // test insertlast
+         insertlast_stateveclist(&list, &svec[i]);
+         // check svec
+         TEST( 0 == svec[i].index.bit_offset);
+         TEST( 0 == svec[i].index.left);
+         TEST( 0 == svec[i].index.right);
+         TEST( 0 != svec[i].next);
+         TEST( 0 == svec[i].nrstate);
+      }
+      // test foreach
+      unsigned i = 0;
+      foreach (_stateveclist, sv, &list) {
+         TEST(sv == &svec[i++]);
+      }
+      TEST(i == 128);
+   }
+
+   // === group query
+
+   // TEST getkey_statevector
+   {
+      getkey_data_t key = { 0, 0 };
+      void* buffer[sizeof(statevector_t)] = { 0 };
+      svec = (statevector_t*) buffer;
+      for (size_t i = 0; i < 16; ++i) {
+         // test
+         svec->nrstate = i;
+         getkey_statevector(svec, &key);
+         // check key
+         TEST( key.addr == (void*) svec->state);
+         TEST( key.size == i * sizeof(void*));
+      }
+   }
+
+   // TEST keyadapter_statevector
+   {
+      getkey_adapter_t adapter = keyadapter_statevector();
+      TEST( adapter.nodeoffset == offsetof(statevector_t, index));
+      TEST( adapter.getkey     == &getkey_statevector);
+   }
+
+   // === group lifetime
+
+   // TEST init_statevector
+   for (unsigned nrstate = 1; nrstate <= statevector_MAX_NRSTATE; ++nrstate) {
+      if (nrstate == 16) nrstate = statevector_MAX_NRSTATE-3;
+      // prepare
+      multistate_t mstate = multistate_INIT;
+      for (unsigned s = 0; s <= 1; ++s) {
+         for (uintptr_t i = s; i < nrstate; i += 2) {
+            TEST(0 == add_multistate(&mstate, mman, (state_t*)i));
+         }
+      }
+      void* marker[2] = { 0 };
+      void* start_addr;
+      size_t const S = sizeof(statevector_t) + nrstate * sizeof(svec->state[0]);
+      TEST(0 == malloc_automatmman(mman, sizeof(void*), &marker[0]));
+      *(void**)marker[0] = MARKER;
+      TEST(0 == malloc_automatmman(mman, (uint16_t)(S + sizeof(void*)), &start_addr));
+      marker[1] = S + (uint8_t*)start_addr;
+      *(void**)marker[1] = MARKER;
+      TEST(0 == mfreelast_automatmman(mman, start_addr));
+      TEST((uint8_t*)marker[0] + sizeof(void*) + S == marker[1]);
+      // test
+      svec = 0;
+      TEST( 0 == init_statevector(&svec, mman, &mstate));
+      // check svec
+      TEST( svec == start_addr);
+      // check svec content
+      TEST( svec->index.bit_offset == 0);
+      TEST( svec->index.left       == 0);
+      TEST( svec->index.right      == 0);
+      TEST( svec->next             == 0);
+      TEST( svec->nrstate          == nrstate);
+      for (uintptr_t i = 0; i < nrstate; ++i) {
+         TEST( svec->state[i] == (state_t*)i);
+      }
+      // check no overwrite into surrounding memory
+      TEST(MARKER == *(void**)marker[0]);
+      TEST(MARKER == *(void**)marker[1]);
+      // reset
+      reset_automatmman(mman);
+   }
+
+   // free resources
    TEST(0 == delete_automatmman(&mman));
 
    return 0;

@@ -182,7 +182,7 @@ ONERR:
 
 // group: change
 
-int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode)
+int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode, /*err*/ patriciatrie_node_t** existing_node/*0 ==> not returned*/)
 {
    int err;
    getkey_data_t key;
@@ -205,12 +205,11 @@ int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode)
 
    size_t  new_bitoffset;
    uint8_t new_bitvalue;
-   if (node == newnode) {
-      return EEXIST;      // found node already inserted
-   } else {
+   {
       getkey_data_t nodek;
       tree->keyadapt.getkey(cast_object(node, tree->keyadapt.nodeoffset), &nodek);
-      if (first_different_bit(nodek.addr, nodek.size, key.addr, key.size, &new_bitoffset, &new_bitvalue)) {
+      if (node == newnode || first_different_bit(nodek.addr, nodek.size, key.addr, key.size, &new_bitoffset, &new_bitvalue)) {
+         if (existing_node) *existing_node = node;
          return EEXIST;   // found node has same key
       }
       // new_bitvalue == GETBIT(key.addr, key.size, new_bitoffset)
@@ -268,11 +267,12 @@ int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode)
 
    return 0;
 ONERR:
+   if (existing_node) *existing_node = 0; // err param
    TRACEEXIT_ERRLOG(err);
    return err;
 }
 
-int remove_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], patriciatrie_node_t ** removed_node)
+int remove_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], /*out*/patriciatrie_node_t ** removed_node)
 {
    int err;
    patriciatrie_node_t * node;
@@ -286,8 +286,7 @@ int remove_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t s
    getkey_data_t nodek;
    tree->keyadapt.getkey(cast_object(node, tree->keyadapt.nodeoffset), &nodek);
 
-   if (  nodek.size != keylength
-         || memcmp(nodek.addr, searchkey, keylength)) {
+   if (nodek.size != keylength || memcmp(nodek.addr, searchkey, keylength)) {
       return ESRCH;
    }
 

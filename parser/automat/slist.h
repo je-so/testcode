@@ -226,7 +226,7 @@ static inline void insertlast_slist(slist_t * list, struct slist_node_t * new_no
  * Note:
  * Make sure that new_node is not part of a list
  * and that prev_node is part of the list ! */
-void insertafter_slist(slist_t * list, struct slist_node_t * prev_node, struct slist_node_t * new_node);
+static inline void insertafter_slist(slist_t * list, struct slist_node_t * prev_node, struct slist_node_t * new_node);
 
 /* function: removefirst_slist
  * Removes the first element from list.
@@ -430,7 +430,7 @@ static inline void insertfirst_slist(slist_t * list, struct slist_node_t * new_n
 
 /* define: insertlast_slist
  * Implements <slist_t.insertlast_slist>. */
-void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
+static inline void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
 {
    struct slist_node_t * last = list->last;
    if (!last) {
@@ -440,6 +440,15 @@ void insertlast_slist(slist_t * list, struct slist_node_t * new_node)
       last->next     = new_node;
    }
    list->last = new_node;
+}
+
+static inline void insertafter_slist(slist_t * list, struct slist_node_t * prev_node, struct slist_node_t * new_node)
+{
+   new_node->next  = prev_node->next ;
+   prev_node->next = new_node ;
+   if (list->last == prev_node) {
+      list->last = new_node ;
+   }
 }
 
 /* define: slist_IMPLEMENT

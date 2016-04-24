@@ -186,14 +186,15 @@ int find_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t sea
 /* function: insert_patriciatrie
  * Inserts a new node into the tree only if it is unique.
  * If another node exists with the same key nothing is inserted and the function returns EEXIST.
+ * In case of an error existing_node is set to 0 or to an existing node in case of error == EEXIST.
  * The caller has to allocate the new node and has to transfer ownership. */
-int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode);
+int insert_patriciatrie(patriciatrie_t * tree, patriciatrie_node_t * newnode, /*err*/patriciatrie_node_t** existing_node/*0 ==> not returned*/);
 
 /* function: remove_patriciatrie
  * Removes a node if its key equals searchkey.
  * The removed node is not freed but a pointer to it is returned in *removed_node* to the caller.
  * ESRCH is returned if no node with searchkey exists. */
-int remove_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], patriciatrie_node_t ** removed_node);
+int remove_patriciatrie(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], /*out*/patriciatrie_node_t ** removed_node);
 
 /* function: removenodes_patriciatrie
  * Removes all nodes from the tree. For every removed node delete_f is called with the start address of the object.
@@ -331,7 +332,7 @@ bool next_patriciatrieprefixiter(patriciatrie_prefixiter_t * iter, /*out*/patric
    static inline void getinistate##_fsuffix(const patriciatrie_t * tree, /*out*/patriciatrie_node_t ** root, /*out*/getkey_adapter_t * keyadapt) __attribute__ ((always_inline)); \
    static inline bool isempty##_fsuffix(const patriciatrie_t * tree) __attribute__ ((always_inline)); \
    static inline int  find##_fsuffix(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], /*out*/object_t ** found_node) __attribute__ ((always_inline)); \
-   static inline int  insert##_fsuffix(patriciatrie_t * tree, object_t * new_node) __attribute__ ((always_inline)); \
+   static inline int  insert##_fsuffix(patriciatrie_t * tree, object_t * new_node, object_t ** existing_node) __attribute__ ((always_inline)); \
    static inline int  remove##_fsuffix(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], /*out*/object_t ** removed_node) __attribute__ ((always_inline)); \
    static inline int  removenodes##_fsuffix(patriciatrie_t * tree, delete_adapter_f delete_f) __attribute__ ((always_inline)); \
    static inline size_t nodeoffset##_fsuffix(void) { \
@@ -365,8 +366,11 @@ bool next_patriciatrieprefixiter(patriciatrie_prefixiter_t * iter, /*out*/patric
       if (!err) *found_node = cast2object##_fsuffix(node); \
       return err; \
    } \
-   static inline int  insert##_fsuffix(patriciatrie_t * tree, object_t * new_node) { \
-      return insert_patriciatrie(tree, cast2node##_fsuffix(new_node)); \
+   static inline int  insert##_fsuffix(patriciatrie_t * tree, object_t * new_node, /*err*/object_t ** existing_node) { \
+      patriciatrie_node_t* node; \
+      int err = insert_patriciatrie(tree, cast2node##_fsuffix(new_node), &node); \
+      if (err && existing_node) *existing_node = node ? cast2object##_fsuffix(node) : 0; \
+      return err; \
    } \
    static inline int  remove##_fsuffix(patriciatrie_t * tree, size_t keylength, const uint8_t searchkey[keylength], /*out*/object_t ** removed_node) { \
       patriciatrie_node_t* node; \

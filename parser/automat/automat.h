@@ -77,7 +77,7 @@ int free_automat(automat_t* ndfa);
  * This function is used internally cause a every state of a single automat must
  * be located on the same memory heap. Any operation applied to two different automat
  * makes sure that the result of the operation is located on the same heap. */
-int initcopy_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa, const automat_t* use_mman);
+int initcopy_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, const automat_t* use_mman);
 
 /* function: initmove_automat
  * Moves content of src_ndfa to dest_ndfa.
@@ -97,40 +97,13 @@ int initempty_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman);
  * Falls use_mman == 0 wird ein neuer Heap angelegt. */
 int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
 
-/* function: initsequence_automat
- * Erzeugt Automat ndfa = "(ndfa1)(ndfa2)"
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
-int initsequence_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* restrict ndfa2/*freed after return*/);
-
-/* function: initrepeat_automat
- * Erzeugt Automat ndfa = "(ndfa1)*".
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
-int initrepeat_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/);
-
-/* function: initor_automat
- * Erzeugt Automat ndfa = "(ndfa1)|(ndfa2)"
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
-int initor_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* restrict ndfa2/*freed after return*/);
-
-/* function: initand_automat
- * Erzeugt Automat ndfa = "(ndfa1) & (ndfa2)".
- * Der erzeugte Automat erkennt Zeichenfolgen, die von beiden AUtomaten gemeinsam erkannt werden.
- *
- * TODO: Implement opand_automat.
- * TODO: copy ndfa2 if necessary */
-int initand_automat(automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/);
-
-/* function: initandnot_automat
- * Erzeugt Automat ndfa = "(ndfa1) & !(ndfa2)".
- * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden.
- * TODO: Implement opandnot_automat
- * TODO: copy ndfa2 if necessary */
-int initandnot_automat(automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/, automat_t* ndfa2/*freed after return*/);
-
-/* function: initnot_automat
- * Erzeugt Automat ndfa = "!(ndfa1)" bzw. gleichbedeutend mit ndfa = "(.*) & !(ndfa1)".
- * Der Speicher wird vom selben Heap wie bei ndfa1 allokiert. */
-int initnot_automat(automat_t* restrict ndfa, automat_t* restrict ndfa1/*freed after return*/);
+/* function: initreverse_automat
+ * Sei ndfa2 = "ABC" ==> erzeugt Automat ndfa = "CBA".
+ * Alle Transitionen werden umgekehrt und zeigen vom ehemaligen Zielzustand
+ * zum vormaligen Ausgangszustand. Der Startzustand wird zum Endzustand und umgekehrt.
+ * Der Speicher wird vom selben Heap wie bei use_mman allokiert.
+ * Falls use_mman == 0 wird ein neuer Heap angelegt. */
+int initreverse_automat(/*out*/automat_t* ndfa, const automat_t* ndfa2, const automat_t* use_mman);
 
 // group: query
 
@@ -159,6 +132,43 @@ size_t matchchar32_automat(const automat_t* ndfa, size_t len, const char32_t str
  * Unchecked Precondition:
  * - ndfa initialized with initmatch_automat */
 int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+
+// group: operations
+
+/* function: opsequence_automat
+ * Erzeugt Automat ndfa = "(ndfa)(ndfa2)"
+ * Der Speicher wird vom Heap von ndfa allokiert.
+ * Falls ndfa2 nicht denselben Heap benutzt, wird der Inhalt kopiert. */
+int opsequence_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+
+/* function: oprepeat_automat
+ * Erzeugt Automat ndfa = "(ndfa)*". */
+int oprepeat_automat(/*out*/automat_t* restrict ndfa);
+
+/* function: opor_automat
+ * Erzeugt Automat ndfa = "(ndfa)|(ndfa2)"
+ * Der Speicher wird vom Heap von ndfa allokiert.
+ * Falls ndfa2 nicht denselben Heap benutzt, wird der Inhalt kopiert. */
+int opor_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+
+/* function: opand_automat
+ * Erzeugt Automat ndfa = "(ndfa) & (ndfa2)".
+ * Der erzeugte Automat erkennt Zeichenfolgen, die von beiden AUtomaten gemeinsam erkannt werden.
+ *
+ * Der Speicher wird vom Heap von ndfa allokiert.
+ * Falls ndfa2 nicht denselben Heap benutzt, wird der Inhalt kopiert. */
+int opand_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+
+/* function: opandnot_automat
+ * Erzeugt Automat ndfa = "(ndfa) & !(ndfa2)".
+ * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden.
+ * TODO: Implement opandnot_automat
+ * TODO: copy ndfa2 if necessary */
+int opandnot_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+
+/* function: opnot_automat
+ * Erzeugt Automat ndfa = "!(ndfa)" bzw. gleichbedeutend mit ndfa = "(.*) & !(ndfa)". */
+int opnot_automat(automat_t* restrict ndfa);
 
 // group: optimize
 

@@ -77,25 +77,25 @@ int free_automat(automat_t* ndfa);
  * This function is used internally cause a every state of a single automat must
  * be located on the same memory heap. Any operation applied to two different automat
  * makes sure that the result of the operation is located on the same heap. */
-int initcopy_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, const automat_t* use_mman);
+int initcopy_automat(/*out*/automat_t* restrict dest_ndfa, const automat_t* restrict src_ndfa, const automat_t* restrict use_mman);
 
 /* function: initmove_automat
  * Moves content of src_ndfa to dest_ndfa.
  * dest_ndfa is set to freed state after return.
  * No allocated memory is touched. */
-static inline void initmove_automat(/*out*/automat_t* dest_ndfa, automat_t* src_ndfa/*freed after return*/);
+static inline void initmove_automat(/*out*/automat_t* restrict dest_ndfa, automat_t* restrict src_ndfa/*freed after return*/);
 
 /* function: initmatch_automat
  * Erzeugt Automat ndfa = "".
  * Der Speicher wird vom selben Heap wie bei use_mman allokiert.
  * Falls use_mman == 0 wird ein neuer Heap angelegt. */
-int initempty_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman);
+int initempty_automat(/*out*/automat_t* restrict ndfa, struct automat_t* restrict use_mman);
 
 /* function: initmatch_automat
  * Erzeugt Automat ndfa = "[a-bc-de-f]", wobei a == from[0], b == to[0], c == from[1], usw.
  * Der Speicher wird vom selben Heap wie bei use_mman allokiert.
  * Falls use_mman == 0 wird ein neuer Heap angelegt. */
-int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
+int initmatch_automat(/*out*/automat_t* restrict ndfa, struct automat_t* restrict use_mman, uint8_t nrmatch, char32_t match_from[nrmatch], char32_t match_to[nrmatch]);
 
 /* function: initreverse_automat
  * Sei ndfa2 = "ABC" ==> erzeugt Automat ndfa = "CBA".
@@ -103,7 +103,7 @@ int initmatch_automat(/*out*/automat_t* ndfa, struct automat_t* use_mman, uint8_
  * zum vormaligen Ausgangszustand. Der Startzustand wird zum Endzustand und umgekehrt.
  * Der Speicher wird vom selben Heap wie bei use_mman allokiert.
  * Falls use_mman == 0 wird ein neuer Heap angelegt. */
-int initreverse_automat(/*out*/automat_t* ndfa, const automat_t* ndfa2, const automat_t* use_mman);
+int initreverse_automat(/*out*/automat_t* restrict ndfa, const automat_t* ndfa2, const automat_t* use_mman);
 
 // group: query
 
@@ -120,6 +120,11 @@ size_t nrstate_automat(const automat_t* ndfa);
  *     If parameter matchLongest was set to false then L is the shortest possible match.
  */
 size_t matchchar32_automat(const automat_t* ndfa, size_t len, const char32_t str[len], bool matchLongest);
+
+/* function: print_automat
+ * Gibt ein Folge von Zeilen der Form "a(0xaddrA): 'a-z'--> b(0xaddrB)" aus.
+ * Ein '' steht für einen leeren Übergang(Transition), der keinen Buchstaben erwartet. */
+void print_automat(automat_t const* ndfa);
 
 // group: extend
 
@@ -143,7 +148,7 @@ int opsequence_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*free
 
 /* function: oprepeat_automat
  * Erzeugt Automat ndfa = "(ndfa)*". */
-int oprepeat_automat(/*out*/automat_t* restrict ndfa);
+int oprepeat_automat(/*out*/automat_t* ndfa);
 
 /* function: opor_automat
  * Erzeugt Automat ndfa = "(ndfa)|(ndfa2)"
@@ -173,7 +178,7 @@ int opnot_automat(automat_t* restrict ndfa);
 // group: optimize
 
 /* function: makedfa_automat
- * Wandelt ndfa in gleichwertigen deterministischen Automaten um.
+ * Wandelt ndfa in gleichwertigen deterministischen endlichen Automaten um.
  * Leere Übergange (die keine Eingaben erwarten) und mehrdeutige Übergange
  * werden eliminiert.
  *
@@ -183,6 +188,9 @@ int opnot_automat(automat_t* restrict ndfa);
  * */
 int makedfa_automat(automat_t* ndfa);
 
+/* function: minimize_automat
+ * Generiert einen auf minimale Anzahl an Zuständen optimierten deterministischen endlichen Automaten. */
+int minimize_automat(automat_t* ndfa);
 
 
 // section: inline implementation

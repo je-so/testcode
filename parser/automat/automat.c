@@ -94,6 +94,7 @@ typedef struct state_t {
    slist_t  rangelist;
    union {
       uint8_t  isused; // used to mark a state as inserted or used
+      size_t   nr;     // used to assign numbers to states for printing
       struct
       state_t* dest;   // used in copy operations
    };
@@ -664,6 +665,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
 
    } else {
       // === case 3 ===
+      if (mst->root == state) return EEXIST;
       err = malloc_automatmman(mman, SIZE, &node);
       if (err) goto ONERR;
       ((multistate_node_t*)node)->level = 0;
@@ -1500,11 +1502,17 @@ ONERR:
 }
 
 // TODO: test initreverse_automat
-int initreverse_automat(/*out*/automat_t* ndfa, const automat_t* ndfa2, const automat_t* use_mman)
+int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, const automat_t* use_mman)
 {
    int err;
    automat_mman_t * mman;
-   slist_t states = slist_INIT;
+   slist_t  dest_states = slist_INIT;
+
+   if (src_ndfa->nrstate < 2) {
+      // TODO TEST
+      err = EINVAL;
+      goto ONERR;
+   }
 
    if (use_mman) {
       mman = use_mman->mman;
@@ -1515,14 +1523,62 @@ int initreverse_automat(/*out*/automat_t* ndfa, const automat_t* ndfa2, const au
       if (err) goto ONERR;
    }
 
-   // TODO: implement
+   // dest_ndfa: allocate space for every state but without transitions
+   foreach (_statelist, src_state, &src_ndfa->states) {
+      void * dest_state;
+      if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) { \
+         err = malloc_automatmman(mman, state_SIZE, &dest_state); \
+      } \
+      if (err) goto ONERR; \
+      src_state->dest = dest_state; \
+      ((state_t*)dest_state)->nremptytrans = 0; \
+      ((state_t*)dest_state)->nrrangetrans = 0; \
+      ((state_t*)dest_state)->emptylist    = (slist_t) slist_INIT; \
+      ((state_t*)dest_state)->rangelist    = (slist_t) slist_INIT;
+      insertfirst_statelist(&dest_states, (state_t*)dest_state);
+   }
+
+   // copy transitions (unordered (slow memory access!))
+   foreach (_statelist, src_state, &src_ndfa->states) {
+      foreach (_emptylist, src_trans, &src_state->emptylist) {
+         void* dest_trans;
+         err = malloc_automatmman(mman, state_SIZE_EMPTYTRANS(1), &dest_trans);
+         if (err) goto ONERR;
+         state_t* dest_state = src_trans->state->dest;
+         ++ dest_state->nremptytrans;
+         insertlast_emptylist(&dest_state->emptylist, (empty_transition_t*)dest_trans);
+         ((empty_transition_t*)dest_trans)->state = src_state->dest;
+      }
+      foreach (_rangelist, src_trans, &src_state->rangelist) {
+         void* dest_trans;
+         err = malloc_automatmman(mman, state_SIZE_RANGETRANS(1), &dest_trans);
+         if (err) goto ONERR;
+         state_t* dest_state = src_trans->state->dest;
+         ++ dest_state->nrrangetrans;
+         insertlast_rangelist(&dest_state->rangelist, (range_transition_t*)dest_trans);
+         ((range_transition_t*)dest_trans)->state = src_state->dest;
+         ((range_transition_t*)dest_trans)->from  = src_trans->from;
+         ((range_transition_t*)dest_trans)->to    = src_trans->to;
+      }
+   }
+
+   state_t* endstate = last_statelist(&dest_states);
+   if (  !endstate->nremptytrans
+         || last_emptylist(&endstate->emptylist)->state != endstate) {
+      void* dest_trans;
+      err = malloc_automatmman(mman, state_SIZE_EMPTYTRANS(1), &dest_trans);
+      if (err) goto ONERR;
+      ++ endstate->nremptytrans;
+      insertlast_emptylist(&endstate->emptylist, (empty_transition_t*)dest_trans);
+      ((empty_transition_t*)dest_trans)->state = endstate;
+   }
 
    // set out
    incruse_automatmman(mman);
-   ndfa->mman    = mman;
-   ndfa->nrstate = ndfa2->nrstate;
-   ndfa->allocated = ndfa2->allocated;
-   ndfa->states  = states;
+   dest_ndfa->mman    = mman;
+   dest_ndfa->nrstate = src_ndfa->nrstate;
+   dest_ndfa->allocated = src_ndfa->allocated;
+   dest_ndfa->states  = dest_states;
 
    return 0;
 ONERR:
@@ -1620,6 +1676,40 @@ ONERR:
    free_statearray(&states);
    TRACEEXIT_ERRLOG(err);
    return 0;
+}
+
+void print_automat(automat_t const* ndfa)
+{
+   size_t nr = 0;
+
+   // assign numbers to states
+   foreach (_statelist, s, &ndfa->states) {
+      s->nr = nr++;
+   }
+
+   // print every transition of every state starting with start state
+   printf("\n");
+   foreach (_statelist, s, &ndfa->states) {
+      foreach (_emptylist, trans, &s->emptylist) {
+         printf("%zd(%p) ''--> %zd(%p)\n", s->nr, (void*)s, trans->state->nr, (void*)trans->state);
+      }
+      foreach (_rangelist, trans, &s->rangelist) {
+         printf("%zd(%p) '", s->nr, (void*)s);
+         if (' ' <= trans->from && trans->from <= 'z') {
+            printf("%c", (char)trans->from);
+         } else {
+            printf("0x%02"PRIx32, trans->from);
+         }
+         if (trans->from != trans->to) {
+            if (' ' <= trans->to && trans->to <= 'z') {
+               printf("-%c", (char)trans->to);
+            } else {
+               printf("-0x%02"PRIx32, trans->to);
+            }
+         }
+         printf("'--> %zd(%p)\n", trans->state->nr, (void*)trans->state);
+      }
+   }
 }
 
 // group: extend
@@ -2070,6 +2160,34 @@ ONERR:
    for (unsigned i = 0; i < lengthof(mman); ++i) {
       delete_automatmman(&mman[i]);
    }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int minimize_automat(automat_t* ndfa)
+{
+   int err;
+   automat_t ndfa2 = automat_FREE;
+   automat_t ndfa3 = automat_FREE;
+
+   err = initreverse_automat(&ndfa2, ndfa, 0);
+   if (err) goto ONERR;
+   err = makedfa_automat(&ndfa2);
+   if (err) goto ONERR;
+   err = initreverse_automat(&ndfa3, &ndfa2, 0);
+   if (err) goto ONERR;
+   err = free_automat(&ndfa2);
+   if (err) goto ONERR;
+   err = makedfa_automat(&ndfa3);
+   if (err) goto ONERR;
+   err = free_automat(ndfa);
+   initmove_automat(ndfa, &ndfa3);
+   if (err) goto ONERR;
+
+   return 0;
+ONERR:
+   (void) free_automat(&ndfa2);
+   (void) free_automat(&ndfa3);
    TRACEEXIT_ERRLOG(err);
    return err;
 }
@@ -2943,12 +3061,15 @@ static int test_multistate(void)
    // TEST add_multistate: multistate_t.size == 0
    for (unsigned i = 0; i < NROFSTATE; ++i) {
       mst = (multistate_t) multistate_INIT;
-      TEST( 0 == add_multistate(&mst, mman, &state[i]));
-      // check mman: nothing allocated
-      TEST( 0 == sizeallocated_automatmman(mman));
-      // check mst
-      TEST( 1 == mst.size);
-      TEST( &state[i] == mst.root);
+      for (unsigned tc = 0; tc <= 1; ++tc) {
+         // test
+         TEST( (tc ? EEXIST : 0) == add_multistate(&mst, mman, &state[i]));
+         // check mman: nothing allocated
+         TEST( 0 == sizeallocated_automatmman(mman));
+         // check mst
+         TEST( 1 == mst.size);
+         TEST( &state[i] == mst.root);
+      }
    }
 
    // TEST add_multistate: multistate_t.size == 1
@@ -2957,18 +3078,20 @@ static int test_multistate(void)
          // prepare
          mst = (multistate_t) multistate_INIT;
          TEST(0 == add_multistate(&mst, mman, &state[i + !order]));
-         // test
-         TEST( 0 == add_multistate(&mst, mman, &state[i + order]));
-         // check mman
-         TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
-         // check mst
-         TEST( 2 == mst.size);
-         TEST( 0 != mst.root);
-         // check mst.root content
-         TEST( 0 == ((multistate_node_t*)mst.root)->level);
-         TEST( 2 == ((multistate_node_t*)mst.root)->size);
-         TEST( &state[i] == ((multistate_node_t*)mst.root)->state[0]);
-         TEST( &state[i+1] == ((multistate_node_t*)mst.root)->state[1]);
+         for (unsigned tc = 0; tc <= 1; ++tc) {
+            // test
+            TEST( (tc ? EEXIST : 0) == add_multistate(&mst, mman, &state[i + order]));
+            // check mman
+            TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
+            // check mst
+            TEST( 2 == mst.size);
+            TEST( 0 != mst.root);
+            // check mst.root content
+            TEST( 0 == ((multistate_node_t*)mst.root)->level);
+            TEST( 2 == ((multistate_node_t*)mst.root)->size);
+            TEST( &state[i] == ((multistate_node_t*)mst.root)->state[0]);
+            TEST( &state[i+1] == ((multistate_node_t*)mst.root)->state[1]);
+         }
          // reset
          TEST(0 == delete_automatmman(&mman));
          TEST(0 == new_automatmman(&mman));
@@ -4630,7 +4753,7 @@ static int test_initfree(void)
    TEST(0 == free_automat(&ndfa1));
 
    // TEST initmove_automat
-   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 3 } ));
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 3000 } ));
    // test
    S = sizeallocated_automatmman(mman);
    initmove_automat(&ndfa, &ndfa1);
@@ -4649,7 +4772,7 @@ static int test_initfree(void)
    TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
    helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { 1 }, (char32_t[]) { 3 } };
+   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { 1 }, (char32_t[]) { 3000 } };
    TEST(0 == helper_compare_states(&ndfa, 2, helperstate))
    // reset
    TEST(0 == free_automat(&ndfa));
@@ -4692,6 +4815,15 @@ static int test_initfree(void)
    // reset
    TEST(0 == free_automat(&ndfa));
    reset_automatmman(mman);
+
+   // TEST initreverse_automat
+   // TODO initreverse_automat
+
+   // TEST initreverse_automat
+   // TODO initreverse_automat
+
+   // TEST initreverse_automat
+   // TODO initreverse_automat
 
    // reset
    TEST(0 == delete_automatmman(&mman));
@@ -5207,7 +5339,9 @@ ONERR:
 
 static int test_optimize(void)
 {
-   automat_t      ndfa = automat_FREE;
+   automat_t      ndfa  = automat_FREE;
+   automat_t      ndfa1 = automat_FREE;
+   automat_t      ndfa2 = automat_FREE;
    automat_mman_t*mman = 0;
    automat_t      use_mman;
    void *         end_addr;
@@ -5281,7 +5415,6 @@ static int test_optimize(void)
    // prepare
    TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 0 }, (char32_t[]) { 1 }));
    for (unsigned i = 1; i < 4*255; ++i) {
-      automat_t ndfa2;
       TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 3*i }, (char32_t[]) { 3*i+1 }));
       TEST(0 == opor_automat(&ndfa, &ndfa2));
    }
@@ -5319,19 +5452,64 @@ static int test_optimize(void)
    TEST(0 == free_automat(&ndfa));
    reset_automatmman(mman);
 
-   // === reverse automaton (start becomes end state and vice versa)
-   // TODO:
-
    // === minimize states of automaton (reverse + dfa + reverse + dfa)
+
+   // TEST initreverse_automat: dfa+reverse+dfa+reverse could generate an nfa
+   // prepare
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]){'x'}, (char32_t[]){'x'}));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'b'}, (char32_t[]){'b'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // xb
+   TEST(0 == oprepeat_automat(&ndfa1));            // (xb)*
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'x'}, (char32_t[]){'x'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // (xb)*x
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'n'}, (char32_t[]){'n'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // (xb)*xn
+   TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]){'b'}, (char32_t[]){'b'}));
+   TEST(0 == opsequence_automat(&ndfa, &ndfa1));   // b(xb)*xn
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]){'x'}, (char32_t[]){'x'}));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'c'}, (char32_t[]){'c'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // xc
+   TEST(0 == oprepeat_automat(&ndfa1));            // (xc)*
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'x'}, (char32_t[]){'x'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // (xc)*x
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'n'}, (char32_t[]){'n'}));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));  // (xc)*xn
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'c'}, (char32_t[]){'c'}));
+   TEST(0 == opsequence_automat(&ndfa2, &ndfa1));  // c(xc)*xn
+   TEST(0 == opor_automat(&ndfa, &ndfa2));         // b(xb)*xn|c(xc)*xn
+   // test
+   TEST( 0 == makedfa_automat(&ndfa));
+   TEST( 0 == initreverse_automat(&ndfa2, &ndfa, &use_mman));
+   TEST( 0 == free_automat(&ndfa));
+   TEST( 0 == makedfa_automat(&ndfa2));
+   TEST( 0 == initreverse_automat(&ndfa, &ndfa2, &use_mman));
+   TEST( 0 == free_automat(&ndfa2));
+   // check ndfa is type nfa
+   next_addr = first_statelist(&ndfa.states);
+   for (unsigned i = 0; i < 3; ++i) {
+      next_addr = next_statelist(next_addr);
+   }
+   // check ndfa: 4th state has 2 transition with 'c' ==> no dfa but nfa
+   TEST(2 == ((state_t*)next_addr)->nrrangetrans);
+   TEST((char32_t)'c' == last_rangelist(&((state_t*)next_addr)->rangelist)->from);
+   TEST((char32_t)'c' == first_rangelist(&((state_t*)next_addr)->rangelist)->from);
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   reset_automatmman(mman);
+
    // TODO:
 
    // reset
    TEST(0 == free_automat(&ndfa));
+   TEST(0 == free_automat(&ndfa1));
+   TEST(0 == free_automat(&ndfa2));
    TEST(0 == delete_automatmman(&mman));
 
    return 0;
 ONERR:
    free_automat(&ndfa);
+   free_automat(&ndfa1);
+   free_automat(&ndfa2);
    delete_automatmman(&mman);
    return EINVAL;
 }

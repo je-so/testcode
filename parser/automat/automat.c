@@ -810,7 +810,68 @@ typedef struct rangemap_t {
 
 // group: query
 
-// TODO:
+static int invariant2_rangemap(rangemap_node_t* node, unsigned level, char32_t* from, char32_t to)
+{
+   int err;
+   if (node->level != level) {
+      return EINVARIANT;
+   }
+
+   if (     node->size < 2
+         || node->size > (node->level ? rangemap_NROFCHILD : rangemap_NROFRANGE)) {
+      return EINVARIANT;
+   }
+
+   if (node->level) {
+      if (from && *from >= node->key[0]) {
+         return EINVARIANT;
+      }
+      if (to <= node->key[node->size-2]) {
+         return EINVARIANT;
+      }
+      for (unsigned i = 0; i < node->size-2u; ++i) {
+         if (node->key[i] >= node->key[i+1]) {
+            return EINVARIANT;
+         }
+      }
+      for (unsigned i = 0; i < node->size; ++i) {
+         err = invariant2_rangemap(node->child[i], level-1, i ? &node->key[i-1] : 0, i < node->size-1u ? node->key[i]-1u : to);
+         if (err) return err;
+      }
+   } else {
+      if (from && *from != node->range[0].from) {
+         return EINVARIANT;
+      }
+      if (to < node->range[node->size-1].to) {
+         return EINVARIANT;
+      }
+      for (unsigned i = 0; i < node->size; ++i) {
+         if (node->range[i].from > node->range[i].to) {
+            return EINVARIANT;
+         }
+      }
+      for (unsigned i = 0; i < node->size-1u; ++i) {
+         if (node->range[i].to >= node->range[i+1].from) {
+            return EINVARIANT;
+         }
+      }
+   }
+
+   return 0;
+}
+
+static int invariant_rangemap(rangemap_t * rmap)
+{
+   int err;
+   rangemap_node_t* node = rmap->root;
+
+   if (rmap->size <= 1) return 0;
+   if (!node || node->level >= 32 || node->size < 2) return EINVARIANT;
+
+   err = invariant2_rangemap(node, node->level, 0, (char32_t)-1);
+
+   return err;
+}
 
 // group: update
 
@@ -868,7 +929,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
          if (low < node->size-1u && node->key[low] <= to) {
             isNextFrom = true;
             nextFrom = node->key[low];
-            to = node->key[low]-1;
+            to = nextFrom-1;
          }
          push_depthstack(&stack, node, low);
          node = node->child[low];
@@ -1025,7 +1086,7 @@ static int addrange2_rangemap(rangemap_t * rmap, automat_mman_t * mman, char32_t
                      // key2 = child_key; // already equal
                   }
                   *node2_child++ = child;
-                  for (unsigned i = (rangemap_NROFCHILD-1)-low; i; --i, ++node_child, ++node2_child) {
+                  for (unsigned i = (rangemap_NROFCHILD-1)-low; i; --i, ++node_key, ++node2_key, ++node_child, ++node2_child) {
                      *node2_key = *node_key;
                      *node2_child = *node_child;
                   }
@@ -1242,6 +1303,27 @@ static inline bool iscontained_statevector(statevector_t *svec, state_t *state)
    }
 
    return (svec->nrstate > low) && (state == svec->state[low]);
+}
+
+// TODO: add test for isinuse12_statevector
+static inline bool isinuse12_statevector(statevector_t *svec, bool isNeedValue2)
+{
+   size_t i;
+
+   for (i = 0; i < svec->nrstate; ++i) {
+      if (svec->state[i]->isused == 1) {
+         if (! isNeedValue2) return true;
+         for (++i; i < svec->nrstate; ++i) {
+            if (svec->state[i]->isused == 2) return true;
+         }
+      } else if (svec->state[i]->isused == 2) {
+         for (++i; i < svec->nrstate; ++i) {
+            if (svec->state[i]->isused == 1) return true;
+         }
+      }
+   }
+
+   return false;
 }
 
 // group: lifetime
@@ -1508,11 +1590,6 @@ int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, 
    automat_mman_t * mman;
    slist_t  dest_states = slist_INIT;
 
-   if (src_ndfa->nrstate < 2) {
-      err = EINVAL;
-      goto ONERR;
-   }
-
    if (use_mman) {
       mman = use_mman->mman;
    } else {
@@ -1520,6 +1597,11 @@ int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, 
       err = new_automatmman(&mman);
       PROCESS_testerrortimer(&s_automat_errtimer, &err);
       if (err) goto ONERR;
+   }
+
+   if (src_ndfa->nrstate < 2) {
+      err = EINVAL;
+      goto ONERR;
    }
 
    // dest_ndfa: allocate space for every state but without transitions
@@ -2189,6 +2271,226 @@ int minimize_automat(automat_t* ndfa)
 ONERR:
    (void) free_automat(&ndfa2);
    (void) free_automat(&ndfa3);
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+typedef enum { OP_AND, OP_AND_NOT } op_e;
+
+static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
+{
+   int err;
+   void* addr;
+   size_t          nrstate = 0;
+   size_t          allocated = 0;
+   slist_t         dfa_states = slist_INIT;
+   multistate_t    multistate = multistate_INIT;
+   statevector_t   * new_statevec = 0;
+   automat_mman_t  * mman[4] = { 0 };
+   slist_t         unprocessed;
+   patriciatrie_t  svec_index;
+   enum { DFA, STATEVEC, RANGEMAP, MULTISTATE };
+   state_t *startstate,  *endstate;
+   state_t *startstate2, *endstate2;
+
+   if (! ndfa->mman || !ndfa2->mman) {
+      err = EINVAL;
+      goto ONERR;
+   }
+
+   // init local var
+   init_patriciatrie(&svec_index, keyadapter_statevector());
+   startend_automat(ndfa, &startstate, &endstate);
+   startend_automat(ndfa2, &startstate2, &endstate2);
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      err = new_automatmman(&mman[i]);
+      if (err) goto ONERR;
+   }
+
+   // flag used to discriminate between the owner automaton of the state
+   foreach (_statelist, s, &ndfa->states) {
+      s->isused = 1;
+   }
+   foreach (_statelist, s, &ndfa2->states) {
+      s->isused = 2;
+   }
+
+   // generate start state of type statevector_t
+   err = add_multistate(&multistate, mman[MULTISTATE], startstate);
+   if (err) goto ONERR;
+   err = add_multistate(&multistate, mman[MULTISTATE], startstate2);
+   if (err) goto ONERR;
+   err = follow_empty_transition(&multistate, mman[MULTISTATE]);
+   if (err) goto ONERR;
+   // === convert type from multistate_t into statevector_t
+   err = init_statevector(&new_statevec, mman[STATEVEC], &multistate);
+   if (err) goto ONERR;
+   initsingle_stateveclist(&unprocessed, new_statevec);
+   err = insert_patriciatrie(&svec_index, &new_statevec->index, 0);
+   if (err) goto ONERR;
+   reset_automatmman(mman[MULTISTATE]);
+
+   void* dfa_endstate;
+   {
+      const uint16_t SIZE = (uint16_t) (state_SIZE + state_SIZE_EMPTYTRANS(1));
+      if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+         err = malloc_automatmman(mman[DFA], SIZE, &dfa_endstate);
+      }
+      if (err) goto ONERR;
+      ++ nrstate;
+      allocated += SIZE;
+      initempty_state(dfa_endstate, dfa_endstate);
+   }
+
+   // process all unprocessed statevector_t
+   //   (every statevecor_t is a single state in the new build dfa)
+   // the first processed state is also the start state
+   while (! isempty_slist(&unprocessed)) {
+      statevector_t *statevec = removefirst_stateveclist(&unprocessed);
+
+      // build rangemap_t from statevec
+      // For every r in ranges:
+      //  extend r.state with all reachable states by following empty transitions
+      //  convert r.state of type multistate_t into type statevector_t
+      //  add r as transition to new dfa-state with pointer to converted statevector
+
+      rangemap_t rmap;
+      err = build_rangemap_from_statevector(&rmap, mman[RANGEMAP], statevec);
+      if (err) goto ONERR;
+
+      const bool isendstate = iscontained_statevector(statevec, endstate)
+                              && ((op == OP_AND && iscontained_statevector(statevec, endstate2))
+                                  || (op == OP_AND_NOT && ! iscontained_statevector(statevec, endstate2)));
+
+      if (isendstate && rmap.size == 0 && nrstate != 1/*not start state*/) {
+         // optimization if state is only an end state (except for start state)
+         // do not generate state which contains only a single empty transition to end state
+         statevec->dfa = dfa_endstate;
+         continue; // while (! isempty_slist(&unprocessed))
+      }
+
+      state_t* dfastate;
+      {
+         const uint16_t SIZE = (uint16_t) (state_SIZE + (isendstate ? state_SIZE_EMPTYTRANS(1) : 0));
+         if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+            err = malloc_automatmman(mman[DFA], SIZE, &addr);
+         }
+         if (err) goto ONERR;
+         allocated += SIZE;
+         dfastate = addr;
+         if (isendstate) {
+            initempty_state(dfastate, dfa_endstate);
+         } else {
+            initrange_state(dfastate, 0, 0, 0, 0);
+         }
+      }
+
+      range_transition_t* prevtrans = 0;
+
+      range_t* range;
+      rangemap_iter_t iter;
+      init_rangemapiter(&iter, &rmap);
+      while (next_rangemapiter(&iter, &range)) {
+         err = follow_empty_transition(&range->state, mman[MULTISTATE]);
+         if (err) goto ONERR;
+         err = init_statevector(&new_statevec, mman[STATEVEC], &range->state);
+         if (err) goto ONERR;
+         reset_automatmman(mman[MULTISTATE]);
+         if (! isinuse12_statevector(new_statevec, op == OP_AND)) {
+            // Optimization: end state can not be reached by new_statevec
+            //               ==> do not add any transition
+            mfreelast_automatmman(mman[STATEVEC], new_statevec);
+            continue;
+         }
+         patriciatrie_node_t* existing_node;
+         err = insert_patriciatrie(&svec_index, &new_statevec->index, &existing_node);
+         if (! err) {
+            insertlast_stateveclist(&unprocessed, new_statevec);
+         } else {
+            if (err != EEXIST) goto ONERR;
+            mfreelast_automatmman(mman[STATEVEC], new_statevec);
+            new_statevec = (void*) ((uintptr_t)existing_node - offsetof(statevector_t, index));
+         }
+         if (  prevtrans && (state_t*)new_statevec == prevtrans->state
+               && range->from == prevtrans->to+1) {
+            // transition optimizer
+            prevtrans->to = range->to;
+         } else {
+            // add new transition
+            const uint16_t SIZE = (uint16_t) (state_SIZE_RANGETRANS(1));
+            if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
+               err = malloc_automatmman(mman[DFA], SIZE, &addr);
+            }
+            if (err) goto ONERR;
+            allocated += SIZE;
+            prevtrans = addr;
+            ++ dfastate->nrrangetrans;
+            insertlast_rangelist(&dfastate->rangelist, prevtrans);
+            prevtrans->state = (state_t*) new_statevec;
+            prevtrans->from  = range->from;
+            prevtrans->to    = range->to;
+         }
+      }
+      reset_automatmman(mman[RANGEMAP]);
+      if (! dfastate->nrrangetrans && isendstate && nrstate != 1/*not start state*/) {
+         // remove empty state
+         const uint16_t SIZE = (uint16_t) (state_SIZE + state_SIZE_EMPTYTRANS(1));
+         statevec->dfa = dfa_endstate;
+         mfreelast_automatmman(mman[DFA], dfastate);
+         allocated -= SIZE;
+      } else {
+         statevec->dfa = dfastate;
+         ++ nrstate;
+         insertlast_statelist(&dfa_states, dfastate);
+      }
+   }
+
+   // set end state as last state in list
+   insertlast_statelist(&dfa_states, dfa_endstate);
+
+   // convert all pointers of transitions from dfa
+   // from pointing to statevector_t into pointers to state_t
+   foreach (_statelist, dfastate, &dfa_states) {
+      foreach (_rangelist, range_trans, &dfastate->rangelist) {
+         range_trans->state = ((statevector_t*)range_trans->state)->dfa;
+      }
+   }
+
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      if (i == DFA) continue;
+      err = delete_automatmman(&mman[i]);
+      if (err) goto ONERR;
+   }
+   automat_mman_t * dfa_mman = mman[DFA];
+   mman[DFA] = 0;
+
+   // set out (change ndfa even in case of error to valid state)
+   incruse_automatmman(dfa_mman);
+   err = free_automat(ndfa);
+   ndfa->mman = dfa_mman;
+   ndfa->nrstate = nrstate;
+   ndfa->allocated = allocated;
+   ndfa->states = dfa_states;
+   if (err) goto ONERR;
+
+   return 0;
+ONERR:
+   for (unsigned i = 0; i < lengthof(mman); ++i) {
+      delete_automatmman(&mman[i]);
+   }
+   TRACEEXIT_ERRLOG(err);
+   return err;
+}
+
+int opand_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2)
+{
+   int err;
+
+   err = makedfa2_automat(ndfa, OP_AND, ndfa2);
+   if (err) goto ONERR;
+
+   return 0;
+ONERR:
    TRACEEXIT_ERRLOG(err);
    return err;
 }
@@ -3931,6 +4233,7 @@ static int test_rangemap(void)
          // test add single state ==> split check split
          char32_t r = (char32_t) (pos*(4*rangemap_NROFRANGE));
          TEST( 0 == addrange_rangemap(&rmap, mman, r, r+1));
+         TEST( 0 == invariant_rangemap(&rmap));
          // check: mman
          TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check: rmap
@@ -3964,6 +4267,8 @@ static int test_rangemap(void)
             TEST( ENDMARKER == *((void**)addr[i]));
          }
          // reset
+         malloc_automatmman(mman, 0, &addr[1]);
+         memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
          reset_automatmman(mman);
       }
    }
@@ -3988,6 +4293,7 @@ static int test_rangemap(void)
       // test add single state ==> split check split
       char32_t r = (char32_t) (pos*(4*rangemap_NROFRANGE));
       TEST( 0 == addrange_rangemap(&rmap, mman, r, r+1));
+      TEST( 0 == invariant_rangemap(&rmap));
       // check: mman
       TEST( (rangemap_NROFCHILD+2)*sizeof(void*)+(rangemap_NROFCHILD+4)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
       // check rmap
@@ -4028,23 +4334,27 @@ static int test_rangemap(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
+      malloc_automatmman(mman, 0, &addr[1]);
+      memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
       reset_automatmman(mman);
    }
 
    // TEST addrange_rangemap: (level 2) split child(level 1) and add to root
    for (unsigned nrchild=2; nrchild < rangemap_NROFCHILD; ++nrchild) {
       for (uintptr_t pos = 0; pos < nrchild; ++pos) {
+         void * addr[2];
          rangemap_node_t * child[rangemap_NROFCHILD] = { 0 };
          const unsigned LEVEL1_NROFSTATE = rangemap_NROFRANGE * rangemap_NROFCHILD;
          size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
+         TEST(0 == malloc_automatmman(mman, 0, &addr[0]));
          TEST(0 == build2_rangemap(&rmap, mman, 2, nrchild, child));
          void * root = rmap.root;
-         void * addr;
-         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
-         void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(rangemap_node_t)/*leaf*/;
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
+         void * splitchild = (uint8_t*)addr[1] + sizeof(void*) + sizeof(rangemap_node_t)/*leaf*/;
          // test add single state ==> split
          char32_t r = (char32_t) (pos*(2*LEVEL1_NROFSTATE));
          TEST( 0 == addrange_rangemap(&rmap, mman, r, r));
+         TEST( 0 == invariant_rangemap(&rmap));
          // check: mman
          TEST( sizeof(void*)+(1+2+nrchild+nrchild*rangemap_NROFCHILD)*sizeof(rangemap_node_t) == sizeallocated_automatmman(mman));
          // check rmap
@@ -4066,9 +4376,48 @@ static int test_rangemap(void)
          }
          // skip check other node/leaf content
          // reset
+         malloc_automatmman(mman, 0, &addr[1]);
+         memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
          reset_automatmman(mman);
       }
    }
+
+   // TEST addstate_rangemap: add overlapping range from 0..MAX
+   rmap = (rangemap_t) rangemap_INIT;
+   for (unsigned i = 0; i <= 1000; ++i) {
+      TEST(0 == addrange_rangemap(&rmap, mman, (char32_t) (3*i), (char32_t) (3*i+1)));
+   }
+   // test
+   TEST( 0 == addrange_rangemap(&rmap, mman, 0, (char32_t)-1));
+   TEST( 0 == invariant_rangemap(&rmap));
+   // check rmap content
+   {
+      range_t* r;
+      unsigned i = 0;
+      bool isInBetween = false;
+      init_rangemapiter(&iter, &rmap);
+      while (next_rangemapiter(&iter, &r)) {
+         if (isInBetween) {
+            TEST(r->from == i);
+            if (i == 3002) {
+               TEST(r->to == (char32_t)-1);
+               i = (char32_t)-1;
+            } else {
+               TEST(r->to == i);
+               i += 1;
+            }
+         } else {
+            TEST(r->from == i);
+            TEST(r->to   == i+1);
+            i += 2;
+         }
+         isInBetween = !isInBetween;
+      }
+      TEST(i == (char32_t)-1);
+   }
+   // reset
+   reset_automatmman(mman);
+
 
    // TEST addstate_rangemap: add to single range
    // prepare
@@ -4464,15 +4813,14 @@ ONERR:
 
 static int helper_get_states(automat_t * ndfa, size_t maxsize, /*out*/state_t * states[maxsize])
 {
-   state_t* s = last_statelist(&ndfa->states);
+   size_t i = 0;
 
-   if (ndfa->nrstate > maxsize) return ENOMEM;
-
-   for (size_t i = 0; i < ndfa->nrstate; ++i, s = next_statelist(s)) {
-      states[i] = s;
+   foreach (_statelist, s, &ndfa->states) {
+      if (i >= maxsize) return ENOMEM;
+      states[i++] = s;
    }
 
-   return 0;
+   return (i == ndfa->nrstate) ? 0 : EINVAL;
 }
 
 typedef enum {
@@ -4685,7 +5033,7 @@ static int test_initfree(void)
    incruse_automatmman(mman);
    incruse_automatmman(mman2);
    for (unsigned i = 0; i < lengthof(target_state); ++i) {
-      target_state[i] = 0;
+      target_state[i] = 1;
    }
    for (unsigned i = 0; i < lengthof(from); ++i) {
       from[i] = i;
@@ -4717,8 +5065,8 @@ static int test_initfree(void)
          TEST( ndfa.allocated == S);
          TEST( ! isempty_slist(&ndfa.states));
          // check ndfa.states
-         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-         helperstate[1] = (helper_state_t) { state_RANGE, (uint8_t) i, target_state, from, to };
+         helperstate[0] = (helper_state_t) { state_RANGE, (uint8_t) i, target_state, from, to };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
          TEST( 0 == helper_compare_states(&ndfa, 2, helperstate))
 
          // TEST free_automat: free and double free
@@ -4792,8 +5140,8 @@ static int test_initfree(void)
       TEST( ndfa.allocated == S);
       TEST( ! isempty_slist(&ndfa.states));
       // check ndfa.states
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
       TEST( 0 == helper_compare_states(&ndfa, 2, helperstate))
       // reset
       TEST( 0 == free_automat(&ndfa));
@@ -4871,8 +5219,8 @@ static int test_initfree(void)
    TEST( ndfa.allocated == S);
    TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
-   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { 1 }, (char32_t[]) { 3000 } };
+   helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 1 }, (char32_t[]) { 3000 } };
+   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
    TEST(0 == helper_compare_states(&ndfa, 2, helperstate))
    // reset
    TEST(0 == free_automat(&ndfa));
@@ -4898,14 +5246,14 @@ static int test_initfree(void)
       TEST( ndfa2.mman == (tc ? mman2 : ndfa2.mman));
       TEST( 0 == helper_compare_copy(&ndfa2, &ndfa));
       TEST( (1+tc) == refcount_automatmman(ndfa2.mman));
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 4 }, 0, 0 };
+      helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 1, 3 }, 0, 0 }; // ndfa
       // ndfa1
-      helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-      helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 2 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+      helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
       // ndfa2
-      helperstate[4] = (helper_state_t) { state_RANGE, 2, (size_t[]) { 5, 5 }, (char32_t[]) { 2, 3 }, (char32_t[]) { 2, 3 } };
-      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+      helperstate[3] = (helper_state_t) { state_RANGE, 2, (size_t[]) { 4, 4 }, (char32_t[]) { 2, 3 }, (char32_t[]) { 2, 3 } };
+      helperstate[4] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
+      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 }; // ndfa
       TEST( 0 == helper_compare_states(&ndfa2, 6, helperstate))
       // reset
       TEST(0 == free_automat(&ndfa2));
@@ -4923,8 +5271,8 @@ static int test_initfree(void)
       TEST( 0 == initreverse_automat(&ndfa2, &ndfa, tc ? &use_mman : 0));
       // check ndfa2
       TEST( 0 == helper_compare_reverse(&ndfa2, &ndfa, tc ? &use_mman : 0));
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };    // added empty self trans to end state
-      helperstate[1] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 0, 1 }, 0, 0 }; // start state contains empty self trans of former end state
+      helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 1, 0 }, 0, 0 }; // start state contains empty self trans of former end state
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };    // added empty self trans to end state
       TEST( 0 == helper_compare_states(&ndfa2, 2, helperstate))
       // reset
       TEST(0 == free_automat(&ndfa2));
@@ -4961,6 +5309,32 @@ ONERR:
    free_automat(&ndfa2);
    delete_automatmman(&mman);
    delete_automatmman(&mman2);
+   return EINVAL;
+}
+
+static int check_dfa_endstate(automat_t* ndfa, /*out*/void** end_addr2)
+{
+   state_t* start_state;
+   state_t* end_state;
+   void*    end_addr;
+
+   TEST( 1 == refcount_automatmman(ndfa->mman));
+   TEST( 0 == malloc_automatmman(ndfa->mman, 0, &end_addr));
+   startend_automat(ndfa, &start_state, &end_state);
+
+   TEST( end_state   == (void*) ((uintptr_t)end_addr - ndfa->allocated));
+   TEST( start_state == (void*) ((uintptr_t)end_state + (state_SIZE + state_SIZE_EMPTYTRANS(1))));
+   TEST( end_state->nremptytrans == 1);
+   TEST( end_state->nrrangetrans == 0);
+   TEST( ! isempty_slist(&end_state->emptylist));
+   TEST( isempty_slist(&end_state->rangelist));
+   TEST( last_emptylist(&end_state->emptylist)->next == last_slist(&end_state->emptylist));
+   TEST( last_emptylist(&end_state->emptylist)->state == end_state);
+
+   if (end_addr2) *end_addr2 = end_addr;
+
+   return 0;
+ONERR:
    return EINVAL;
 }
 
@@ -5016,14 +5390,14 @@ static int test_operations(void)
       TEST( ndfa.allocated == S);
       TEST( ! isempty_slist(&ndfa.states));
       // check ndfa.states
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 2 }, 0, 0 };
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
       // ndfa1
-      helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-      helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 2 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+      helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 3 }, 0, 0 };
       // ndfa2
-      helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 5 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
-      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };  // ndfa2
+      helperstate[3] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 4 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+      helperstate[4] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };  // ndfa2
+      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
       TEST(0 == helper_compare_states(&ndfa, 6, helperstate))
       // reset
       TEST(0 == free_automat(&ndfa));
@@ -5049,11 +5423,10 @@ static int test_operations(void)
    TEST( ndfa.allocated == S);
    TEST( ! isempty_slist(&ndfa.states));
    // check ndfa.states
-   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-   helperstate[1] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 0 }, 0, 0 };
-   // ndfa1
-   helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+   helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 1, 3 }, 0, 0 };
+   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 2 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+   helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 3 }, 0, 0 };
    TEST(0 == helper_compare_states(&ndfa, 4, helperstate))
    // reset
    TEST(0 == free_automat(&ndfa));
@@ -5083,14 +5456,14 @@ static int test_operations(void)
       TEST( ndfa.allocated == S);
       TEST( ! isempty_slist(&ndfa.states));
       // check ndfa.states
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 2, 4 }, 0, 0 };
+      helperstate[0] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 1, 3 }, 0, 0 };
       // ndfa1
-      helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
-      helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+      helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 2 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+      helperstate[2] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
       // ndfa2
-      helperstate[4] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 5 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
-      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
+      helperstate[3] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 4 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+      helperstate[4] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
+      helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0 };
       TEST(0 == helper_compare_states(&ndfa, 6, helperstate))
       // reset
       TEST(0 == free_automat(&ndfa));
@@ -5098,10 +5471,69 @@ static int test_operations(void)
       reset_automatmman(mman2);
    }
 
-   // TEST initand_automat
-   // TODO: test initand_automat
-   // TODO: implement dfa first => extend dfa algo for using 2 ndfa
-   //       build dfa from both ndfa => check both end state to be true to become new endstate
+   // TEST opand_automat: empty automaton
+   TEST(0 == initempty_automat(&ndfa, &use_mman));
+   TEST(0 == initempty_automat(&ndfa1, &use_mman));
+   // test
+   TEST( 0 == opand_automat(&ndfa, &ndfa1));
+   // check ndfa1 not changed
+   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+   TEST(0 == helper_compare_states(&ndfa1, 2, helperstate))
+   // check mman released
+   TEST( 2 == refcount_automatmman(mman));
+   // check ndfa
+   TEST( ndfa.mman      != mman);
+   TEST( ndfa.nrstate   == 2);
+   TEST( ndfa.allocated == 2*state_SIZE + 2*state_SIZE_EMPTYTRANS(1));
+   TEST( ! isempty_slist(&ndfa.states));
+   // check ndfa.states
+   TEST( 0 == check_dfa_endstate(&ndfa, 0));
+   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
+   TEST(0 == helper_compare_states(&ndfa, 2, helperstate))
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   TEST(0 == free_automat(&ndfa1));
+   reset_automatmman(mman);
+
+   // TEST opand_automat: ab*c & abc
+   TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]){ 'a' }, (char32_t[]){ 'a' }));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){ 'b' }, (char32_t[]){ 'b' }));
+   TEST(0 == oprepeat_automat(&ndfa2));
+   TEST(0 == opsequence_automat(&ndfa, &ndfa2));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){ 'c' }, (char32_t[]){ 'c' }));
+   TEST(0 == opsequence_automat(&ndfa, &ndfa2));   // ab*c
+   TEST(4 == matchchar32_automat(&ndfa, 4, U"abbc", false));
+   TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]){ 'a' }, (char32_t[]){ 'a' }));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){ 'b' }, (char32_t[]){ 'b' }));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){ 'c' }, (char32_t[]){ 'c' }));
+   TEST(0 == opsequence_automat(&ndfa1, &ndfa2));   // abc
+   // test
+   TEST( 0 == opand_automat(&ndfa, &ndfa1));
+   // check ndfa1 not changed
+   TEST( 3 == matchchar32_automat(&ndfa1, 3, U"abc", false));
+   // check mman released
+   TEST( 2 == refcount_automatmman(mman));
+   // check ndfa
+   TEST( 0 == matchchar32_automat(&ndfa, 4, U"abbc", false));
+   TEST( 3 == matchchar32_automat(&ndfa, 3, U"abc", false));
+   TEST( ndfa.mman      != mman);
+   TEST( ndfa.nrstate   == 4);
+   TEST( ndfa.allocated == 4*state_SIZE + state_SIZE_EMPTYTRANS(1) + 3*state_SIZE_RANGETRANS(1));
+   TEST( ! isempty_slist(&ndfa.states));
+   // check ndfa.states
+   TEST( 0 == check_dfa_endstate(&ndfa, 0));
+   helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 'a' }, (char32_t[]) { 'a' } };
+   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 2 }, (char32_t[]) { 'b' }, (char32_t[]) { 'b' } };
+   helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 'c' }, (char32_t[]) { 'c' } };
+   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 3 }, 0, 0 };
+   TEST(0 == helper_compare_states(&ndfa, 4, helperstate))
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   TEST(0 == free_automat(&ndfa1));
+   reset_automatmman(mman);
 
    // TEST initandnot_automat
    // TODO: test initandnot_automat
@@ -5135,12 +5567,12 @@ static int test_operations(void)
                   break;
          }
          // check ndfa: not changed
-         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-         helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+         helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 1 }, (char32_t[]) { 1 } };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
          TEST( 0 == helper_compare_states(&ndfa, 2, helperstate))
          // check ndfa2: not changed
-         helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-         helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+         helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { 2 }, (char32_t[]) { 2 } };
+         helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
          TEST( 0 == helper_compare_states(&ndfa2, 2, helperstate))
          // check mman, mman2
          TEST( refcount_automatmman(mman)      == (count <= 2 ? 2 : 3));
@@ -5176,12 +5608,12 @@ static int test_operations(void)
                break;
       }
       // check ndfa: not changed
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { from[1] }, (char32_t[]) { to[1] } };
+      helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { from[1] }, (char32_t[]) { to[1] } };
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
       TEST( 0 == helper_compare_states(&ndfa, 2, helperstate))
       // check ndfa2: not changed
-      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-      helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 0 }, (char32_t[]) { from[2] }, (char32_t[]) { to[2] } };
+      helperstate[0] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 1 }, (char32_t[]) { from[2] }, (char32_t[]) { to[2] } };
+      helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
       TEST( 0 == helper_compare_states(&ndfa2, 2, helperstate))
       // check mman
       TEST( 0 == wasted_automatmman(mman));
@@ -5384,15 +5816,15 @@ static int test_extend(void)
 
    // prepare
    for (unsigned i = 0; i < lengthof(target); ++i) {
-      target[i] = 0;
+      target[i] = 1;
    }
    for (unsigned i = 0; i < lengthof(from); ++i) {
       from[i] = 1 + i;
       to[i]   = 1 + 2*i;
    }
    TEST(0 == initmatch_automat(&ndfa, 0, 15, from, to));
-   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };
-   helperstate[1] = (helper_state_t) { state_RANGE, 15, target, from, to };
+   helperstate[0] = (helper_state_t) { state_RANGE, 15, target, from, to };
+   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0 };
    TEST(0 == helper_compare_states(&ndfa, 2, helperstate))
    mman = ndfa.mman;
    S = sizeallocated_automatmman(mman);
@@ -5427,7 +5859,7 @@ static int test_extend(void)
       TEST( 2    == ndfa.nrstate);
       TEST( 0    == isempty_slist(&ndfa.states));
       // check ndfa.states
-      helperstate[1] = (helper_state_t) { state_RANGE, (uint8_t)(off+i), target, from, to };
+      helperstate[0] = (helper_state_t) { state_RANGE, (uint8_t)(off+i), target, from, to };
       TESTP( 0 == helper_compare_states(&ndfa, ndfa.nrstate, helperstate), "i:%d", i);
    }
 
@@ -5437,28 +5869,6 @@ static int test_extend(void)
    return 0;
 ONERR:
    free_automat(&ndfa);
-   return EINVAL;
-}
-
-static int check_dfa_endstate(automat_t* ndfa, /*out*/void** end_addr)
-{
-   state_t* start_state;
-   state_t* end_state;
-
-   TEST( 0 == malloc_automatmman(ndfa->mman, 0, end_addr));
-   startend_automat(ndfa, &start_state, &end_state);
-
-   TEST( end_state   == (void*) ((uintptr_t)*end_addr - ndfa->allocated));
-   TEST( start_state == (void*) ((uintptr_t)end_state + (state_SIZE + state_SIZE_EMPTYTRANS(1))));
-   TEST( end_state->nremptytrans == 1);
-   TEST( end_state->nrrangetrans == 0);
-   TEST( ! isempty_slist(&end_state->emptylist));
-   TEST( isempty_slist(&end_state->rangelist));
-   TEST( last_emptylist(&end_state->emptylist)->next == last_slist(&end_state->emptylist));
-   TEST( last_emptylist(&end_state->emptylist)->state == end_state);
-
-   return 0;
-ONERR:
    return EINVAL;
 }
 
@@ -5473,6 +5883,7 @@ static int test_optimize(void)
    void *         next_addr;
    state_t *      start_state;
    state_t *      end_state;
+   helper_state_t helperstate[10];
 
    // prepare
    TEST(0 == initempty_automat(&use_mman, 0));
@@ -5480,106 +5891,150 @@ static int test_optimize(void)
 
    // === convert to deterministic automaton (dfa)
 
+   // prepare
+   TEST(0 == initmatch_automat(&ndfa1, 0, 1, (char32_t[]){ 0 }, (char32_t[]){ (char32_t)-1 }));
+   TEST(0 == oprepeat_automat(&ndfa1));  // ndfa1 matches ".*"
+
    // TEST makedfa_automat: 1 empty transition
-   TEST(0 == initempty_automat(&ndfa, &use_mman));
-   TEST(2 == refcount_automatmman(mman));
-   // test
-   TEST( 0 == makedfa_automat(&ndfa));
-   // check mman released
-   TEST( 1 == refcount_automatmman(mman));
-   // check ndfa
-   TEST( ndfa.mman      != mman);
-   TEST( ndfa.nrstate   == 2);
-   TEST( ndfa.allocated == 2*(state_SIZE + state_SIZE_EMPTYTRANS(1)));
-   TEST( ! isempty_slist(&ndfa.states));
-   // check ndfa.states
-   startend_automat(&ndfa, &start_state, &end_state);
-   TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
-   TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
-   TEST( start_state->nremptytrans == 1);
-   TEST( start_state->nrrangetrans == 0);
-   TEST( ! isempty_slist(&start_state->emptylist));
-   TEST( isempty_slist(&start_state->rangelist));
-   TEST( last_emptylist(&start_state->emptylist)->next == last_slist(&start_state->emptylist));
-   TEST( last_emptylist(&start_state->emptylist)->state == end_state);
-   // reset
-   TEST(0 == free_automat(&ndfa));
-   reset_automatmman(mman);
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      TEST(0 == initempty_automat(&ndfa, &use_mman));
+      TEST(2 == refcount_automatmman(mman));
+      // test
+      if (tc == 0) {
+         TEST( 0 == makedfa_automat(&ndfa));
+      } else {
+         TEST( 0 == makedfa2_automat(&ndfa, OP_AND, &ndfa1));
+      }
+      // check mman released
+      TEST( 1 == refcount_automatmman(mman));
+      // check ndfa
+      TEST( ndfa.mman      != mman);
+      TEST( ndfa.nrstate   == 2);
+      TEST( ndfa.allocated == 2*(state_SIZE + state_SIZE_EMPTYTRANS(1)));
+      TEST( ! isempty_slist(&ndfa.states));
+      // check ndfa.states
+      startend_automat(&ndfa, &start_state, &end_state);
+      TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
+      TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
+      TEST( start_state->nremptytrans == 1);
+      TEST( start_state->nrrangetrans == 0);
+      TEST( ! isempty_slist(&start_state->emptylist));
+      TEST( isempty_slist(&start_state->rangelist));
+      TEST( last_emptylist(&start_state->emptylist)->next == last_slist(&start_state->emptylist));
+      TEST( last_emptylist(&start_state->emptylist)->state == end_state);
+      // reset
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
+   }
 
    // TEST makedfa_automat: 1 range && optimize continuous ranges into single transition
-   // prepare
-   TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (uint32_t[]) { 0 }, (uint32_t[]) { 4 }));
-   for (unsigned i = 1; i < 200; ++i) {
-      TEST(0 == extendmatch_automat(&ndfa, 1, (uint32_t[]) { 5*i }, (uint32_t[]) { 5*i+4 }));
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      // prepare
+      TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (uint32_t[]) { 0 }, (uint32_t[]) { 4 }));
+      for (unsigned i = 1; i < 200; ++i) {
+         TEST(0 == extendmatch_automat(&ndfa, 1, (uint32_t[]) { 5*i }, (uint32_t[]) { 5*i+4 }));
+      }
+      // test
+      if (tc == 0) {
+         TEST( 0 == makedfa_automat(&ndfa));
+      } else {
+         TEST( 0 == makedfa2_automat(&ndfa, OP_AND, &ndfa1));
+      }
+      // check mman released
+      TEST( 1 == refcount_automatmman(mman));
+      // check ndfa
+      TEST( ndfa.mman      != mman);
+      TEST( ndfa.nrstate   == 2);
+      TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(1));
+      TEST( ! isempty_slist(&ndfa.states));
+      // check ndfa.states
+      startend_automat(&ndfa, &start_state, &end_state);
+      TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
+      TEST( start_state->nremptytrans == 0);
+      TEST( start_state->nrrangetrans == 1);
+      TEST( isempty_slist(&start_state->emptylist));
+      TEST( ! isempty_slist(&start_state->rangelist));
+      TEST( last_rangelist(&start_state->rangelist)->next == last_slist(&start_state->rangelist));
+      TEST( last_rangelist(&start_state->rangelist)->state == (tc ? next_statelist(start_state) : end_state));
+      TEST( last_rangelist(&start_state->rangelist)->from  == 0);
+      TEST( last_rangelist(&start_state->rangelist)->to    == 5*200-1);
+      // reset
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
    }
-   // test
-   TEST( 0 == makedfa_automat(&ndfa));
-   // check mman released
-   TEST( 1 == refcount_automatmman(mman));
-   // check ndfa
-   TEST( ndfa.mman      != mman);
-   TEST( ndfa.nrstate   == 2);
-   TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(1));
-   TEST( ! isempty_slist(&ndfa.states));
-   // check ndfa.states
-   startend_automat(&ndfa, &start_state, &end_state);
-   TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
-   TEST( start_state->nremptytrans == 0);
-   TEST( start_state->nrrangetrans == 1);
-   TEST( isempty_slist(&start_state->emptylist));
-   TEST( ! isempty_slist(&start_state->rangelist));
-   TEST( last_rangelist(&start_state->rangelist)->next == last_slist(&start_state->rangelist));
-   TEST( last_rangelist(&start_state->rangelist)->state == end_state);
-   TEST( last_rangelist(&start_state->rangelist)->from  == 0);
-   TEST( last_rangelist(&start_state->rangelist)->to    == 5*200-1);
-   // reset
-   TEST(0 == free_automat(&ndfa));
-   reset_automatmman(mman);
 
    // TEST makedfa_automat: or'ed states
-   // prepare
-   TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 0 }, (char32_t[]) { 1 }));
-   for (unsigned i = 1; i < 4*255; ++i) {
-      TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 3*i }, (char32_t[]) { 3*i+1 }));
-      TEST(0 == opor_automat(&ndfa, &ndfa2));
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      // prepare
+      TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 0 }, (char32_t[]) { 1 }));
+      for (unsigned i = 1; i < 4*255; ++i) {
+         TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 3*i }, (char32_t[]) { 3*i+1 }));
+         TEST(0 == opor_automat(&ndfa, &ndfa2));
+      }
+      // test
+      if (tc == 0) {
+         TEST( 0 == makedfa_automat(&ndfa));
+      } else {
+         TEST( 0 == makedfa2_automat(&ndfa, OP_AND, &ndfa1));
+      }
+      // check mman released
+      TEST( 1 == refcount_automatmman(mman));
+      // check ndfa
+      TEST( ndfa.mman      != mman);
+      TEST( ndfa.nrstate   == 2);
+      TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(4*255));
+      TEST( ! isempty_slist(&ndfa.states));
+      // check ndfa.states
+      startend_automat(&ndfa, &start_state, &end_state);
+      TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
+      TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
+      TEST( start_state->nremptytrans == 0);
+      TEST( start_state->nrrangetrans == 4*255);
+      TEST( isempty_slist(&start_state->emptylist));
+      TEST( ! isempty_slist(&start_state->rangelist));
+      range_transition_t* range_trans = first_rangelist(&start_state->rangelist);
+      next_addr = (uint8_t*)start_state + state_SIZE;
+      for (unsigned i = 0; i < 4*255; ++i) {
+         TEST( range_trans == next_addr);
+         TEST( range_trans <  (range_transition_t*) end_addr);
+         TEST( range_trans->state == end_state);
+         TEST( range_trans->from  == 3*i);
+         TEST( range_trans->to    == 3*i+1);
+         next_addr   = &range_trans[1];
+         range_trans = next_rangelist(range_trans);
+      }
+      TEST( end_addr == next_addr);
+      TEST( range_trans == first_rangelist(&start_state->rangelist));
+      // reset
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
    }
-   // test
-   TEST( 0 == makedfa_automat(&ndfa));
-   // check mman released
-   TEST( 1 == refcount_automatmman(mman));
-   // check ndfa
-   TEST( ndfa.mman      != mman);
-   TEST( ndfa.nrstate   == 2);
-   TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(4*255));
-   TEST( ! isempty_slist(&ndfa.states));
-   // check ndfa.states
-   startend_automat(&ndfa, &start_state, &end_state);
-   TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
-   TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
-   TEST( start_state->nremptytrans == 0);
-   TEST( start_state->nrrangetrans == 4*255);
-   TEST( isempty_slist(&start_state->emptylist));
-   TEST( ! isempty_slist(&start_state->rangelist));
-   range_transition_t* range_trans = first_rangelist(&start_state->rangelist);
-   next_addr = (uint8_t*)start_state + state_SIZE;
-   for (unsigned i = 0; i < 4*255; ++i) {
-      TEST( range_trans == next_addr);
-      TEST( range_trans <  (range_transition_t*) end_addr);
-      TEST( range_trans->state == end_state);
-      TEST( range_trans->from  == 3*i);
-      TEST( range_trans->to    == 3*i+1);
-      next_addr   = &range_trans[1];
-      range_trans = next_rangelist(range_trans);
-   }
-   TEST( end_addr == next_addr);
-   TEST( range_trans == first_rangelist(&start_state->rangelist));
+
    // reset
-   TEST(0 == free_automat(&ndfa));
-   reset_automatmman(mman);
+   TEST(0 == free_automat(&ndfa1));
 
    // === minimize states of automaton (reverse + dfa + reverse + dfa)
 
-   // TEST initreverse_automat: dfa+reverse+dfa+reverse could generate an nfa
+   // TEST minimize_automat: empty automaton
+   TEST(0 == initempty_automat(&ndfa, &use_mman));
+   // test
+   TEST( 0 == minimize_automat(&ndfa));
+   // check ndfa
+   TEST( ndfa.mman      != mman);
+   TEST( ndfa.nrstate   == 2);
+   TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(2));
+   TEST( ! isempty_slist(&ndfa.states));
+   TEST( 1 == refcount_automatmman(ndfa.mman));
+   helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0};
+   helperstate[1] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 1 }, 0, 0};
+   TEST(0 == helper_compare_states(&ndfa, 2, helperstate))
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   reset_automatmman(mman);
+
+
+   // TEST minimize_automat: dfa+reverse+dfa+reverse could generate an nfa
+   //                        ==> minimize_automat must call makedfa as last op
    // prepare
    TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]){'x'}, (char32_t[]){'x'}));
    TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'b'}, (char32_t[]){'b'}));
@@ -5602,7 +6057,9 @@ static int test_optimize(void)
    TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){'c'}, (char32_t[]){'c'}));
    TEST(0 == opsequence_automat(&ndfa2, &ndfa1));  // c(xc)*xn
    TEST(0 == opor_automat(&ndfa, &ndfa2));         // b(xb)*xn|c(xc)*xn
+   TEST(0 == initcopy_automat(&ndfa1, &ndfa, 0));  // b(xb)*xn|c(xc)*xn
    // test
+   // simulate minimize_automat with without calling makedfa_automat ass last operations
    TEST( 0 == makedfa_automat(&ndfa));
    TEST( 0 == initreverse_automat(&ndfa2, &ndfa, &use_mman));
    TEST( 0 == free_automat(&ndfa));
@@ -5622,7 +6079,30 @@ static int test_optimize(void)
    TEST(0 == free_automat(&ndfa));
    reset_automatmman(mman);
 
-   // TODO:
+   // TEST minimize_automat: b(xb)*xn|c(xc)*xn
+   TEST(0 == initcopy_automat(&ndfa, &ndfa1, &use_mman));
+   TEST(0 == free_automat(&ndfa1));
+   // test
+   TEST( 0 == minimize_automat(&ndfa));
+   // check ndfa
+   TEST( ndfa.mman      != mman);
+   TEST( ndfa.nrstate   == 6);
+   TEST( ndfa.allocated == 6 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(8));
+   TEST( ! isempty_slist(&ndfa.states));
+   TEST( 1 == refcount_automatmman(ndfa.mman));
+   helperstate[0] = (helper_state_t) { state_RANGE, 2, (size_t[]) { 1, 2 }, (char32_t[]) { 'b', 'c' }, (char32_t[]) { 'b', 'c' }};
+   helperstate[1] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 3 }, (char32_t[]) { 'x' }, (char32_t[]) { 'x' }};
+   helperstate[2] = (helper_state_t) { state_RANGE, 1, (size_t[]) { 4 }, (char32_t[]) { 'x' }, (char32_t[]) { 'x' }};
+   helperstate[3] = (helper_state_t) { state_RANGE, 2, (size_t[]) { 1, 5 }, (char32_t[]) { 'b', 'n' }, (char32_t[]) { 'b', 'n' }};
+   helperstate[4] = (helper_state_t) { state_RANGE, 2, (size_t[]) { 2, 5 }, (char32_t[]) { 'c', 'n' }, (char32_t[]) { 'c', 'n' }};
+   helperstate[5] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 5 }, 0, 0};
+   TEST(0 == helper_compare_states(&ndfa, 6, helperstate))
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   reset_automatmman(mman);
+
+   // TEST minimize_automat:
+   // TODO: minimize_automat
 
    // reset
    TEST(0 == free_automat(&ndfa));

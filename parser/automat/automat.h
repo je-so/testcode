@@ -158,18 +158,15 @@ int opor_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa2/*fre
 
 /* function: opand_automat
  * Erzeugt Automat ndfa = "(ndfa) & (ndfa2)".
- * Der erzeugte Automat erkennt Zeichenfolgen, die von beiden AUtomaten gemeinsam erkannt werden.
- *
- * Der Speicher wird vom Heap von ndfa allokiert.
- * Falls ndfa2 nicht denselben Heap benutzt, wird der Inhalt kopiert. */
-int opand_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+ * Der erzeugte Automat erkennt Zeichenfolgen, die von beiden AUtomaten gemeinsam erkannt werden. */
+int opand_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 
 /* function: opandnot_automat
  * Erzeugt Automat ndfa = "(ndfa) & !(ndfa2)".
  * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden.
  * TODO: Implement opandnot_automat
  * TODO: copy ndfa2 if necessary */
-int opandnot_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
+int opandnot_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 
 /* function: opnot_automat
  * Erzeugt Automat ndfa = "!(ndfa)" bzw. gleichbedeutend mit ndfa = "(.*) & !(ndfa)". */

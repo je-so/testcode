@@ -189,7 +189,18 @@ int opnot_automat(automat_t* restrict ndfa);
 int makedfa_automat(automat_t* ndfa);
 
 /* function: minimize_automat
- * Generiert einen auf minimale Anzahl an Zuständen optimierten deterministischen endlichen Automaten. */
+ * Generiert einen auf minimale Anzahl an Zuständen optimierten deterministischen endlichen Automaten.
+ *
+ * Funktionsweise:
+ * Der Automat ndfa wird umgekehrt, d.h. der Startzustand wird zum Endzustand und umgekehrt und alle
+ * Übergange werden umgekehrt, zeigen dann vom vormaligen Zielzustand aud den vormaligen Ausgangszustand.
+ * Danach wird der umgekehrte Automat in einen DFA verwandelt, damit alle Zustände,
+ * die über gleiche Eingabesequenzen erreicht werden, zu einem zusammengefasst werden.
+ * D.h. alle Zustände des Ausgangsautomaten, die dasselbe Suffix produzieren, werden
+ * im umgekehrten Automaten zu einem einzigen zusammengefasst.
+ * Danach wird der umgekehrte Automat wiederum umgekehrt und dann nochmals in einen DFA verwandelt.
+ * Dieser DFA ist minimal, da Zustände, die keine zwei verschiedene Zustände gleiche Suffixe produzieren.
+ * */
 int minimize_automat(automat_t* ndfa);
 
 

@@ -1509,7 +1509,6 @@ int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, 
    slist_t  dest_states = slist_INIT;
 
    if (src_ndfa->nrstate < 2) {
-      // TODO TEST
       err = EINVAL;
       goto ONERR;
    }
@@ -1563,9 +1562,11 @@ int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, 
    }
 
    state_t* endstate = last_statelist(&dest_states);
+   size_t   size_selftrans = 0;
    if (  !endstate->nremptytrans
          || last_emptylist(&endstate->emptylist)->state != endstate) {
       void* dest_trans;
+      size_selftrans = state_SIZE_EMPTYTRANS(1);
       err = malloc_automatmman(mman, state_SIZE_EMPTYTRANS(1), &dest_trans);
       if (err) goto ONERR;
       ++ endstate->nremptytrans;
@@ -1577,7 +1578,7 @@ int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, 
    incruse_automatmman(mman);
    dest_ndfa->mman    = mman;
    dest_ndfa->nrstate = src_ndfa->nrstate;
-   dest_ndfa->allocated = src_ndfa->allocated;
+   dest_ndfa->allocated = src_ndfa->allocated + size_selftrans;
    dest_ndfa->states  = dest_states;
 
    return 0;
@@ -4572,6 +4573,95 @@ ONERR:
    return EINVAL;
 }
 
+static int helper_compare_reverse(automat_t* dest_ndfa, automat_t* src_ndfa, automat_t* use_mman)
+{
+   void*  end_addr;
+   size_t nrstates = 0;
+   size_t allocated = 0;
+
+   TEST(0 == malloc_automatmman(dest_ndfa->mman, 0, &end_addr));
+
+   // check mman
+   if (use_mman) {
+      TEST(dest_ndfa->mman == use_mman->mman);
+      TEST(refcount_automatmman(dest_ndfa->mman) >= 2);
+      TEST(dest_ndfa->allocated <= sizeallocated_automatmman(dest_ndfa->mman));
+   } else {
+      TEST(dest_ndfa->mman != src_ndfa->mman);
+      TEST(refcount_automatmman(dest_ndfa->mman) == 1);
+      TEST(dest_ndfa->allocated == sizeallocated_automatmman(dest_ndfa->mman));
+   }
+   // start and end state swapped
+   state_t *dstart, *sstart, *dend, *send;
+   startend_automat(dest_ndfa, &dstart, &dend);
+   startend_automat(src_ndfa, &sstart, &send);
+   TEST(dstart == send->dest);
+   TEST(dend   == sstart->dest);
+   // contains empty self trans as last entry
+   TEST(dend->nremptytrans > 0);
+   TEST(dend == last_emptylist(&dend->emptylist)->state);
+   // check allocation order of states of dest_ndfa and calculate size of memory
+   void* start_addr = (void*) ((uintptr_t)end_addr - dest_ndfa->allocated);
+   void* trans_addr = (void*) ((uintptr_t)start_addr + dest_ndfa->nrstate * state_SIZE);
+   foreach (_statelist, d, &dest_ndfa->states) {
+      d->dest = 0; // set to defined value (unset in initreverse)
+      nrstates  += 1;
+      allocated += state_SIZE + state_SIZE_EMPTYTRANS(d->nremptytrans) + state_SIZE_RANGETRANS(d->nrrangetrans);
+      TEST( d == (void*) ((uintptr_t)trans_addr - nrstates * state_SIZE));
+      size_t trans_count = 0;
+      foreach (_emptylist, trans, &d->emptylist) {
+         ++trans_count;
+         TEST(trans_addr <= (void*)trans && (void*)trans < end_addr);
+         TEST(start_addr <= (void*)trans->state && (void*)trans->state < trans_addr);
+         TEST(((uintptr_t)trans->state - (uintptr_t)start_addr) % state_SIZE == 0);
+      }
+      TEST(trans_count == d->nremptytrans);
+      trans_count = 0;
+      foreach (_rangelist, trans, &d->rangelist) {
+         ++trans_count;
+         TEST(trans_addr <= (void*)trans && (void*)trans < end_addr);
+         TEST(start_addr <= (void*)trans->state && (void*)trans->state < trans_addr);
+         TEST(((uintptr_t)trans->state - (uintptr_t)start_addr) % state_SIZE == 0);
+      }
+      TEST(trans_count == d->nrrangetrans);
+   }
+   // check size of memory
+   TEST(nrstates == src_ndfa->nrstate);
+   TEST(nrstates == dest_ndfa->nrstate);
+   TEST(allocated == src_ndfa->allocated + state_SIZE_EMPTYTRANS(1));
+   TEST(allocated == dest_ndfa->allocated);
+   // check src_state->dest is ok
+   size_t statenr = 0;
+   foreach (_statelist, s, &src_ndfa->states) {
+      TEST( s->dest == (void*) ((uintptr_t)start_addr + statenr * state_SIZE));
+      statenr ++;
+      s->dest->dest = s; // set back pointer
+   }
+   // check every transition in src is in dest
+   foreach (_statelist, s, &src_ndfa->states) {
+      foreach (_emptylist, trans, &s->emptylist) {
+         state_t* d = trans->state->dest;
+         size_t found = 0;
+         foreach (_emptylist, dtrans, &d->emptylist) {
+            found += (dtrans->state->dest == s);
+         }
+         TEST( 1 <= found);
+      }
+      foreach (_rangelist, trans, &s->rangelist) {
+         state_t* d = trans->state->dest;
+         size_t found = 0;
+         foreach (_rangelist, dtrans, &d->rangelist) {
+            found += (dtrans->state->dest == s && dtrans->from == trans->from && dtrans->to == trans->to);
+         }
+         TEST( 1 <= found);
+      }
+   }
+
+   return 0;
+ONERR:
+   return EINVAL;
+}
+
 static int test_initfree(void)
 {
    automat_t      ndfa  = automat_FREE;
@@ -4712,8 +4802,8 @@ static int test_initfree(void)
 
    // === simulated ERROR
 
-   TEST(0 == initempty_automat(&ndfa1, &use_mman2));
-   for (unsigned tc = 0; tc <= 5; ++tc) {
+   TEST(0 == initempty_automat(&ndfa2, &use_mman2));
+   for (unsigned tc = 0; tc <= 8; ++tc) {
       // prepare
       int err = (int) (tc+4);
       S = sizeallocated_automatmman(mman);
@@ -4732,10 +4822,20 @@ static int test_initfree(void)
                TEST( err == initmatch_automat(&ndfa, 0, 1, from, to));
                break;
       case 4:  // TEST initcopy_automat: simulated ERROR
-               TEST( err == initcopy_automat(&ndfa, &ndfa1, &use_mman));
+               TEST( err == initcopy_automat(&ndfa, &ndfa2, &use_mman));
                break;
       case 5:  // TEST initcopy_automat: simulated ERROR
-               TEST( err == initcopy_automat(&ndfa, &ndfa1, 0));
+               TEST( err == initcopy_automat(&ndfa, &ndfa2, 0));
+               break;
+      case 6:  // TEST initreverse_automat: simulated ERROR
+               TEST( err == initreverse_automat(&ndfa, &ndfa2, &use_mman));
+               break;
+      case 7:  // TEST initreverse_automat: simulated ERROR
+               TEST( err == initreverse_automat(&ndfa, &ndfa2, 0));
+               break;
+      case 8:  // TEST initreverse_automat: EINVAL
+               free_testerrortimer(&s_automat_errtimer);
+               TEST( EINVAL == initreverse_automat(&ndfa, &ndfa, 0));
                break;
       }
       // check ndfa
@@ -4750,7 +4850,7 @@ static int test_initfree(void)
       // reset
       reset_automatmman(mman);
    }
-   TEST(0 == free_automat(&ndfa1));
+   TEST(0 == free_automat(&ndfa2));
 
    // TEST initmove_automat
    TEST(0 == initmatch_automat(&ndfa1, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 3000 } ));
@@ -4816,14 +4916,39 @@ static int test_initfree(void)
    TEST(0 == free_automat(&ndfa));
    reset_automatmman(mman);
 
-   // TEST initreverse_automat
-   // TODO initreverse_automat
+   // TEST initreverse_automat: empty automat
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      TEST(0 == initempty_automat(&ndfa, &use_mman));
+      // test
+      TEST( 0 == initreverse_automat(&ndfa2, &ndfa, tc ? &use_mman : 0));
+      // check ndfa2
+      TEST( 0 == helper_compare_reverse(&ndfa2, &ndfa, tc ? &use_mman : 0));
+      helperstate[0] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 0 }, 0, 0 };    // added empty self trans to end state
+      helperstate[1] = (helper_state_t) { state_EMPTY, 2, (size_t[]) { 0, 1 }, 0, 0 }; // start state contains empty self trans of former end state
+      TEST( 0 == helper_compare_states(&ndfa2, 2, helperstate))
+      // reset
+      TEST(0 == free_automat(&ndfa2));
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
+   }
 
-   // TEST initreverse_automat
-   // TODO initreverse_automat
-
-   // TEST initreverse_automat
-   // TODO initreverse_automat
+   // TEST initreverse_automat: more complex automat
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 1 }, (char32_t[]) { 1 } ));
+      for (unsigned i = 1; i < 10; ++i) {
+         TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 3*i }, (char32_t[]) { 4*i } ));
+         TEST(0 == opor_automat(&ndfa, &ndfa2));
+         TEST(0 == oprepeat_automat(&ndfa));
+      }
+      // test
+      TEST( 0 == initreverse_automat(&ndfa2, &ndfa, tc ? &use_mman : 0));
+      // check ndfa2
+      TEST( 0 == helper_compare_reverse(&ndfa2, &ndfa, tc ? &use_mman : 0));
+      // reset
+      TEST(0 == free_automat(&ndfa2));
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
+   }
 
    // reset
    TEST(0 == delete_automatmman(&mman));

@@ -747,7 +747,7 @@ ONERR:
 }
 
 /* struct: multistate_iter_t
- * TODO: */
+ * Iteriert über den Inhalt von <multistate_t> in aufsteigender Reihenfolge. */
 typedef struct multistate_iter_t {
    void*    next_node;
    uint8_t  next_state;
@@ -1363,7 +1363,6 @@ static inline bool iscontained_statevector(statevector_t *svec, state_t *state)
    return (svec->nrstate > low) && (state == svec->state[low]);
 }
 
-// TODO: add test for isinuse12_statevector
 static inline bool isinuse12_statevector(statevector_t *svec, bool isNeedValue2)
 {
    size_t i;
@@ -1641,7 +1640,6 @@ ONERR:
    return err;
 }
 
-// TODO: test initreverse_automat
 int initreverse_automat(/*out*/automat_t* dest_ndfa, const automat_t* src_ndfa, const automat_t* use_mman)
 {
    int err;
@@ -1742,6 +1740,11 @@ size_t matchchar32_automat(const automat_t* ndfa, size_t len, const char32_t str
    size_t    matchedlen = 0;
    statearray_t  states = statearray_FREE;
    statearray_iter_t iter;
+
+   if (!ndfa->mman) {
+      err = EINVAL;
+      goto ONERR;
+   }
 
    foreach (_statelist, s, &ndfa->states) {
       s->isused = 0;
@@ -2583,6 +2586,8 @@ int opnot_automat(automat_t* restrict ndfa)
    }
 
    err = initmatch_automat(&all, ndfa, 1, (char32_t[]){0}, (char32_t[]){(char32_t)-1});
+   if (err) goto ONERR;
+   err = oprepeat_automat(&all);
    if (err) goto ONERR;
    err = makedfa2_automat(&all, OP_AND_NOT, ndfa);
    if (err) goto ONERR;
@@ -4864,6 +4869,30 @@ static int test_statevector(void)
          TEST( 0 == iscontained_statevector(svec, (state_t*)(2*nrstate+2)));
       }
 
+      // isinuse12_statevector
+      state_t s[43];
+      for (uintptr_t i = 0; i <= 42; ++i) {
+         svec->state[i] = &s[i];
+         s[i].isused = 0;
+      }
+      svec->nrstate = 43;
+      for (unsigned i = 0; i <= 41; ++i) {
+         TEST( ! isinuse12_statevector(svec, false));
+         TEST( ! isinuse12_statevector(svec, true));
+         svec->state[i]->isused = 1;
+         TEST( isinuse12_statevector(svec, false));
+         TEST( ! isinuse12_statevector(svec, true));
+         svec->state[42]->isused = 2;
+         TEST( isinuse12_statevector(svec, true));
+         svec->state[42]->isused = 0;
+         if (i) {
+            svec->state[i-1]->isused = 2;
+            TEST( isinuse12_statevector(svec, false));
+            TEST( isinuse12_statevector(svec, true));
+            svec->state[i-1]->isused = 0;
+         }
+         svec->state[i]->isused = 0;
+      }
    }
 
    // === group lifetime
@@ -5693,16 +5722,35 @@ static int test_operations(void)
    TEST(0 == free_automat(&ndfa1));
    reset_automatmman(mman);
 
-   // TODO: test initandnot_automat
-   //       use extension made in initand_automat
-   //       => extend second ndfa further with an additional error transition state
-   //       => error state (dummy state) loops to itself with every input
-   //       => check first end state to be true and second one to be false to become new endstate
-
-   // TEST initnot_automat
-   // TODO: test initnot_automat (same as initandnot_automat with ndfa1 = ".*")
-
-
+   // TEST opnot_automat
+   TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]){ 'a' }, (char32_t[]){ 'a' }));
+   TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]){ 'b' }, (char32_t[]){ 'b' }));
+   TEST(0 == oprepeat_automat(&ndfa2));
+   TEST(0 == opsequence_automat(&ndfa, &ndfa2));
+   TEST(3 == matchchar32_automat(&ndfa, 3, U"abb", true));
+   // test
+   TEST( 0 == opnot_automat(&ndfa))
+   // check mman released
+   TEST( 1 == refcount_automatmman(mman));
+   // check ndfa
+   TEST( 0 == matchchar32_automat(&ndfa, 3, U"abb", true));
+   TEST( 2 == matchchar32_automat(&ndfa, 2, U"bb", true));
+   TEST( 3 == matchchar32_automat(&ndfa, 3, U"abc", true));
+   TEST( ndfa.mman      != mman);
+   TEST( ndfa.nrstate   == 5);
+   TEST( ndfa.allocated == 5*state_SIZE + state_SIZE_EMPTYTRANS(3) + state_SIZE_RANGETRANS(10));
+   TEST( ! isempty_slist(&ndfa.states));
+   // check ndfa.states
+   TEST( 0 == check_dfa_endstate(&ndfa, 0));
+   helperstate[0] = (helper_state_t) { state_RANGE_ENDSTATE, 3, (size_t[]) { 1,2,1 }, (char32_t[]) { 0, 'a', 'b' }, (char32_t[]) { 'a'-1u, 'a', (char32_t)-1} };
+   helperstate[1] = (helper_state_t) { state_RANGE_ENDSTATE, 1, (size_t[]) { 1 }, (char32_t[]) { 0 }, (char32_t[]) { (char32_t)-1 } };
+   helperstate[2] = (helper_state_t) { state_RANGE, 3, (size_t[]) { 1,3,1 }, (char32_t[]) { 0, 'b', 'c' }, (char32_t[]) { 'a', 'b', (char32_t)-1} };
+   helperstate[3] = (helper_state_t) { state_RANGE, 3, (size_t[]) { 1,3,1 }, (char32_t[]) { 0, 'b', 'c' }, (char32_t[]) { 'a', 'b', (char32_t)-1} };
+   helperstate[4] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 };
+   TEST(0 == helper_compare_states(&ndfa, 5, helperstate))
+   // reset
+   TEST(0 == free_automat(&ndfa));
+   reset_automatmman(mman);
 
    // === simulated ERROR in copy operation
 

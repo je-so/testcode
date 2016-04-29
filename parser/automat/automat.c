@@ -418,12 +418,12 @@ typedef struct multistate_node_t {
    uint8_t size;
    union {
       struct { // level > 0
-         state_t * key[3]; // key[i] == child[i+1]->child[/*(level > 0)*/0]->...->state[/*(level == 0)*/0]
-         struct multistate_node_t * child[4];
+         state_t * key[7]; // key[i] == child[i+1]->child[/*(level > 0)*/0]->...->state[/*(level == 0)*/0]
+         struct multistate_node_t * child[8];
       };
       struct { // level == 0
          struct multistate_node_t * next;
-         state_t * state[6];
+         state_t * state[14];
       };
    };
 } multistate_node_t;
@@ -454,6 +454,67 @@ typedef struct multistate_t {
 
 #define multistate_INIT \
          { 0, 0 }
+
+// group: query
+
+static int invariant2_multistate(multistate_node_t* node, unsigned level, state_t** from, state_t** to)
+{
+   int err;
+   if (node->level != level) {
+      return EINVARIANT;
+   }
+
+   if (     node->size < 2
+         || node->size > (node->level ? multistate_NROFCHILD : multistate_NROFSTATE)) {
+      return EINVARIANT;
+   }
+
+   if (node->level) {
+      if (from && *from >= node->key[0]) {
+         return EINVARIANT;
+      }
+      if (to && *to <= node->key[node->size-2]) {
+         return EINVARIANT;
+      }
+      for (unsigned i = 0; i < node->size-2u; ++i) {
+         if (node->key[i] >= node->key[i+1]) {
+            return EINVARIANT;
+         }
+      }
+      for (unsigned i = 0; i < node->size; ++i) {
+         err = invariant2_multistate(node->child[i], level-1, i ? &node->key[i-1] : from, i < node->size-1u ? &node->key[i] : to);
+         if (err) return err;
+      }
+   } else {
+      if (from && *from != node->state[0]) {
+         return EINVARIANT;
+      }
+      if (to && *to <= node->state[node->size-1]) {
+         return EINVARIANT;
+      }
+      for (unsigned i = 0; i < node->size-1u; ++i) {
+         if (node->state[i] >= node->state[i+1]) {
+            return EINVARIANT;
+         }
+      }
+   }
+
+   return 0;
+}
+
+static int invariant_multistate(multistate_t* mst)
+{
+   int err;
+   multistate_node_t* node = mst->root;
+
+   if (mst->size <= 1) return 0;
+   if (!node || node->level >= 32 || node->size < 2) return EINVARIANT;
+
+   err = invariant2_multistate(node, node->level, 0, 0);
+
+   return err;
+
+}
 
 // group: update
 
@@ -632,7 +693,7 @@ static int add_multistate(multistate_t * mst, struct automat_mman_t * mman, /*in
                      // key2 = child_key; // already equal
                   }
                   *node2_child++ = child;
-                  for (unsigned i = (multistate_NROFCHILD-1)-low; i; --i, ++node_child, ++node2_child) {
+                  for (unsigned i = (multistate_NROFCHILD-1)-low; i; --i, ++node_key, ++node2_key, ++node_child, ++node2_child) {
                      *node2_key = *node_key;
                      *node2_child = *node_child;
                   }
@@ -749,7 +810,7 @@ static bool next_multistateiter(multistate_iter_t* iter, state_t** state)
 typedef struct range_t {
    char32_t       from;    // inclusive
    char32_t       to;      // inclusive
-   multistate_t   state;
+   multistate_t   multistate;
 } range_t;
 
 // group: lifetime
@@ -832,7 +893,7 @@ static int invariant2_rangemap(rangemap_node_t* node, unsigned level, char32_t* 
          }
       }
       for (unsigned i = 0; i < node->size; ++i) {
-         err = invariant2_rangemap(node->child[i], level-1, i ? &node->key[i-1] : 0, i < node->size-1u ? node->key[i]-1u : to);
+         err = invariant2_rangemap(node->child[i], level-1, i ? &node->key[i-1] : from, i < node->size-1u ? node->key[i]-1u : to);
          if (err) return err;
       }
    } else {
@@ -1182,7 +1243,7 @@ static int addstate_rangemap(rangemap_t *rmap, automat_mman_t *mman, char32_t fr
       }
       expect = node->range[low].to + 1;
       if (node->range[low].to > to) return EINVAL;
-      err = add_multistate(&node->range[low].state, mman, state);
+      err = add_multistate(&node->range[low].multistate, mman, state);
       if (err) goto ONERR;
       if (node->range[low].to == to) break;
       ++ low;
@@ -2176,9 +2237,9 @@ int makedfa_automat(automat_t* ndfa)
       rangemap_iter_t iter;
       init_rangemapiter(&iter, &rmap);
       while (next_rangemapiter(&iter, &range)) {
-         err = follow_empty_transition(&range->state, mman[MULTISTATE]);
+         err = follow_empty_transition(&range->multistate, mman[MULTISTATE]);
          if (err) goto ONERR;
-         err = init_statevector(&new_statevec, mman[STATEVEC], &range->state);
+         err = init_statevector(&new_statevec, mman[STATEVEC], &range->multistate);
          if (err) goto ONERR;
          reset_automatmman(mman[MULTISTATE]);
          patriciatrie_node_t* existing_node;
@@ -2394,9 +2455,9 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
       rangemap_iter_t iter;
       init_rangemapiter(&iter, &rmap);
       while (next_rangemapiter(&iter, &range)) {
-         err = follow_empty_transition(&range->state, mman[MULTISTATE]);
+         err = follow_empty_transition(&range->multistate, mman[MULTISTATE]);
          if (err) goto ONERR;
-         err = init_statevector(&new_statevec, mman[STATEVEC], &range->state);
+         err = init_statevector(&new_statevec, mman[STATEVEC], &range->multistate);
          if (err) goto ONERR;
          reset_automatmman(mman[MULTISTATE]);
          if (! isinuse12_statevector(new_statevec, op == OP_AND)) {
@@ -3429,6 +3490,7 @@ static int test_multistate(void)
             // check mman
             TEST( sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
             // check mst
+            TEST( 0 == invariant_multistate(&mst));
             TEST( 2 == mst.size);
             TEST( 0 != mst.root);
             // check mst.root content
@@ -3438,8 +3500,7 @@ static int test_multistate(void)
             TEST( &state[i+1] == ((multistate_node_t*)mst.root)->state[1]);
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3459,6 +3520,7 @@ static int test_multistate(void)
          // check mman
          TEST( (i > 0 ? sizeof(void*)+sizeof(multistate_node_t) : 0) == sizeallocated_automatmman(mman));
          // check mst
+         TEST( 0 == invariant_multistate(&mst));
          TEST( i+1 == mst.size);
          TEST( 0   != mst.root);
          // check mst.root content
@@ -3472,8 +3534,7 @@ static int test_multistate(void)
          }
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST add_multistate: single leaf && add states unordered
@@ -3493,6 +3554,7 @@ static int test_multistate(void)
          // check: mman
          TEST( sizeof(void*)+sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
+         TEST( 0 == invariant_multistate(&mst));
          TEST( S == mst.size);
          TEST( 0 != mst.root);
          // check: mst.root content
@@ -3504,8 +3566,7 @@ static int test_multistate(void)
          // check: no overflow into following memory block
          TEST( ENDMARKER == *((void**)addr));
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         reset_automatmman(mman);
       }
    }
 
@@ -3538,8 +3599,7 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr)); // no overflow into following memory block
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST add_multistate: split leaf node (level 0) ==> build root (level 1) ==> 3 nodes total
@@ -3564,6 +3624,7 @@ static int test_multistate(void)
       // check: mman
       TEST( 2*sizeof(void*)+3*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
       // check: mst
+      TEST( 0 == invariant_multistate(&mst));
       TEST( mst.size == multistate_NROFSTATE+1);
       TEST( mst.root != 0);
       TEST( mst.root != oldroot);
@@ -3595,8 +3656,7 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) ascending/descending
@@ -3637,6 +3697,7 @@ static int test_multistate(void)
             // check: mman
             TEST( nrchild*sizeof(void*)+(nrchild+1)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
             // check: mst
+            TEST( 0 == invariant_multistate(&mst));
             ++ SIZE;
             TEST( SIZE == mst.size);
             TEST( root == mst.root);
@@ -3669,8 +3730,7 @@ static int test_multistate(void)
          }
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      reset_automatmman(mman);
    }
 
    // TEST add_multistate: build root node (level 1) + many leafs (level 0) unordered
@@ -3687,6 +3747,7 @@ static int test_multistate(void)
          // check: mman
          TEST( (nrchild+2)*sizeof(void*)+(nrchild+2)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
+         TEST( 0 == invariant_multistate(&mst));
          TEST( SIZE == mst.size);
          TEST( root == mst.root);
          // check mst.root content
@@ -3715,8 +3776,9 @@ static int test_multistate(void)
             TEST( ENDMARKER == *((void**)addr[i]));
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         malloc_automatmman(mman, 0, &addr[1]);
+         memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
+         reset_automatmman(mman);
       }
    }
 
@@ -3742,6 +3804,7 @@ static int test_multistate(void)
       // check: mman
       TEST( (multistate_NROFCHILD+2)*sizeof(void*)+(multistate_NROFCHILD+4)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
       // check: mst
+      TEST( 0 == invariant_multistate(&mst));
       TEST( SIZE == mst.size);
       TEST( root == mst.root);
       // check mst.root content
@@ -3778,25 +3841,28 @@ static int test_multistate(void)
          TEST( ENDMARKER == *((void**)addr[i]));
       }
       // reset
-      TEST(0 == delete_automatmman(&mman));
-      TEST(0 == new_automatmman(&mman));
+      malloc_automatmman(mman, 0, &addr[1]);
+      memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
+      reset_automatmman(mman);
    }
 
    // TEST add_multistate: (level 2) split child(level 1) and add to root
    for (unsigned nrchild=2; nrchild < multistate_NROFCHILD; ++nrchild) {
       for (uintptr_t pos = 0; pos < nrchild; ++pos) {
-         void * addr;
+         void * addr[2];
          void * child[multistate_NROFCHILD] = { 0 };
          size_t SIZE = nrchild * LEVEL1_NROFSTATE + 1;
+         TEST(0 == malloc_automatmman(mman, 0, &addr[0]));
          TEST(0 == build2_multistate(&mst, mman, 2, nrchild, child));
          void * root = mst.root;
-         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr));
-         void * splitchild = (uint8_t*)addr + sizeof(void*) + sizeof(multistate_node_t)/*leaf*/;
+         TEST(0 == malloc_automatmman(mman, sizeof(void*), &addr[1]));
+         void * splitchild = (uint8_t*)addr[1] + sizeof(void*) + sizeof(multistate_node_t)/*leaf*/;
          // test add single state ==> split check split
          TEST( 0 == add_multistate(&mst, mman, (void*)(1+pos*(2*LEVEL1_NROFSTATE))));
          // check: mman
          TEST( sizeof(void*)+(1+2+nrchild+nrchild*multistate_NROFCHILD)*sizeof(multistate_node_t) == sizeallocated_automatmman(mman));
          // check: mst
+         TEST( 0 == invariant_multistate(&mst));
          TEST( SIZE == mst.size);
          TEST( root == mst.root);
          // check mst.root content
@@ -3822,8 +3888,9 @@ static int test_multistate(void)
             TEST(EEXIST == add_multistate(&mst, mman, (void*)(2*i)));
          }
          // reset
-         TEST(0 == delete_automatmman(&mman));
-         TEST(0 == new_automatmman(&mman));
+         malloc_automatmman(mman, 0, &addr[1]);
+         memset(addr[0], 0, (uintptr_t)addr[1] - (uintptr_t)addr[0]);
+         reset_automatmman(mman);
       }
    }
 
@@ -3954,7 +4021,7 @@ static int test_rangemap(void)
          TEST( 0 == rmap.root->next);
          TEST( from == rmap.root->range[0].from);
          TEST( to == rmap.root->range[0].to);
-         TEST( 0  == rmap.root->range[0].state.size);
+         TEST( 0  == rmap.root->range[0].multistate.size);
          // no overflow to adjacent block
          for (unsigned i = 0; i < lengthof(addr); ++i) {
             TEST( ENDMARKER == *(void**)addr[i]);
@@ -3992,7 +4059,7 @@ static int test_rangemap(void)
          for (unsigned i = 0; i < S; ++i) {
             TEST( i == rmap.root->range[i].from);
             TEST( i == rmap.root->range[i].to);
-            TEST( 0 == rmap.root->range[i].state.size);
+            TEST( 0 == rmap.root->range[i].multistate.size);
          }
          // no overflow to adjacent block
          for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -4034,7 +4101,7 @@ static int test_rangemap(void)
                N += !(N&1) && (N < from || N > to);
                TESTP( N == rmap.root->range[i].from, "from:%d to:%d N:%d != [%d]:%d", from, to, N, i, rmap.root->range[i].from);
                TEST( N == rmap.root->range[i].to);
-               TEST( 0 == rmap.root->range[i].state.size);
+               TEST( 0 == rmap.root->range[i].multistate.size);
             }
             // no overflow to adjacent block
             for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -4074,7 +4141,7 @@ static int test_rangemap(void)
          for (unsigned i = 0; i < S; ++i) {
             TEST( 4*i   == rmap.root->range[i].from);
             TEST( 4*i+3 == rmap.root->range[i].to);
-            TEST( 0 == rmap.root->range[i].state.size);
+            TEST( 0 == rmap.root->range[i].multistate.size);
          }
          // no overflow to adjacent block
          for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -4114,7 +4181,7 @@ static int test_rangemap(void)
             t = (f < from && from <= next_t) ? from-1 : (f <= to && to < next_t) ? to : next_t;
             TEST( f == rmap.root->range[i].from);
             TEST( t == rmap.root->range[i].to);
-            TEST( 0 == rmap.root->range[i].state.size);
+            TEST( 0 == rmap.root->range[i].multistate.size);
          }
          // no overflow to adjacent block
          for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -4155,7 +4222,7 @@ static int test_rangemap(void)
          for (unsigned i = 0, f = 9*c; i < 3; ++i, f += 3) {
             TEST( f   == child->range[i].from);
             TEST( f+2 == child->range[i].to);
-            TEST( 0   == child->range[i].state.size);
+            TEST( 0   == child->range[i].multistate.size);
          }
       }
       TEST( 0 == child);   // value from child->next
@@ -4194,7 +4261,7 @@ static int test_rangemap(void)
             for (unsigned i = 0, f = 10*c; i < 2; ++i, f += 5) {
                TEST( f   == child->range[i].from);
                TEST( f+4 == child->range[i].to);
-               TEST( 0   == child->range[i].state.size);
+               TEST( 0   == child->range[i].multistate.size);
             }
          }
          TEST( 0 == child);   // value from child->next
@@ -4244,7 +4311,7 @@ static int test_rangemap(void)
       for (unsigned i = 0; i < leaf1->size; ++i) {
          TEST( i == leaf1->range[i].from);
          TEST( i == leaf1->range[i].to);
-         TEST( 0 == leaf1->range[i].state.size);
+         TEST( 0 == leaf1->range[i].multistate.size);
       }
       // check: leaf2 content
       TEST( leaf2->level == 0);
@@ -4253,7 +4320,7 @@ static int test_rangemap(void)
       for (unsigned i = 0, f = leaf1->size; i < leaf2->size; ++i, ++f) {
          TEST( f == leaf2->range[i].from);
          TEST( f == leaf2->range[i].to);
-         TEST( 0 == leaf2->range[i].state.size);
+         TEST( 0 == leaf2->range[i].multistate.size);
       }
       // check: no overflow into surrounding memory
       for (unsigned i = 0; i < lengthof(addr); ++i) {
@@ -4299,9 +4366,9 @@ static int test_rangemap(void)
             TEST( child[i]->next  == child[i+1]/*last entry 0*/);
             for (unsigned s = 0, t; s < S; ++s, f = t+1) {
                t = f + (s<2&&i==pos?1:3);
-               TEST( child[i]->range[s].from       == f);
-               TEST( child[i]->range[s].to         == t);
-               TEST( child[i]->range[s].state.size == 0);
+               TEST( child[i]->range[s].from == f);
+               TEST( child[i]->range[s].to   == t);
+               TEST( child[i]->range[s].multistate.size == 0);
             }
          }
          // check: no overflow into surrounding memory
@@ -4366,9 +4433,9 @@ static int test_rangemap(void)
          TEST( child[i]->next  == child[i+1]/*last entry 0*/);
          for (unsigned s = 0, t; s < S; ++s, f = t+1) {
             t = f + (s<2&&i==pos?1:3);
-            TEST( child[i]->range[s].from       == f);
-            TEST( child[i]->range[s].to         == t);
-            TEST( child[i]->range[s].state.size == 0);
+            TEST( child[i]->range[s].from == f);
+            TEST( child[i]->range[s].to   == t);
+            TEST( child[i]->range[s].multistate.size == 0);
          }
       }
       // check: no overflow into surrounding memory
@@ -4487,11 +4554,11 @@ static int test_rangemap(void)
          TEST(next->range[r].from == (char32_t) (2*i2));
          TEST(next->range[r].to   == (char32_t) (2*i2));
          if (i2 <= i) {
-            TEST(next->range[r].state.size == 1);
-            TEST(next->range[r].state.root == (void*)i2);
+            TEST(next->range[r].multistate.size == 1);
+            TEST(next->range[r].multistate.root == (void*)i2);
          } else {
-            TEST(next->range[r].state.size == 0);
-            TEST(next->range[r].state.root == 0);
+            TEST(next->range[r].multistate.size == 0);
+            TEST(next->range[r].multistate.root == 0);
          }
          if ( (++r) >= next->size) {
             r = 0;
@@ -4525,13 +4592,13 @@ static int test_rangemap(void)
          TEST(next->size > r);
          TEST(next->range[r].from == (char32_t) (2*i2));
          TEST(next->range[r].to   == (char32_t) (2*i2+1));
-         TEST(next->range[r].state.size == i);
-         TEST(next->range[r].state.root != 0);
+         TEST(next->range[r].multistate.size == i);
+         TEST(next->range[r].multistate.root != 0);
          if (i == 1) {
-            TEST( (void*)i == next->range[r].state.root);
+            TEST( (void*)i == next->range[r].multistate.root);
          } else {
             for (uintptr_t s = 1; s <= i; ++s) {
-               TEST( (state_t*)s == ((multistate_node_t*)next->range[r].state.root)->state[s-1]);
+               TEST( (state_t*)s == ((multistate_node_t*)next->range[r].multistate.root)->state[s-1]);
             }
          }
          if ( (++r) >= next->size) {
@@ -4551,7 +4618,7 @@ static int test_rangemap(void)
    for (unsigned from = 6; from <= 9; ++from) {
       TEST( EINVAL == addstate_rangemap(&rmap, mman, from, 9, 0));
       TEST( 1 == rmap.root->size);
-      TEST( 0 == rmap.root->range[0].state.size);
+      TEST( 0 == rmap.root->range[0].multistate.size);
    }
 
    // TEST addstate_rangemap: EINVAL (range[x].to < from && from < range[x+1].from)
@@ -4562,11 +4629,11 @@ static int test_rangemap(void)
    }
    // single node
    TEST( EINVAL == addstate_rangemap(&rmap, mman, 2, 4, 0));
-   TEST( 0 == rmap.root->range[0].state.size);
-   TEST( 0 == rmap.root->range[1].state.size);
+   TEST( 0 == rmap.root->range[0].multistate.size);
+   TEST( 0 == rmap.root->range[1].multistate.size);
    TEST( EINVAL == addstate_rangemap(&rmap, mman, 0, 4, 0));
-   TEST( 1 == rmap.root->range[0].state.size);
-   TEST( 0 == rmap.root->range[1].state.size);
+   TEST( 1 == rmap.root->range[0].multistate.size);
+   TEST( 0 == rmap.root->range[1].multistate.size);
    // prepare
    rmap = (rangemap_t) rangemap_INIT;
    for (unsigned i = 0; i <= rangemap_NROFRANGE; ++i) {
@@ -4577,14 +4644,14 @@ static int test_rangemap(void)
    TEST( EINVAL == addstate_rangemap(&rmap, mman, rangemap_NROFRANGE+2, rangemap_NROFRANGE+2, 0));
    for (unsigned c = 0; c <= 1; ++c) {
       for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
-         TEST( 0 == rmap.root->child[c]->range[i].state.size);
+         TEST( 0 == rmap.root->child[c]->range[i].multistate.size);
       }
    }
    TEST( EINVAL == addstate_rangemap(&rmap, mman, 0, 2*rangemap_NROFRANGE+1, 0));
    for (unsigned c = 0; c <= 1; ++c) {
       unsigned const S = (c == 0);
       for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
-         TEST( S == rmap.root->child[c]->range[i].state.size);
+         TEST( S == rmap.root->child[c]->range[i].multistate.size);
       }
    }
    // reset
@@ -4598,7 +4665,7 @@ static int test_rangemap(void)
    for (unsigned to = 5; to < 9; ++to) {
       TEST( EINVAL == addstate_rangemap(&rmap, mman, 5, to, 0));
       TEST( 1 == rmap.root->size);
-      TEST( 0 == rmap.root->range[0].state.size);
+      TEST( 0 == rmap.root->range[0].multistate.size);
    }
    // prepare
    rmap = (rangemap_t) rangemap_INIT;
@@ -4611,7 +4678,7 @@ static int test_rangemap(void)
    for (unsigned c = 0; c <= 1; ++c) {
       unsigned const S = (c == 0);
       for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
-         TEST( S == rmap.root->child[c]->range[i].state.size);
+         TEST( S == rmap.root->child[c]->range[i].multistate.size);
       }
    }
    // reset
@@ -4628,7 +4695,7 @@ static int test_rangemap(void)
    // check rmap
    for (unsigned c = 0; c <= 1; ++c) {
       for (unsigned i = 0; i < rmap.root->child[c]->size; ++i) {
-         TEST( 1 == rmap.root->child[c]->range[i].state.size);
+         TEST( 1 == rmap.root->child[c]->range[i].multistate.size);
       }
    }
    // reset
@@ -6165,15 +6232,14 @@ static int test_optimize(void)
    TEST(0 == opsequence_automat(&ndfa2, &ndfa1));  // c(xc)*xn
    TEST(0 == opor_automat(&ndfa, &ndfa2));         // b(xb)*xn|c(xc)*xn
    TEST(0 == initcopy_automat(&ndfa1, &ndfa, 0));  // b(xb)*xn|c(xc)*xn
-   // test
-   // simulate minimize_automat with without calling makedfa_automat ass last operations
+   // test (simulate minimize_automat) without calling makedfa_automat as last operation
    TEST( 0 == makedfa_automat(&ndfa));
    TEST( 0 == initreverse_automat(&ndfa2, &ndfa, &use_mman));
    TEST( 0 == free_automat(&ndfa));
    TEST( 0 == makedfa_automat(&ndfa2));
    TEST( 0 == initreverse_automat(&ndfa, &ndfa2, &use_mman));
    TEST( 0 == free_automat(&ndfa2));
-   // check ndfa is type nfa
+   // check ndfa is type nfa and not dfa
    next_addr = first_statelist(&ndfa.states);
    for (unsigned i = 0; i < 3; ++i) {
       next_addr = next_statelist(next_addr);

@@ -163,9 +163,7 @@ int opand_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 
 /* function: opandnot_automat
  * Erzeugt Automat ndfa = "(ndfa) & !(ndfa2)".
- * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden.
- * TODO: Implement opandnot_automat
- * TODO: copy ndfa2 if necessary */
+ * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden. */
 int opandnot_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 
 /* function: opnot_automat

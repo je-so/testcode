@@ -169,7 +169,7 @@ int opand_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 int opandnot_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
 
 /* function: opnot_automat
- * Erzeugt Automat ndfa = "!(ndfa)" bzw. gleichbedeutend mit ndfa = "(.*) & !(ndfa)". */
+ * Erzeugt Automat ndfa = "!(ndfa)" bzw. gleichbedeutend mit ndfa = "([\x00-\xffffffff]*) & !(ndfa)". */
 int opnot_automat(automat_t* restrict ndfa);
 
 // group: optimize

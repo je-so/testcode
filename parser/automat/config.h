@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #define EINVARIANT 1024
+#define ESYNTAX    1025
 
 typedef void* IDNAME;
 typedef void* TYPENAME;

@@ -9,9 +9,6 @@
    (C) 2016 Jörg Seebohn
 */
 
-// Compile with: gcc -oatm -DKONFIG_UNITTEST -std=gnu99 automat.c automat_mman.c  
-// Run with: ./atm
-
 #include "config.h"
 #include "automat.h"
 #include "automat_mman.h"

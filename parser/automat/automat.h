@@ -54,6 +54,7 @@ typedef struct automat_t {
    /* variable: states
     * Liste aller Automaten-Zustände. */
    slist_t           states;
+   bool              isDFA;
 } automat_t;
 
 // group: lifetime
@@ -61,7 +62,7 @@ typedef struct automat_t {
 /* define: automat_FREE
  * Static initializer. */
 #define automat_FREE \
-         { 0, 0, 0, slist_INIT }
+         { 0, 0, 0, slist_INIT, 0 }
 
 /* function: free_automat
  * Verringert nur den Referenzzähler des verwendeten <automat_mman_t>.
@@ -107,11 +108,36 @@ int initreverse_automat(/*out*/automat_t* restrict ndfa, const automat_t* ndfa2,
 
 // group: query
 
+/* function: isfree_automat
+ * Gibt true züruck, wenn (*ndfa == automat_FREE), ansonsten false. */
+static inline int isfree_automat(const automat_t* ndfa);
+
 /* function: nrstate_automat
  * Gibt Anzahl Zustände des Automaten zurück. */
 size_t nrstate_automat(const automat_t* ndfa);
 
+/* function: isendstate_automat
+ * Gibt true zurück, wenn der Zustand statenr ein Endzustand ist.
+ * D.h. der bis zu diesem Zustand verarbeitete Eingabestring ist gültig.
+ * Der Startzustand hat die Nummer 0 und der Endzustand die Nummer nrstate_automat()-1.
+ *
+ * Unchecked Precondition:
+ * - makedfa_automat(ndfa) or minimize_automat(ndfa) called before this function */
+int isendstate_automat(const automat_t* ndfa, size_t statenr/*0 == start, nrstate_automat-1 == end*/);
+
+/* function: iserrorstate_automat
+ * Gibt true zurück, wenn der Zustand keinen gültigen Übergang zu einem anderen Zustand besitzt.
+ *
+ * Unchecked Precondition:
+ * - makedfa_automat(ndfa) or minimize_automat(ndfa) called before this function */
+int iserrorstate_automat(const automat_t* ndfa, size_t statenr/*0 == start, nrstate_automat-1 == end*/);
+
 /* function: matchchar32_automat
+ * Gibt die Anzahl an Zeichen zurück, die beginnend von str[0] einen akzeptierenden Zustand erreichen.
+ * Falls der Automat auch die leere Eingabe als gültig akzeptiert, wird immer 0 zurückgegeben,
+ * wenn matchLongest == false. Mit der Vorgabe matchLongest == true wird immer die Länge der
+ * längsten Zeichenkette zurückgegeben, die einen akzeptieren zustand erreicht, ansonsten die
+ * kürzeste.
  *
  * Returns:
  * 0 - Either ndfa was initialized with <initempty_automat> or the str is not matched by ndfa.
@@ -147,8 +173,13 @@ int extendmatch_automat(automat_t* ndfa, uint8_t nrmatch, char32_t match_from[nr
 int opsequence_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
 
 /* function: oprepeat_automat
- * Erzeugt Automat ndfa = "(ndfa)*". */
-int oprepeat_automat(/*out*/automat_t* ndfa);
+ * Erzeugt Automat ndfa = "(ndfa)*" oder ndfa = "(ndfa)+".
+ * Parameter isAtLeastOneTime selektiert zwischen '*' (false) und '+' (true).
+ * Ist isAtLeastOneTime == true, wird das von ndfa erzeugte Muster beliebig oft
+ * wiederholt, aber minstens einmal. Ist isAtLeastOneTime == false, wird das von
+ * ndfa erzeugte Muster beliebig oft wiederholt, wobei die leere Eingabe (keinmalige
+ * Wiederholung) auch erlaubt ist. */
+int oprepeat_automat(/*out*/automat_t* ndfa, bool isAtLeastOneTime);
 
 /* function: opor_automat
  * Erzeugt Automat ndfa = "(ndfa)|(ndfa2)"
@@ -159,12 +190,12 @@ int opor_automat(/*out*/automat_t* restrict ndfa, automat_t* restrict ndfa2/*fre
 /* function: opand_automat
  * Erzeugt Automat ndfa = "(ndfa) & (ndfa2)".
  * Der erzeugte Automat erkennt Zeichenfolgen, die von beiden AUtomaten gemeinsam erkannt werden. */
-int opand_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
+int opand_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
 
 /* function: opandnot_automat
  * Erzeugt Automat ndfa = "(ndfa) & !(ndfa2)".
  * Der erzeugte Automat erkennt Zeichenfolgen, die von ndfa aber nicht von ndfa2 erkannt werden. */
-int opandnot_automat(automat_t* restrict ndfa, const automat_t* restrict ndfa2);
+int opandnot_automat(automat_t* restrict ndfa, automat_t* restrict ndfa2/*freed after return*/);
 
 /* function: opnot_automat
  * Erzeugt Automat ndfa = "!(ndfa)" bzw. gleichbedeutend mit ndfa = "([\x00-\xffffffff]*) & !(ndfa)". */
@@ -185,6 +216,7 @@ int makedfa_automat(automat_t* ndfa);
 
 /* function: minimize_automat
  * Generiert einen auf minimale Anzahl an Zuständen optimierten deterministischen endlichen Automaten.
+ * Der generierte Automat ist deterministisch (letzte Operation ist <makedfa_automat>).
  *
  * Funktionsweise:
  * Der Automat ndfa wird umgekehrt, d.h. der Startzustand wird zum Endzustand und umgekehrt und alle
@@ -212,6 +244,14 @@ static inline void initmove_automat(/*out*/automat_t* dest_ndfa, automat_t* src_
 {
          *dest_ndfa = *src_ndfa;
          *src_ndfa  = (automat_t) automat_FREE;
+}
+
+static inline int isfree_automat(const automat_t* ndfa)
+{
+         return   ndfa->mman == 0
+                  && ndfa->nrstate == 0
+                  && ndfa->allocated == 0
+                  && ndfa->states.last == 0;
 }
 
 #endif

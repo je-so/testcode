@@ -93,7 +93,7 @@ void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted);
 /* function: malloc_automatmman
  * Allokiert mem_size bytes Speicher und gibt Startadresse in mem_addr zurück.
  * Der allokierte Speicherbereich erstreckt sich über [mem_addr .. mem_addr+mem_size-1]. */
-int malloc_automatmman(struct automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr);
+int malloc_automatmman(struct automat_mman_t * mman, size_t mem_size, /*out*/void ** mem_addr);
 
 /* function: mfreelast_automatmman
  * Gibt zuletzt allokierten Speicher wieder frei.

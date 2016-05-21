@@ -270,14 +270,14 @@ void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted)
 
 // group: memory-allocation
 
-int malloc_automatmman(automat_mman_t * mman, uint16_t mem_size, /*out*/void ** mem_addr)
+int malloc_automatmman(automat_mman_t * mman, size_t mem_size, /*out*/void ** mem_addr)
 {
    int err;
 
    if (mman->freesize < mem_size) {
       memory_page_t * free_page;
-      if (  memory_page_FREESIZE < UINT16_MAX && mem_size > memory_page_FREESIZE) {
-         // free page does not meet demand of mem_size bytes which could as big as UINT16_MAX
+      if (mem_size > memory_page_FREESIZE) {
+         // free page does not meet demand of mem_size bytes
          err = ENOMEM;
          goto ONERR;
       }

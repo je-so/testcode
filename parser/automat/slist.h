@@ -222,11 +222,21 @@ static inline void insertlast_slist(slist_t * list, struct slist_node_t * new_no
 /* function: insertafter_slist
  * Adds new_node after prev_node into list.
  * Ownership is transfered from caller to <slist_t>.
+ * list->last is changed to new_node if prev_node is the last node.
  *
- * Note:
+ * Unchecked Precondition:
  * Make sure that new_node is not part of a list
- * and that prev_node is part of the list ! */
+ * and that prev_node is part of list ! */
 static inline void insertafter_slist(slist_t * list, struct slist_node_t * prev_node, struct slist_node_t * new_node);
+
+/* function: insertnext_slist
+ * Adds new_node after prev_node into list.
+ * Ownership is transfered from caller to <slist_t>.
+ *
+ * Unchecked Precondition:
+ * Make sure that new_node is not part of a list
+ * and that prev_node is part of any list ! */
+static inline void insertnext_slist(struct slist_node_t * prev_node, struct slist_node_t * new_node);
 
 /* function: removefirst_slist
  * Removes the first element from list.
@@ -375,6 +385,14 @@ void slist_IMPLEMENT(IDNAME _fsuffix, TYPENAME object_t, IDNAME name_nextptr);
 #define next_slist(node) \
          ((node)->next)
 
+/* define: insertnext_slist
+ * Implements <slist_t.insertnext_slist>. */
+static inline void insertnext_slist(struct slist_node_t * prev_node, struct slist_node_t * new_node)
+{
+   new_node->next  = prev_node->next;
+   prev_node->next = new_node;
+}
+
 /* define: insertlastPlist_slist
  * Implements <slist_t.insertlastPlist_slist>. */
 static inline void insertlastPlist_slist(slist_t * list, slist_t * list2)
@@ -514,6 +532,9 @@ static inline void insertafter_slist(slist_t * list, struct slist_node_t * prev_
    } \
    static inline void insertafter##_fsuffix(slist_t * list, object_t * prev_node, object_t * new_node) { \
       insertafter_slist(list, cast2node##_fsuffix(prev_node), cast2node##_fsuffix(new_node)); \
+   } \
+   static inline void insertnext##_fsuffix(object_t * prev_node, object_t * new_node) { \
+      insertnext_slist(cast2node##_fsuffix(prev_node), cast2node##_fsuffix(new_node)); \
    } \
    static inline object_t* removefirst##_fsuffix(slist_t * list) { \
       return cast2object##_fsuffix(removefirst_slist(list)); \

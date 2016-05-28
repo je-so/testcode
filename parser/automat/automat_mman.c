@@ -34,11 +34,11 @@ static test_errortimer_t s_automat_mman_errtimer;
 
 typedef struct memory_page_t {
    /* variable: next
-    * Verlinkt die Seiten zu einer Liste. */
-   slist_node_t next;
+    * Verlinkt die Seiten zu einer einfach verketteten Liste. */
+   slist_node_t *next; // links this page to next page (single linked list)
    /* variable: data
     * Beginn der gespeicherten Daten. Diese sind auf den long Datentyp ausgerichtet. */
-   long         data[1];
+   long         data[1]; // start of allocated dat aon this page
 } memory_page_t;
 
 // group: static variables
@@ -56,7 +56,7 @@ static size_t s_memory_page_sizeallocated = 0;
 
 // group: helper-types
 
-slist_IMPLEMENT(_pagelist, memory_page_t, next.next)
+slist_IMPLEMENT(_pagelist, memory_page_t, next)
 
 // group: query
 
@@ -131,7 +131,7 @@ static test_errortimer_t   s_automat_mman_errtimer = test_errortimer_FREE;
 #define automat_mman_INIT \
          { slist_INIT, slist_INIT, 0, 0, 0, 0, 0}
 
-int new_automatmman(/*out*/struct automat_mman_t ** mman)
+int new_automatmman(/*out*/struct automat_mman_t **mman)
 {
    int err;
    automat_mman_t transient_mman = automat_mman_INIT;
@@ -152,7 +152,7 @@ ONERR:
    return err;
 }
 
-int delete_automatmman(automat_mman_t ** mman)
+int delete_automatmman(automat_mman_t **mman)
 {
    int err;
    int err2;
@@ -189,7 +189,7 @@ ONERR:
 /* function: allocpage_automatmman
  * Weist page eine Speicherseite von <buffer_page_SIZE> Bytes zu.
  * Der Speicherinhalt von **page ist undefiniert. */
-static inline int getfreepage_automatmman(automat_mman_t * mman, /*out*/memory_page_t ** free_page)
+static inline int getfreepage_automatmman(automat_mman_t *mman, /*out*/memory_page_t ** free_page)
 {
    int err;
 
@@ -209,17 +209,17 @@ ONERR:
 
 // group: query
 
-size_t refcount_automatmman(const automat_mman_t * mman)
+size_t refcount_automatmman(const automat_mman_t *mman)
 {
    return mman->refcount;
 }
 
-size_t sizeallocated_automatmman(const automat_mman_t * mman)
+size_t sizeallocated_automatmman(const automat_mman_t *mman)
 {
    return mman->allocated;
 }
 
-size_t wasted_automatmman(const struct automat_mman_t * mman)
+size_t wasted_automatmman(const struct automat_mman_t *mman)
 {
    return mman->wasted;
 }
@@ -228,7 +228,7 @@ size_t wasted_automatmman(const struct automat_mman_t * mman)
 
 /* function: reset_automatmman
  * Gibt alle allokierten Ressourcen frei. */
-void reset_automatmman(automat_mman_t * mman)
+void reset_automatmman(automat_mman_t *mman)
 {
    memory_page_t * first_page;   // mman is located on first page
    first_page = removefirst_pagelist(&mman->pagelist);
@@ -242,14 +242,14 @@ void reset_automatmman(automat_mman_t * mman)
 
 /* function: incruse_automatmman
  * Markiert die Ressourcen, verwaltet von mman, als vom aufrufenden <automat_t> benutzt. */
-void incruse_automatmman(automat_mman_t * mman)
+void incruse_automatmman(automat_mman_t *mman)
 {
    ++ mman->refcount;
 }
 
 /* function: decruse_automatmman
  * Markiert die Ressourcen, verwaltet von mman, als vom Aufrufer (<automat_t>) unbenutzt. */
-size_t decruse_automatmman(automat_mman_t * mman)
+size_t decruse_automatmman(automat_mman_t *mman)
 {
    assert(mman->refcount > 0);
    -- mman->refcount;
@@ -261,7 +261,7 @@ size_t decruse_automatmman(automat_mman_t * mman)
    return mman->refcount;
 }
 
-void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted)
+void incrwasted_automatmman(struct automat_mman_t *mman, size_t wasted)
 {
    // should never overflow cause wasted is the amount of already allocated memory at max
    // ==> mman->wasted <= mman->allocated !
@@ -270,7 +270,7 @@ void incrwasted_automatmman(struct automat_mman_t * mman, size_t wasted)
 
 // group: memory-allocation
 
-int malloc_automatmman(automat_mman_t * mman, size_t mem_size, /*out*/void ** mem_addr)
+int malloc_automatmman(automat_mman_t *mman, size_t mem_size, /*out*/void ** mem_addr)
 {
    int err;
 
@@ -300,7 +300,7 @@ ONERR:
    return err;
 }
 
-int mfreelast_automatmman(struct automat_mman_t * mman, void * mem_addr)
+int mfreelast_automatmman(struct automat_mman_t *mman, void *mem_addr)
 {
    int err;
    size_t freesize = (size_t) (mman->freemem - (uint8_t*)mem_addr);
@@ -322,14 +322,30 @@ ONERR:
    return err;
 }
 
-// group: for-test-only
-
-void setfreesize_automatmman(struct automat_mman_t * mman, size_t freesize)
+void storestate_automatmman(struct automat_mman_t *mman, /*out*/automat_mman_state_t *state)
 {
-   if (mman->freesize > freesize) {
-      mman->freesize = freesize;
-   }
+   state->last_page = last_pagelist(&mman->pagelist);
+   state->freesize  = mman->freesize;
+   state->allocated = mman->allocated;
+   state->wasted    = mman->wasted;
 }
+
+void restore_automatmman(struct automat_mman_t *mman, const automat_mman_state_t *state)
+{
+   memory_page_t *lastpage = last_pagelist(&mman->pagelist);
+
+   if (state->last_page != lastpage) {
+      slist_t freelist;
+      initsplit_pagelist(&freelist, &mman->pagelist, state->last_page);
+      insertfirstPlist_pagelist(&mman->pagecache, &freelist);
+   }
+
+   mman->freemem   = memory_page_SIZE + (uint8_t*) state->last_page;
+   mman->freesize  = state->freesize;
+   mman->allocated = state->allocated;
+   mman->wasted    = state->wasted;
+}
+
 
 
 // section: Functions
@@ -361,9 +377,9 @@ static int test_memorypage(void)
    slist_t       pagelist = slist_INIT;
    for (unsigned i = 0; i < lengthof(pageobj); ++i) {
       insertlast_pagelist(&pagelist, &pageobj[i]);
-      TEST(&pageobj[i].next == pagelist.last);
-      TEST(pageobj[i].next.next == &pageobj[0].next);
-      TEST(pageobj[i ? i-1 : 0].next.next == &pageobj[i].next);
+      TEST(&pageobj[i] == last_pagelist(&pagelist));
+      TEST(&pageobj[0] == next_pagelist(&pageobj[i]));
+      TEST(&pageobj[i] == next_pagelist(&pageobj[i ? i-1 : 0]));
    }
 
    // === group lifetime
@@ -408,7 +424,7 @@ ONERR:
 
 static int test_initfree(void)
 {
-   automat_mman_t* mman  = 0;
+   automat_mman_t *mman  = 0;
    automat_mman_t  mman2 = automat_mman_INIT;
    const size_t    oldsize = SIZEALLOCATED_PAGECACHE();
    const size_t    F = memory_page_SIZE - offsetof(memory_page_t, data) - sizeof(automat_mman_t);
@@ -719,7 +735,7 @@ ONERR:
 
 static int test_allocate(void)
 {
-   automat_mman_t* mman = 0;
+   automat_mman_t *mman = 0;
    const size_t    oldsize = SIZEALLOCATED_PAGECACHE();
    const size_t    F = memory_page_SIZE - offsetof(memory_page_t, data) - sizeof(automat_mman_t);
    void *          addr;
@@ -840,11 +856,152 @@ ONERR:
    return EINVAL;
 }
 
+static int test_restore(void)
+{
+   automat_mman_t *mman = 0;
+   automat_mman_t oldmman;
+   automat_mman_state_t state;
+   const size_t    oldsize = SIZEALLOCATED_PAGECACHE();
+   void           *addr;
+   memory_page_t  *first, *last;
+
+   // prepare
+   TEST( 0 == new_automatmman(&mman));
+   TEST( SIZEALLOCATED_PAGECACHE() == oldsize + memory_page_SIZE);
+   first = last = last_pagelist(&mman->pagelist);
+
+   // TEST storestate_automatmman: single page
+   for (size_t wasted = 0; wasted <= 256; wasted += 128) {
+      for (size_t allocated = 0; allocated <= 256; allocated += 64) {
+         // prepare
+         TEST(0 == malloc_automatmman(mman, allocated, &addr));
+         incrwasted_automatmman(mman, wasted);
+         memcpy(&oldmman, mman, sizeof(oldmman));
+         // test
+         storestate_automatmman(mman, &state);
+         // check mman not changed
+         TEST( memcmp(&oldmman, mman, sizeof(oldmman)) == 0);
+         TEST( last_pagelist(&mman->pagelist) == last);
+         // check state
+         TEST( state.last_page == last_pagelist(&mman->pagelist));
+         TEST( state.freesize  == mman->freesize);
+         TEST( state.allocated == mman->allocated);
+         TEST( state.wasted    == mman->wasted);
+         // check last
+         TEST( next_pagelist(last) == last);
+
+         // reset
+         reset_automatmman(mman);
+      }
+   }
+
+   // TEST restore_automatmman: on same page
+   // prepare
+   memcpy(&oldmman, mman, sizeof(oldmman));
+   storestate_automatmman(mman, &state);
+   for (size_t wasted = 0; wasted <= 1024; wasted *= 2, wasted += 1) {
+      for (size_t allocated = 0; allocated < 65536; allocated *= 2, allocated += 1) {
+         TEST(0 == malloc_automatmman(mman, allocated, &addr));
+         incrwasted_automatmman(mman, wasted);
+         // test
+         restore_automatmman(mman, &state);
+         // check mman restored
+         TEST( memcmp(&oldmman, mman, sizeof(oldmman)) == 0);
+         TEST( last_pagelist(&mman->pagelist) == last);
+         // check page
+         TEST( next_pagelist(last) == last);
+      }
+   }
+
+   // TEST storestate_automatmman: multiple pages
+   for (unsigned nrblock = 1; nrblock < 16; ++nrblock) {
+      // prepare
+      last = last_pagelist(&mman->pagelist);
+      TEST(malloc_automatmman(mman, memory_page_FREESIZE-nrblock, &addr) == 0);
+      for (size_t wasted = 0; wasted <= 1234; wasted += 1234) {
+         incrwasted_automatmman(mman, wasted);
+         memcpy(&oldmman, mman, sizeof(oldmman));
+         // test
+         storestate_automatmman(mman, &state);
+         // check mman not changed
+         TEST( memcmp(&oldmman, mman, sizeof(oldmman)) == 0);
+         TEST( last_pagelist(&mman->pagelist)  != last);
+         TEST( first_pagelist(&mman->pagelist) == first);
+         // check state
+         TEST( state.last_page == last_pagelist(&mman->pagelist));
+         TEST( state.freesize  == mman->freesize);
+         TEST( state.allocated == mman->allocated);
+         TEST( state.wasted    == mman->wasted);
+      }
+   }
+   // reset
+   reset_automatmman(mman);
+
+   // TEST restore_automatmman: multiple pages
+   for (unsigned nrbefore = 0; nrbefore < 15; ++nrbefore) {
+      memory_page_t *pages[16];
+      unsigned nrpages = 0;
+      pages[nrpages++] = first;
+      foreach (_pagelist, p, &mman->pagecache) {
+         TEST(nrpages < lengthof(pages));
+         pages[nrpages++] = p;
+      }
+      TEST(nrpages == 16);
+      // prepare
+      for (unsigned i = 0; i < nrbefore; ++i) {
+         TEST(malloc_automatmman(mman, memory_page_FREESIZE-i, &addr) == 0);
+      }
+      oldmman = *mman;
+      storestate_automatmman(mman, &state);
+      for (unsigned nrblock = nrbefore+1; nrblock < 16; ++nrblock) {
+         for (unsigned i = nrbefore; i < nrblock; ++i) {
+            TEST(malloc_automatmman(mman, memory_page_FREESIZE-i, &addr) == 0);
+         }
+         incrwasted_automatmman(mman, 124);
+         // test
+         restore_automatmman(mman, &state);
+         // check mman
+         TEST( first_pagelist(&mman->pagelist)  == first);
+         TEST( first_pagelist(&mman->pagecache) == pages[nrbefore+1]);
+         TEST( mman->freesize  == oldmman.freesize);
+         TEST( mman->refcount  == oldmman.refcount);
+         TEST( mman->freemem   == oldmman.freemem);
+         TEST( mman->freesize  == oldmman.freesize);
+         TEST( mman->allocated == oldmman.allocated);
+         TEST( mman->wasted    == oldmman.wasted);
+         // check mman->pagelist
+         unsigned i = 0;
+         foreach (_pagelist, p, &mman->pagelist) {
+            TEST( i <= nrbefore);
+            TEST( p == pages[i++]);
+         }
+         TEST( i == nrbefore+1);
+         // check mman->pagecache
+         foreach (_pagelist, p, &mman->pagecache) {
+            TEST( i < lengthof(pages));
+            TEST( p == pages[i++]);
+         }
+         TEST( i == lengthof(pages));
+      }
+      // reset
+      reset_automatmman(mman);
+   }
+
+   // reset
+   TEST(0 == delete_automatmman(&mman));
+
+   return 0;
+ONERR:
+   delete_automatmman(&mman);
+   return EINVAL;
+}
+
 int unittest_proglang_automat_mman()
 {
    if (test_memorypage())  goto ONERR;
    if (test_initfree())    goto ONERR;
    if (test_allocate())    goto ONERR;
+   if (test_restore())     goto ONERR;
 
    return 0;
 ONERR:

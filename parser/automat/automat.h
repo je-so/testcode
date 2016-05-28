@@ -86,7 +86,7 @@ int initcopy_automat(/*out*/automat_t* restrict dest_ndfa, const automat_t* rest
  * No allocated memory is touched. */
 static inline void initmove_automat(/*out*/automat_t* restrict dest_ndfa, automat_t* restrict src_ndfa/*freed after return*/);
 
-/* function: initmatch_automat
+/* function: initempty_automat
  * Erzeugt Automat ndfa = "".
  * Der Speicher wird vom selben Heap wie bei use_mman allokiert.
  * Falls use_mman == 0 wird ein neuer Heap angelegt. */

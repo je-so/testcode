@@ -64,7 +64,7 @@ void log_regexprerr(const regexpr_err_t *err, uint8_t channel);
  * Der syntaktische Aufbau der regulären Sprache lautet:
  *
  * > re   = seq? ( ( '|' | '&' | '&!' ) seq? )* ;
- * > seq  = ( not? atom repeat? )* ;
+ * > seq  = ( not? atom repeat? )+ ;
  * > not  = '!' ; // operator not is applied after repeat operator
  * > repeat = ( '*' | '+' | '?' ) ; // operator repeat is applied before possible not operator
  * > atom = '(' re ')' | char | set ;

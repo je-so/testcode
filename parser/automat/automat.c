@@ -35,6 +35,7 @@ struct range_t;
 struct rangemap_node_t;
 struct rangemap_t;
 struct rangemap_iter_t;
+struct statevector_block_t;
 struct statevector_t;
 
 #ifdef KONFIG_UNITTEST
@@ -89,13 +90,16 @@ slist_IMPLEMENT(_emptylist, empty_transition_t, next)
  * Ein Zustand besitzt nremptytrans leere Übergänge, verwaltet in emptylist
  * und nrrangetrans Zeichen erwartende Übergange, verwaltet in rangelist. */
 typedef struct state_t {
-   slist_node_t*  next; // used in adapted slist_t  _statelist
-   size_t   nremptytrans;
-   size_t   nrrangetrans;
-   slist_t  emptylist;
-   slist_t  rangelist;
+   slist_node_t*  next; // used in link to next state_t in _statelist
+   size_t   nremptytrans; // number of empty transitions
+   size_t   nrrangetrans; // number of range transitions
+   slist_t  emptylist;    // list of empty transitions
+   slist_t  rangelist;    // list of range transitions (every node contains multiple rangestate_t)
    union {
-      uint8_t           isused; // used to mark a state as inserted or used
+      struct {
+         uint8_t        isused; // used to mark a state as inserted or used
+         uint8_t        nrdfa;  // used to inidicate to which automaton state belongs
+      };
       size_t            nr;     // used to assign numbers to states for printing
       struct state_t*   dest;   // used in copy operations
    };
@@ -243,7 +247,7 @@ static size_t sizeblock_statearray(void)
 #define statearray_FREE \
          { 0, 0, slist_INIT, slist_INIT, slist_INIT, 0, 0, 0, 0, 0 }
 
-static int init_statearray(statearray_t * arr)
+static int init_statearray(/*out*/statearray_t * arr)
 {
    int err;
    automat_mman_t  *   mman = 0;
@@ -774,7 +778,7 @@ typedef struct multistate_iter_t {
 
 // group: lifetime
 
-static void init_multistateiter(multistate_iter_t* iter, const multistate_t* mst)
+static void init_multistateiter(/*out*/multistate_iter_t* iter, const multistate_t* mst)
 {
    iter->next_node = 0;
    iter->next_state = 0;
@@ -1262,7 +1266,9 @@ static int addstate_rangemap(rangemap_t *rmap, automat_mman_t *mman, char32_t fr
       expect = node->range[low].to + 1;
       if (node->range[low].to > to) return EINVAL;
       err = add_multistate(&node->range[low].multistate, mman, state);
-      if (err) goto ONERR;
+      if (err) {
+         if (err != EEXIST) goto ONERR;
+      }
       if (node->range[low].to == to) break;
       ++ low;
       if (low >= node->size) {
@@ -1287,7 +1293,7 @@ typedef struct rangemap_iter_t {
 
 // group: lifetime
 
-static void init_rangemapiter(rangemap_iter_t* iter, const rangemap_t* rmap)
+static void init_rangemapiter(/*out*/rangemap_iter_t* iter, const rangemap_t* rmap)
 {
    iter->next_node  = 0;
    iter->next_range = 0;
@@ -1323,24 +1329,62 @@ static bool next_rangemapiter(rangemap_iter_t* iter, range_t** range)
    return false;
 }
 
+/* struct: statevector_block_t
+ * Speichert bis zu statevector_MAXSTATEPERBLOCK state_t Zeiger.
+ * Ein statevector_t verwaltet eine Liste von statevector_block_t,
+ * um mehr als statevector_MAXSTATEPERBLOCK state_t Zeiger zu verwalten. */
+typedef struct statevector_block_t {
+   slist_node_t  *next; // links to next statevector_block_t
+   size_t         nrstate;
+   state_t       *state[/*nrstate*/];
+} statevector_block_t;
+
+// group: types
+
+/* define: YYY_stateblocklist
+ * Verwaltet <statevector_block_t> als Liste. */
+slist_IMPLEMENT(_stateblocklist, statevector_block_t, next)
+
+static int new_statevectorblock(/*out*/statevector_block_t **block, size_t nrstate, automat_mman_t *mman)
+{
+   int err;
+   void *newobj;
+
+   err = malloc_automatmman(mman, sizeof(statevector_block_t) + nrstate * sizeof(state_t*), &newobj);
+   PROCESS_testerrortimer(&s_automat_errtimer, &err);
+   if (err) goto ONERR;
+
+   // init
+   ((statevector_block_t*)newobj)->next    = 0;
+   ((statevector_block_t*)newobj)->nrstate = nrstate;
+
+   // set out param
+   *block = newobj;
+
+   return 0;
+ONERR:
+   return err;
+}
+
 
 /* struct: statevector_t
- * Ein Array von sortiertem Pointern auf <state_t>. */
+ * Ein Array von sortiertem Pointern auf <state_t>.
+ * Wird benutzt um aus einer Menge von state_t einen einzelnen dfa state zu bauen. */
 typedef struct statevector_t {
    patriciatrie_node_t  index;   // permits storing in index of type patriciatrie_t
-   slist_node_t       * next;    // permits storing in single linked list of type slist_t
-   state_t            * dfa;     // points to computed state of the build dfa automaton
-   size_t               nrstate;
-   state_t*             state[/*nrstate*/];
+   slist_node_t       * next;    // links to next statevector_t
+   state_t            * dfa;     // assigns single dfa state to vector of multiple ndfa states
+   size_t               nrstate; // number of all states stored in one or more statevector_block_t
+   slist_t              blocklist; // list of statevector_block_t
 } statevector_t;
 
 // group: constants
 
-/* define: statevector_MAX_NRSTATE
- * Definiert die maximale Anzahl an Zeigern (auf state_t), die in <statevector_t.state>
- * gespeichert werden können, so dass immer gilt: (sizeof(statevector_t) <= SIZE_MAX/2). */
-#define statevector_MAX_NRSTATE \
-         ((SIZE_MAX/2 - sizeof(statevector_t)) / sizeof(state_t*))
+/* define: statevector_MAXSTATEPERBLOCK
+ * Definiert die maximale Anzahl an state_t*, die in <statevector_block_t.state>
+ * gespeichert werden können. */
+#define statevector_MAXSTATEPERBLOCK \
+         ((131072 - sizeof(statevector_block_t)) / sizeof(state_t*))
 
 // group: types
 
@@ -1352,11 +1396,33 @@ slist_IMPLEMENT(_stateveclist, statevector_t, next)
 
 /* function: getkey_statevector
  * Gibt Schlüssel zurück, über den der <statevector_t> indiziert wird. */
-static void getkey_statevector(void *obj, getkey_data_t *key)
+static void getkey_statevector(/*inout*/getkey_data_t *key, size_t offset)
 {
-   // set out value
-   key->addr = (void*) ((statevector_t*)obj)->state;
-   key->size = ((statevector_t*)obj)->nrstate * sizeof(state_t*);
+   statevector_t       *sv = key->object;
+   statevector_block_t *block;
+
+   // init out value or reset to begin of list
+   if (! key->impl_ptr || offset < key->offset) {
+      if (sv->nrstate) {
+         block = first_stateblocklist(&sv->blocklist);
+         size_t streamsize = sv->nrstate * sizeof(state_t*);
+         size_t size = block->nrstate * sizeof(state_t*);
+         init2_getkeydata(key, streamsize, size, (uint8_t*) block->state);
+         key->impl_ptr = block;
+      } else {
+         init2_getkeydata(key, 0, 0, 0);
+         return;
+      }
+   }
+
+   // update inout value (parameter offset < key->streamsize)
+   while (key->endoffset <= offset) {
+      block = key->impl_ptr;
+      block = next_stateblocklist(block);
+      key->impl_ptr = block;
+      size_t size = block->nrstate * sizeof(state_t*);
+      update_getkeydata(key, key->endoffset, size, (uint8_t*) block->state);
+   }
 }
 
 static inline getkey_adapter_t keyadapter_statevector(void)
@@ -1366,36 +1432,43 @@ static inline getkey_adapter_t keyadapter_statevector(void)
 
 static inline bool iscontained_statevector(statevector_t *svec, state_t *state)
 {
-   size_t high = svec->nrstate;
-   size_t low  = 0;
-
-   while (low < high) {
-      size_t mid = (low + high)/2;
-      if (svec->state[mid] < state) {
-         low = mid+1;
-      } else {
-         high = mid;
+   foreach (_stateblocklist, block, &svec->blocklist) {
+      if (block->state[block->nrstate-1] >= state) {
+         size_t high = block->nrstate; // > 0
+         size_t low  = 0;
+         do {
+            size_t mid = (low + high)/2;
+            if (block->state[mid] < state) {
+               low = mid+1;
+            } else {
+               high = mid;
+            }
+         } while (low < high);
+         // (block->state[block->nrstate-1] >= state) ==> (low < block->nrstate)
+         return (state == block->state[low]);
       }
    }
 
-   return (svec->nrstate > low) && (state == svec->state[low]);
+   return false;
 }
 
-static inline bool isinuse12_statevector(statevector_t *svec, bool isNeedValue2)
+static inline bool isnrdfa12_statevector(statevector_t *svec, bool isNeedDFA2)
 {
-   size_t i;
+   statevector_block_t *block = last_stateblocklist(&svec->blocklist);
+   uint8_t              nrdfa = 1;
 
-   for (i = 0; i < svec->nrstate; ++i) {
-      if (svec->state[i]->isused == 1) {
-         if (! isNeedValue2) return true;
-         for (++i; i < svec->nrstate; ++i) {
-            if (svec->state[i]->isused == 2) return true;
-         }
-      } else if (svec->state[i]->isused == 2) {
-         for (++i; i < svec->nrstate; ++i) {
-            if (svec->state[i]->isused == 1) return true;
-         }
+   if (block) {
+      if (block->state[0]->nrdfa == 1) {
+         if (! isNeedDFA2) return true;
+         nrdfa = 2;
       }
+
+      do {
+         for (size_t i = 0; i < block->nrstate; ++i) {
+            if (block->state[i]->nrdfa == nrdfa) { return true; }
+         }
+         block = next_stateblocklist(block);
+      } while (block != last_stateblocklist(&svec->blocklist));
    }
 
    return false;
@@ -1406,43 +1479,55 @@ static inline bool isinuse12_statevector(statevector_t *svec, bool isNeedValue2)
 /* function: init_statevector
  * Allokiert neuen statevector_t und kopiert states von multistate nach *svec.
  * Die kopierten states sind in aufsteigend sortierter Reihenfolge gemäß ihrer Speicheradresse. */
-static int init_statevector(/*out*/statevector_t **svec, automat_mman_t *mman, multistate_t* multistate)
+static int init_statevector(/*out*/statevector_t **svec, size_t nrstateperblock, automat_mman_t *mman, multistate_t* multistate)
 {
    int err;
-   void * newvec;
+   void *memblock;
    multistate_iter_t iter;
 
-   if (multistate->size > statevector_MAX_NRSTATE) {
-      err = EOVERFLOW;
+   if (!nrstateperblock || nrstateperblock > statevector_MAXSTATEPERBLOCK) {
+      err = EINVAL;
       goto ONERR;
    }
 
-   const size_t SIZE = sizeof(statevector_t) + multistate->size * sizeof(state_t*);
-   if (! PROCESS_testerrortimer(&s_automat_errtimer, &err)) {
-      // OPTIMIZATION:  extend patriciatrie for keys stored in more than one memory block
-      //                ==> no ENOMEM! cause keys could be split
-      err = malloc_automatmman(mman, SIZE, &newvec);
-   }
+   err = malloc_automatmman(mman, sizeof(statevector_t), &memblock);
+   PROCESS_testerrortimer(&s_automat_errtimer, &err);
    if (err) goto ONERR;
+   statevector_t *newvec = memblock;
 
    // copy states from multistate into newvec
-   ((statevector_t*)newvec)->index   = (patriciatrie_node_t) patriciatrie_node_INIT;
-   ((statevector_t*)newvec)->next    = 0;
-   ((statevector_t*)newvec)->dfa     = 0;
-   ((statevector_t*)newvec)->nrstate = multistate->size;
+   newvec->index   = (patriciatrie_node_t) patriciatrie_node_INIT;
+   newvec->next    = 0;
+   newvec->dfa     = 0;
+   newvec->nrstate = multistate->size;
+   newvec->blocklist = (slist_t) slist_INIT;
+
+   /* returned states are in sorted order (ascending) */
    init_multistateiter(&iter, multistate);
-   size_t i;
-   for (i = 0; next_multistateiter(&iter, &((statevector_t*)newvec)->state[i]); ++i) {
-      /*returned states are in sorted order*/
-      assert(i < multistate->size);
+   for (size_t i = multistate->size; i; ) {
+      statevector_block_t *block;
+      size_t nrstate = i > nrstateperblock ? nrstateperblock : i;
+
+      i -= nrstate;
+      err = new_statevectorblock(&block, nrstate, mman);
+      if (err) goto ONERR;
+
+      for (size_t i2 = 0; i2 < nrstate; ++i2) {
+         if (!next_multistateiter(&iter, &block->state[i2])) {
+            err = EINVAL;
+            goto ONERR;
+         }
+      }
+
+      insertlast_stateblocklist(&newvec->blocklist, block);
    }
-   assert(i == multistate->size);
 
    // set out
    *svec = newvec;
 
    return 0;
 ONERR:
+   // memory is not freed; caller must free or reset mman
    TRACEEXIT_ERRLOG(err);
    return err;
 }
@@ -2219,21 +2304,19 @@ ONERR:
 static int follow_empty_transition(multistate_t *multistate, automat_mman_t *mman)
 {
    int err;
-   statearray_t stateemptylist = statearray_FREE;
-   state_t *next;
+   multistate_iter_t iter;
+   state_t          *next;
+   statearray_t      stateemptylist = statearray_FREE;
 
    err = init_statearray(&stateemptylist);
    if (err) goto ONERR;
 
    // === transfer states with empty transitions from multistate into stateemptylist
-   {
-      multistate_iter_t iter;
-      init_multistateiter(&iter, multistate);
-      while (next_multistateiter(&iter, &next)) {
-         if (next->nremptytrans) {
-            err = insert1_statearray(&stateemptylist, next);
-            if (err) goto ONERR;
-         }
+   init_multistateiter(&iter, multistate);
+   while (next_multistateiter(&iter, &next)) {
+      if (next->nremptytrans) {
+         err = insert1_statearray(&stateemptylist, next);
+         if (err) goto ONERR;
       }
    }
    swap1and2_statearray(&stateemptylist);
@@ -2274,23 +2357,31 @@ static int build_rangemap_from_statevector(/*out*/rangemap_t *rmap, automat_mman
    *rmap = (rangemap_t) rangemap_INIT;
 
    // step 1: build non overlapping ranges stored in rmap, split them if necessary
-   for (size_t i = 0; i < svec->nrstate; ++i) {
-      state_t *state = svec->state[i];
-      foreach (_rangelist, range_trans, &state->rangelist) {
-         for (size_t s = 0; s < range_trans->size; ++s) {
-            err = addrange_rangemap(rmap, mman, range_trans->array[s].from, range_trans->array[s].to);
-            if (err) goto ONERR;
+   foreach (_stateblocklist, block, &svec->blocklist) {
+      for (size_t i = 0; i < block->nrstate; ++i) {
+         state_t *state = block->state[i];
+         if (state->nrrangetrans) {
+            foreach (_rangelist, range_trans, &state->rangelist) {
+               for (size_t s = 0; s < range_trans->size; ++s) {
+                  err = addrange_rangemap(rmap, mman, range_trans->array[s].from, range_trans->array[s].to);
+                  if (err) goto ONERR;
+               }
+            }
          }
       }
    }
 
    // step 2: add states to non overlapping ranges
-   for (size_t i = 0; i < svec->nrstate; ++i) {
-      state_t *state = svec->state[i];
-      foreach (_rangelist, range_trans, &state->rangelist) {
-         for (size_t s = 0; s < range_trans->size; ++s) {
-            err = addstate_rangemap(rmap, mman, range_trans->array[s].from, range_trans->array[s].to, range_trans->array[s].state);
-            if (err) goto ONERR;
+   foreach (_stateblocklist, block, &svec->blocklist) {
+      for (size_t i = 0; i < block->nrstate; ++i) {
+         state_t *state = block->state[i];
+         if (state->nrrangetrans) {
+            foreach (_rangelist, range_trans, &state->rangelist) {
+               for (size_t s = 0; s < range_trans->size; ++s) {
+                  err = addstate_rangemap(rmap, mman, range_trans->array[s].from, range_trans->array[s].to, range_trans->array[s].state);
+                  if (err) goto ONERR;
+               }
+            }
          }
       }
    }
@@ -2301,11 +2392,71 @@ ONERR:
    return err;
 }
 
+/* function: remove_singleemptytrans_states
+ * Verkürze lange Ketten von Zuständen, die nur eine leere Transition besitzen.
+ * Ein Kette s: '' -> s1; s1: '' -> s2; s2: '' -> s3; s3: 'a' -> o1
+ * wird dann optmiert zu s: '' -> s3; s1: '' -> s3; s2: '' -> s3; s3: 'a' -> o1
+ * */
+static void remove_singleemptytrans_states(automat_t *ndfa)
+{
+   // check every state s
+   // if exists chain s: '' -> s1; s1: '' -> s2; ... ; sn-1: '' -> sn
+   //                 && ( (sn: '' -> sn) || (sn: 'a'..'z' -> other) || (sn: '' -> o1, '' -> o2)
+   // then change sx with x [0..n-2]: sx: '' -> sn
+   foreach (_statelist, s, &ndfa->states) {
+      if (s->nrrangetrans == 0 && s->nremptytrans == 1) {
+         state_t            *last  = s;
+         empty_transition_t *trans = last_emptylist(&s->emptylist);
+         size_t              nrsteps = 0;
+         while (trans->state != last) {
+            ++ nrsteps;
+            last = trans->state;
+            if (last->nrrangetrans != 0 || last->nremptytrans != 1) break;
+            trans = last_emptylist(&last->emptylist);
+         }
+         for (state_t *next = s; nrsteps > 1; --nrsteps) {
+            trans = last_emptylist(&next->emptylist);
+            next  = trans->state;
+            trans->state = last;
+         }
+      }
+   }
+   // check every range_transition trans from every state s:
+   // if trans has structure ('from'..'to' -> s1) && (s1: '' -> s2)
+   // then change trans into 'from'..'to' -> s2
+   foreach (_statelist, s, &ndfa->states) {
+      foreach (_rangelist, trans, &s->rangelist) {
+         for (size_t i = 0; i < trans->size; ++i) {
+            state_t *state = trans->array[i].state;
+            if (state->nremptytrans == 1 && state->nrrangetrans == 0) {
+               trans->array[i].state = last_emptylist(&state->emptylist)->state;
+            }
+         }
+      }
+   }
+}
+
 /* function: makedfa_automat
+ * Der Startzustand von ndfa und alle von ihm durch leere transitionen erreichbare
+ * Zustände bilden den neuen Startzustand des deterministischen endlichen Automaten (DEA).
  *
- * Wie funktioniert das?
+ * Für jeden unbearbeiteten Multi-Zustand wird Folgendes gemacht:
+ *   1. Alle Zeichen, die einen Übergang in einen anderen Zustand bewirken,
+ *      werden in einer rangemap_t (siehe build_rangemap_from_statevector) gespeichert.
+ *      Die rangemap_t wird wieder durch leere Transition erreichbare Zustände erweitert.
+ *   2. Der Multi-Zustand bekommt einen DEA Zustand zugewiesen. Falls der Endzustand
+ *      im Multi-Zustand vorhanden ist, wird eine leere Transition zum DEA Endzustand
+ *      hinzugefügt.
+ *   3. Jetzt wird die rangemap_t durchlaufen und für jeden Zeichenbereich wird
+ *      Folgendes gemacht:
+ *      3.1 Wurde ein Ziel-Multi-Zustand schon bearbeitet (wird durch einen Index festgestellt),
+ *      so wird eine Referenz auf diesen verarbeitet, ansonsten wird ein neuer Multi-Zustand
+ *      angelegt und im Inde vermerkt.
+ *      3.2 Der DFA Zustand wird um eine range_transition_t erweitert, die diesen
+ *          Multi-Zustand als Ziel hat
  *
- *
+ * Für alle Transitionen des DFA ist jetzt anstatt des Ziel-Multizustandes der eigentliche
+ * zugeordnete DEA Zustand einzutragen und die Umwandlung ist fertig.
  * */
 int makedfa_automat(automat_t* ndfa)
 {
@@ -2322,11 +2473,12 @@ int makedfa_automat(automat_t* ndfa)
    enum { DFA, STATEVEC, RANGEMAP, MULTISTATE };
    state_t *startstate, *endstate;
 
-
    if (! ndfa->mman) {
       err = EINVAL;
       goto ONERR;
    }
+
+   remove_singleemptytrans_states(ndfa);
 
    // init local var
    init_patriciatrie(&svec_index, keyadapter_statevector());
@@ -2341,9 +2493,10 @@ int makedfa_automat(automat_t* ndfa)
    if (err) goto ONERR;
    err = follow_empty_transition(&multistate, mman[MULTISTATE]);
    if (err) goto ONERR;
-   // === convert type from multistate_t into statevector_t
-   err = init_statevector(&new_statevec, mman[STATEVEC], &multistate);
+   // convert type from multistate_t into statevector_t
+   err = init_statevector(&new_statevec, statevector_MAXSTATEPERBLOCK, mman[STATEVEC], &multistate);
    if (err) goto ONERR;
+   // store start state in list of unprocessed states and in index
    initsingle_stateveclist(&unprocessed, new_statevec);
    err = insert_patriciatrie(&svec_index, &new_statevec->index, 0);
    if (err) goto ONERR;
@@ -2359,7 +2512,7 @@ int makedfa_automat(automat_t* ndfa)
    initempty_state(dfa_endstate, dfa_endstate);
 
    // process all unprocessed statevector_t
-   //   (every statevecor_t is a single state in the new build dfa)
+   //   (every statevector_t is a single state in the new build dfa)
    // the first processed state is also the start state
    while (! isempty_slist(&unprocessed)) {
       statevector_t *statevec = removefirst_stateveclist(&unprocessed);
@@ -2412,7 +2565,9 @@ int makedfa_automat(automat_t* ndfa)
       while (next_rangemapiter(&iter, &range)) {
          err = follow_empty_transition(&range->multistate, mman[MULTISTATE]);
          if (err) goto ONERR;
-         err = init_statevector(&new_statevec, mman[STATEVEC], &range->multistate);
+         automat_mman_state_t oldstate;
+         storestate_automatmman(mman[STATEVEC], &oldstate); // statevector_t makes more than one allocation !
+         err = init_statevector(&new_statevec, statevector_MAXSTATEPERBLOCK, mman[STATEVEC], &range->multistate);
          if (err) goto ONERR;
          reset_automatmman(mman[MULTISTATE]);
          patriciatrie_node_t *existing_node;
@@ -2421,7 +2576,7 @@ int makedfa_automat(automat_t* ndfa)
             insertlast_stateveclist(&unprocessed, new_statevec);
          } else {
             if (err != EEXIST) goto ONERR;
-            mfreelast_automatmman(mman[STATEVEC], new_statevec);
+            restore_automatmman(mman[STATEVEC], &oldstate);
             new_statevec = (void*) ((uintptr_t)existing_node - offsetof(statevector_t, index));
          }
          if (  (state_t*)new_statevec == prevtrans->array[prevtrans->size-1].state
@@ -2434,7 +2589,8 @@ int makedfa_automat(automat_t* ndfa)
             if (err) goto ONERR;
             if (addr == &prevtrans->array[prevtrans->size]) {
                allocated += state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0);
-               mfreelast_automatmman(mman[DFA], (uint8_t*)addr + (state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0)));
+               err = mfreelast_automatmman(mman[DFA], (uint8_t*)addr + (state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0)));
+               if (err) goto ONERR;
                prevtrans->size += 1;
             } else {
                allocated += state_SIZE_RANGETRANS(1);
@@ -2521,7 +2677,7 @@ ONERR:
 
 typedef enum { OP_AND, OP_AND_NOT } op_e;
 
-static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
+static int makedfa2_automat(automat_t* ndfa, op_e op, automat_t* ndfa2)
 {
    int err;
    void* addr;
@@ -2542,6 +2698,9 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
       goto ONERR;
    }
 
+   remove_singleemptytrans_states(ndfa);
+   remove_singleemptytrans_states(ndfa2);
+
    // init local var
    init_patriciatrie(&svec_index, keyadapter_statevector());
    startend_automat(ndfa, &startstate, &endstate);
@@ -2553,10 +2712,10 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
 
    // flag used to discriminate between the owner automaton of the state
    foreach (_statelist, s, &ndfa->states) {
-      s->isused = 1;
+      s->nrdfa = 1;
    }
    foreach (_statelist, s, &ndfa2->states) {
-      s->isused = 2;
+      s->nrdfa = 2;
    }
 
    // generate start state of type statevector_t
@@ -2566,9 +2725,10 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
    if (err) goto ONERR;
    err = follow_empty_transition(&multistate, mman[MULTISTATE]);
    if (err) goto ONERR;
-   // === convert type from multistate_t into statevector_t
-   err = init_statevector(&new_statevec, mman[STATEVEC], &multistate);
+   // convert type from multistate_t into statevector_t
+   err = init_statevector(&new_statevec, statevector_MAXSTATEPERBLOCK, mman[STATEVEC], &multistate);
    if (err) goto ONERR;
+   // store start state in list of unprocessed states and in index
    initsingle_stateveclist(&unprocessed, new_statevec);
    err = insert_patriciatrie(&svec_index, &new_statevec->index, 0);
    if (err) goto ONERR;
@@ -2635,13 +2795,15 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
       while (next_rangemapiter(&iter, &range)) {
          err = follow_empty_transition(&range->multistate, mman[MULTISTATE]);
          if (err) goto ONERR;
-         err = init_statevector(&new_statevec, mman[STATEVEC], &range->multistate);
+         automat_mman_state_t oldstate;
+         storestate_automatmman(mman[STATEVEC], &oldstate); // statevector_t makes more than one allocation !
+         err = init_statevector(&new_statevec, statevector_MAXSTATEPERBLOCK, mman[STATEVEC], &range->multistate);
          if (err) goto ONERR;
          reset_automatmman(mman[MULTISTATE]);
-         if (! isinuse12_statevector(new_statevec, op == OP_AND)) {
+         if (! isnrdfa12_statevector(new_statevec, op == OP_AND)) {
             // Optimization: end state can not be reached by new_statevec
             //               ==> do not add any transition
-            mfreelast_automatmman(mman[STATEVEC], new_statevec);
+            restore_automatmman(mman[STATEVEC], &oldstate);
             continue;
          }
          patriciatrie_node_t *existing_node;
@@ -2650,7 +2812,7 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
             insertlast_stateveclist(&unprocessed, new_statevec);
          } else {
             if (err != EEXIST) goto ONERR;
-            mfreelast_automatmman(mman[STATEVEC], new_statevec);
+            restore_automatmman(mman[STATEVEC], &oldstate);
             new_statevec = (void*) ((uintptr_t)existing_node - offsetof(statevector_t, index));
          }
          if (  (state_t*)new_statevec == prevtrans->array[prevtrans->size-1].state
@@ -2663,7 +2825,8 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
             if (err) goto ONERR;
             if (addr == &prevtrans->array[prevtrans->size]) {
                allocated += state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0);
-               mfreelast_automatmman(mman[DFA], (uint8_t*)addr + (state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0)));
+               err = mfreelast_automatmman(mman[DFA], (uint8_t*)addr + (state_SIZE_RANGETRANS(1) - state_SIZE_RANGETRANS(0)));
+               if (err) goto ONERR;
                prevtrans->size += 1;
             } else {
                allocated += state_SIZE_RANGETRANS(1);
@@ -2682,7 +2845,8 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, const automat_t* ndfa2)
          // remove empty state
          const size_t SIZE = state_SIZE + state_SIZE_EMPTYTRANS(1);
          statevec->dfa = dfa_endstate;
-         mfreelast_automatmman(mman[DFA], dfastate);
+         err = mfreelast_automatmman(mman[DFA], dfastate);
+         if (err) goto ONERR;
          allocated -= SIZE;
       } else {
          statevec->dfa = dfastate;
@@ -4982,25 +5146,43 @@ ONERR:
 
 static int test_statevector(void)
 {
-   automat_mman_t* mman = 0;
-   statevector_t*  svec = 0;
-   void*    const  MARKER = (void*) (uintptr_t) 0x718293a4;
+   automat_mman_t      *mman  = 0;
+   statevector_block_t *block = 0;
+   statevector_t       *svec  = 0;
+   getkey_data_t        key;
 
    // prepare
    TEST(0 == new_automatmman(&mman));
 
-   // === group constants
+   // TEST statevector_MAXSTATEPERBLOCK
+   TEST( 128*1024 == sizeof(statevector_block_t) + statevector_MAXSTATEPERBLOCK * sizeof(state_t*));
 
-   // TEST statevector_MAX_NRSTATE: ensures statevector_t fits in size_t/2
-   TEST( SIZE_MAX/2 > sizeof(statevector_t) + statevector_MAX_NRSTATE  * sizeof(svec->state[0]));
-   TEST( SIZE_MAX/2 < sizeof(statevector_t) + (statevector_MAX_NRSTATE+1) * sizeof(svec->state[0]));
+   // TEST slist_IMPLEMENT: (_stateblocklist, statevector_block_t, next)
+   {
+      void* buffer[sizeof(statevector_block_t) * 128/sizeof(void*)] = { 0 };
+      block = (statevector_block_t*) buffer;
 
-   // === group types
+      slist_t list = slist_INIT;
+      for (unsigned i = 0; i < 128; ++i) {
+         // test insertlast
+         insertlast_stateblocklist(&list, &block[i]);
+         // check svec
+         TEST( 0 != block[i].next);
+         TEST( 0 == block[i].nrstate);
+      }
+      // test foreach
+      unsigned i = 0;
+      foreach (_stateblocklist, bk, &list) {
+         TEST(bk == &block[i++]);
+      }
+      TEST(i == 128);
+   }
+
+   // TEST slist_IMPLEMENT: (_stateveclist, statevector_t, next)
    {
       void* buffer[sizeof(statevector_t) * 128/sizeof(void*)] = { 0 };
       svec = (statevector_t*) buffer;
 
-      // TEST slist_IMPLEMENT: (_stateveclist, statevector_t, next)
       slist_t list = slist_INIT;
       for (unsigned i = 0; i < 128; ++i) {
          // test insertlast
@@ -5020,125 +5202,249 @@ static int test_statevector(void)
       TEST(i == 128);
    }
 
-   // === group query
-
-   // TEST getkey_statevector
-   {
-      getkey_data_t key = { 0, 0 };
-      void* buffer[sizeof(statevector_t)] = { 0 };
-      svec = (statevector_t*) buffer;
-      for (size_t i = 0; i < 16; ++i) {
-         // test
-         svec->nrstate = i;
-         getkey_statevector(svec, &key);
-         // check key
-         TEST( key.addr == (void*) svec->state);
-         TEST( key.size == i * sizeof(void*));
-      }
-   }
-
-   // TEST keyadapter_statevector
-   {
-      getkey_adapter_t adapter = keyadapter_statevector();
-      TEST( adapter.nodeoffset == offsetof(statevector_t, index));
-      TEST( adapter.getkey     == &getkey_statevector);
-   }
-
-   {
-      void* buffer[sizeof(statevector_t) + 43] = { 0 };
-      svec = (statevector_t*) buffer;
-
-      // TEST iscontained_statevector: nrstate == 0
-      TEST( 0 == iscontained_statevector(svec, (state_t*)0));
-      // check svec
-      TEST( 0 == svec->nrstate);
-
-      // prepare
-      for (uintptr_t i = 1; i <= 43; ++i) {
-         svec->state[i-1] = (state_t*)(2*i);
-      }
-
-      // TEST iscontained_statevector: nrstate != 0
-      for (unsigned nrstate = 1; nrstate <= 42; ++nrstate) {
-         svec->nrstate = nrstate;
-         TEST( 0 == iscontained_statevector(svec, (state_t*)0));
-         TEST( 0 == iscontained_statevector(svec, (state_t*)(uintptr_t)1));
-         for (unsigned i = 1; i <= nrstate; ++i) {
-            TEST( 1 == iscontained_statevector(svec, (state_t*)(2*i)));
-            TEST( 0 == iscontained_statevector(svec, (state_t*)(2*i+1)));
-         }
-         TEST( 0 == iscontained_statevector(svec, (state_t*)(2*nrstate+2)));
-      }
-
-      // isinuse12_statevector
-      state_t s[43];
-      for (uintptr_t i = 0; i <= 42; ++i) {
-         svec->state[i] = &s[i];
-         s[i].isused = 0;
-      }
-      svec->nrstate = 43;
-      for (unsigned i = 0; i <= 41; ++i) {
-         TEST( ! isinuse12_statevector(svec, false));
-         TEST( ! isinuse12_statevector(svec, true));
-         svec->state[i]->isused = 1;
-         TEST( isinuse12_statevector(svec, false));
-         TEST( ! isinuse12_statevector(svec, true));
-         svec->state[42]->isused = 2;
-         TEST( isinuse12_statevector(svec, true));
-         svec->state[42]->isused = 0;
-         if (i) {
-            svec->state[i-1]->isused = 2;
-            TEST( isinuse12_statevector(svec, false));
-            TEST( isinuse12_statevector(svec, true));
-            svec->state[i-1]->isused = 0;
-         }
-         svec->state[i]->isused = 0;
-      }
-   }
-
    // === group lifetime
 
-   // TEST init_statevector
-   for (size_t nrstate = 1; nrstate <= UINT16_MAX/2; ++nrstate) {
-      if (nrstate == 16) nrstate = UINT16_MAX/2-3;
+   // TEST new_statevectorblock
+   for (size_t nrstate = 0; nrstate <= statevector_MAXSTATEPERBLOCK; nrstate+=(nrstate==0), nrstate *= 2) {
+      void *addr = 0;
+      TEST(0 == malloc_automatmman(mman, 0, &addr));
+      // test
+      block = 0;
+      TEST( 0 == new_statevectorblock(&block, nrstate, mman));
+      // check block
+      TEST( block == addr);
+      // check mman
+      TEST( sizeallocated_automatmman(mman) == nrstate*sizeof(void*) + sizeof(*block));
+      // reset
+      reset_automatmman(mman);
+   }
+
+   // TEST new_statevectorblock: simulated ERROR
+   init_testerrortimer(&s_automat_errtimer, 1, ENOMEM);
+   block = 0;
+   TEST( ENOMEM == new_statevectorblock(&block, 1, mman));
+   // check block
+   TEST( block == 0);
+   // check mman (memory not freed)
+   TEST( sizeallocated_automatmman(mman) == sizeof(void*) + sizeof(*block));
+   // reset
+   reset_automatmman(mman);
+
+   // TEST init_statevector: nrstate == 0
+   for (size_t perblock = 1; perblock <= statevector_MAXSTATEPERBLOCK; perblock += statevector_MAXSTATEPERBLOCK-1) {
       // prepare
       multistate_t mstate = multistate_INIT;
-      for (unsigned s = 0; s <= 1; ++s) {
-         for (uintptr_t i = s; i < nrstate; i += 2) {
-            TEST(0 == add_multistate(&mstate, mman, (state_t*)i));
-         }
-      }
-      void* marker[2] = { 0 };
-      void* start_addr;
-      size_t const S = sizeof(statevector_t) + nrstate * sizeof(svec->state[0]);
-      TEST(0 == malloc_automatmman(mman, sizeof(void*), &marker[0]));
-      *(void**)marker[0] = MARKER;
-      TEST(0 == malloc_automatmman(mman, S + sizeof(void*), &start_addr));
-      marker[1] = S + (uint8_t*)start_addr;
-      *(void**)marker[1] = MARKER;
-      TEST(0 == mfreelast_automatmman(mman, start_addr));
-      TEST((uint8_t*)marker[0] + sizeof(void*) + S == marker[1]);
+      void *addr = 0;
+      TEST(0 == malloc_automatmman(mman, 0, &addr));
       // test
-      memset(start_addr, 255, S);
       svec = 0;
-      TEST( 0 == init_statevector(&svec, mman, &mstate));
+      TEST( 0 == init_statevector(&svec, perblock, mman, &mstate));
       // check svec
-      TEST( svec == start_addr);
+      TEST( svec == addr);
       // check svec content
       TEST( svec->index.bit_offset == 0);
       TEST( svec->index.left       == 0);
       TEST( svec->index.right      == 0);
       TEST( svec->next             == 0);
       TEST( svec->dfa              == 0);
-      TEST( svec->nrstate          == nrstate);
-      for (uintptr_t i = 0; i < nrstate; ++i) {
-         TEST( svec->state[i] == (state_t*)i);
-      }
-      // check no overwrite into surrounding memory
-      TEST(MARKER == *(void**)marker[0]);
-      TEST(MARKER == *(void**)marker[1]);
+      TEST( svec->blocklist.last   == 0);
+      TEST( svec->nrstate          == 0);
+      // check mman (memory not freed)
+      TEST( sizeallocated_automatmman(mman) == sizeof(statevector_t));
       // reset
+      memset(svec, 255, sizeof(*svec));
       reset_automatmman(mman);
+   }
+
+   // TEST init_statevector
+   for (size_t nrstate = 1; nrstate <= 2*statevector_MAXSTATEPERBLOCK; nrstate *= 2) {
+      for (size_t perblock = (nrstate+4)/5; perblock <= nrstate && perblock <= statevector_MAXSTATEPERBLOCK; perblock += (nrstate+4)/5) {
+         // prepare
+         multistate_t mstate = multistate_INIT;
+         for (uintptr_t i = nrstate; i > 0; --i) {
+            TEST(0 == add_multistate(&mstate, mman, (state_t*)i));
+         }
+         void *addr = 0;
+         TEST(0 == malloc_automatmman(mman, 0, &addr));
+         size_t OLDSIZE = sizeallocated_automatmman(mman);
+         // test
+         svec = 0;
+         TEST( 0 == init_statevector(&svec, perblock, mman, &mstate));
+         // check svec
+         TEST( svec == addr);
+         // check svec content
+         TEST( svec->index.bit_offset == 0);
+         TEST( svec->index.left       == 0);
+         TEST( svec->index.right      == 0);
+         TEST( svec->next             == 0);
+         TEST( svec->dfa              == 0);
+         TEST( svec->blocklist.last   != 0);
+         TEST( svec->nrstate          == nrstate);
+         // check svec.blocklist and content
+         for (uintptr_t i = 0; i <= nrstate; ++i) {
+            foreach (_stateblocklist, b, &svec->blocklist) {
+               TEST( i < nrstate);
+               TEST( b->nrstate == (i+perblock <= nrstate ? perblock : nrstate-(size_t)i));
+               for (size_t i2 = 0; i2 < b->nrstate; ++i2) {
+                  TEST( b->state[i2] == (state_t*)(++i));
+               }
+            }
+            TEST(i == nrstate);
+         }
+         // check mman (memory not freed)
+         TEST( sizeallocated_automatmman(mman) == OLDSIZE + sizeof(statevector_t) + ((perblock-1+nrstate)/perblock)*sizeof(statevector_block_t) + nrstate*sizeof(void*));
+         // reset
+         memset(svec, 255, sizeof(*svec));
+         reset_automatmman(mman);
+      }
+   }
+
+   // TEST init_statevector: EINVAL
+   svec = 0;
+   // test
+   TEST( EINVAL == init_statevector(&svec, 0, mman, &(multistate_t) multistate_INIT));
+   TEST( EINVAL == init_statevector(&svec, statevector_MAXSTATEPERBLOCK+1, mman, &(multistate_t) multistate_INIT));
+   // check svec
+   TEST( svec == 0);
+   // check mman (no memory allocated)
+   TEST( sizeallocated_automatmman(mman) == 0);
+
+   // TEST init_statevector: simulated ERROR
+   for (size_t timercount = 1; timercount < 4; ++timercount) {
+      multistate_t mstate = multistate_INIT;
+      for (uintptr_t i = 0; i < timercount; ++i) {
+         TEST(0 == add_multistate(&mstate, mman, (state_t*)i));
+      }
+      size_t OLDSIZE = sizeallocated_automatmman(mman);
+      init_testerrortimer(&s_automat_errtimer, timercount, ENOMEM);
+      TEST( ENOMEM == init_statevector(&svec, 1, mman, &mstate));
+      // check svec
+      TEST( svec == 0);
+      // check mman (memory not freed)
+      TEST( sizeallocated_automatmman(mman) > OLDSIZE);
+   }
+   // reset
+   reset_automatmman(mman);
+
+   // === group query
+
+   // TEST keyadapter_statevector
+   TEST( keyadapter_statevector().nodeoffset == offsetof(statevector_t, index));
+   TEST( keyadapter_statevector().getkey     == &getkey_statevector);
+
+   // prepare
+   TEST(0 == init_statevector(&svec, 1, mman, &(multistate_t) multistate_INIT));
+
+   // TEST iscontained_statevector: nrstate == 0
+   TEST( 0 == iscontained_statevector(svec, 0));
+
+   // TEST isnrdfa12_statevector: nrstate == 0
+   TEST( 0 == isnrdfa12_statevector(svec, 0));
+   TEST( 0 == isnrdfa12_statevector(svec, 1));
+
+   // TEST getkey_statevector: nrstate == 0
+   for (unsigned offset = 0; offset < 2; ++offset) {
+      memset(&key, 255, sizeof(key));
+      key.object   = svec; // simulates init1_getkeydata
+      key.impl_ptr = 0;    // simulates init1_getkeydata
+      // test
+      getkey_statevector(&key, offset/*!= 0 ==> (only impl_ptr==0 is checked*/);
+      // check key
+      TEST( key.addr   == 0);
+      TEST( key.offset == 0);
+      TEST( key.endoffset  == 0);
+      TEST( key.streamsize == 0);
+      TEST( key.object   == svec);
+      TEST( key.impl_ptr == 0);
+   }
+
+   // reset
+   reset_automatmman(mman);
+
+   for (unsigned tc = 0; tc < 2; ++tc) {
+      state_t states[42] = { { .nrdfa = 0 } };
+      statevector_block_t * blocks[14] = { 0 };
+      // (tc == 0) ==> single statevector_block_t
+      // (tc == 1) ==> multiple statevector_block_t
+      for (unsigned nrstate = 1; nrstate <= 42; ++nrstate) {
+         // prepare
+         multistate_t mstate = multistate_INIT;
+         for (unsigned i = 0; i < nrstate; ++i) {
+            TEST(0 == add_multistate(&mstate, mman, &states[i]));
+         }
+         TEST(0 == init_statevector(&svec, tc ? 3 : (size_t)nrstate, mman, &mstate));
+         blocks[0] = first_stateblocklist(&svec->blocklist);
+         for (unsigned i = 1; i < (nrstate+2)/3; ++i) {
+            blocks[i] = next_stateblocklist(blocks[i-1]); // ignore tc == 0; always fill array
+         }
+         TEST(blocks[(nrstate+2)/3-1] == last_stateblocklist(&svec->blocklist));
+
+         // TEST iscontained_statevector: nrstate != 0
+         for (unsigned i = 0; i < nrstate; ++i) {
+            TEST( 1 == iscontained_statevector(svec, &states[i]));
+            TEST( 0 == iscontained_statevector(svec, (void*)(1+(uint8_t*)&states[i])));
+         }
+
+         // TEST isnrdfa12_statevector
+         for (unsigned nr = 1; nr <= 2; ++nr) {
+            for (unsigned i = 0; i < nrstate; ++i) {
+               states[i].nrdfa = (uint8_t) nr;
+            }
+            for (unsigned pos = 0; pos < nrstate; ++pos) {
+               states[pos].nrdfa = (uint8_t) (3-nr); // (nr==1?2:1)
+               if (nrstate > 1) {
+                  TEST( isnrdfa12_statevector(svec, false) == 1);
+                  TEST( isnrdfa12_statevector(svec, true)  == 1);
+               }
+               states[pos].nrdfa = (uint8_t) nr;
+               TEST( isnrdfa12_statevector(svec, false) == (nr==1));
+               TEST( isnrdfa12_statevector(svec, true)  == 0);
+            }
+         }
+
+         // TEST getkey_statevector: init
+         memset(&key, 255, sizeof(key));
+         init1_getkeydata(&key, &getkey_statevector, svec);
+         // check key
+         TEST( key.addr   == (uint8_t*) first_stateblocklist(&svec->blocklist)->state);
+         TEST( key.offset == 0);
+         TEST( key.endoffset  == (!tc || nrstate < 3 ? nrstate : 3)*sizeof(void*));
+         TEST( key.streamsize == nrstate*sizeof(void*));
+         TEST( key.object   == svec);
+         TEST( key.impl_ptr == first_stateblocklist(&svec->blocklist));
+
+         // TEST getkey_statevector: move up
+         for (size_t offset = 0; offset < nrstate*sizeof(void*); ++offset) {
+            init1_getkeydata(&key, &getkey_statevector, svec);
+            // test
+            getkey_statevector(&key, offset);
+            // check key
+            TEST( key.addr   == (uint8_t*) blocks[!tc?0:offset/(3*sizeof(void*))]->state);
+            TEST( key.offset == (!tc ? 0 : offset - offset % (3*sizeof(void*))));
+            TEST( key.endoffset  == key.offset + (!tc?nrstate:(key.streamsize-key.offset) < 3*sizeof(void*)?nrstate%3:3)*sizeof(void*));
+            TEST( key.streamsize == nrstate*sizeof(void*));
+            TEST( key.object   == svec);
+            TEST( key.impl_ptr == blocks[!tc?0:offset/(3*sizeof(void*))]);
+         }
+
+         // TEST getkey_statevector: move down
+         for (size_t offset = 0; offset < nrstate*sizeof(void*); ++offset) {
+            init1_getkeydata(&key, &getkey_statevector, svec);
+            getkey_statevector(&key, nrstate*sizeof(void*)-1);
+            // test
+            getkey_statevector(&key, offset);
+            // check key
+            TEST( key.addr   == (uint8_t*) blocks[!tc?0:offset/(3*sizeof(void*))]->state);
+            TEST( key.offset == (!tc ? 0 : offset - offset % (3*sizeof(void*))));
+            TEST( key.endoffset  == key.offset + (!tc?nrstate:(key.streamsize-key.offset) < 3*sizeof(void*)?nrstate%3:3)*sizeof(void*));
+            TEST( key.streamsize == nrstate*sizeof(void*));
+            TEST( key.object   == svec);
+            TEST( key.impl_ptr == blocks[!tc?0:offset/(3*sizeof(void*))]);
+         }
+
+         // reset
+         reset_automatmman(mman);
+      }
    }
 
    // free resources
@@ -5968,7 +6274,7 @@ static int test_operations(void)
    TEST(0 == oprepeat_automat(&ndfa2, 0));
    TEST(0 == opsequence_automat(&ndfa, &ndfa2));
    TEST(3 == matchchar32_automat(&ndfa, 3, U"abb", true));
-   // test
+   // test: !(ab*)
    TEST( 0 == opnot_automat(&ndfa))
    // check mman released
    TEST( 1 == refcount_automatmman(mman));
@@ -5977,18 +6283,17 @@ static int test_operations(void)
    TEST( 2 == matchchar32_automat(&ndfa, 2, U"bb", true));
    TEST( 3 == matchchar32_automat(&ndfa, 3, U"abc", true));
    TEST( ndfa.mman      != mman);
-   TEST( ndfa.nrstate   == 5);
-   TEST( ndfa.allocated == 5*state_SIZE + state_SIZE_EMPTYTRANS(3) + 3*state_SIZE_RANGETRANS(3)+state_SIZE_RANGETRANS(1));
+   TEST( ndfa.nrstate   == 4);
+   TEST( ndfa.allocated == 4*state_SIZE + state_SIZE_EMPTYTRANS(3) + 2*state_SIZE_RANGETRANS(3)+state_SIZE_RANGETRANS(1));
    TEST( ! isempty_slist(&ndfa.states));
    TEST( ndfa.isDFA     == 1);
    // check ndfa.states
    TEST( 0 == check_dfa_endstate(&ndfa, 0));
    helperstate[0] = (helper_state_t) { state_RANGE_ENDSTATE, 3, (size_t[]) { 1,2,1 }, (char32_t[]) { 0, 'a', 'b' }, (char32_t[]) { 'a'-1u, 'a', (char32_t)-1} };
    helperstate[1] = (helper_state_t) { state_RANGE_ENDSTATE, 1, (size_t[]) { 1 }, (char32_t[]) { 0 }, (char32_t[]) { (char32_t)-1 } };
-   helperstate[2] = (helper_state_t) { state_RANGE, 3, (size_t[]) { 1,3,1 }, (char32_t[]) { 0, 'b', 'c' }, (char32_t[]) { 'a', 'b', (char32_t)-1} };
-   helperstate[3] = (helper_state_t) { state_RANGE, 3, (size_t[]) { 1,3,1 }, (char32_t[]) { 0, 'b', 'c' }, (char32_t[]) { 'a', 'b', (char32_t)-1} };
-   helperstate[4] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 4 }, 0, 0 };
-   TEST(0 == helper_compare_states(&ndfa, 5, helperstate))
+   helperstate[2] = (helper_state_t) { state_RANGE, 3, (size_t[]) { 1,2,1 }, (char32_t[]) { 0, 'b', 'c' }, (char32_t[]) { 'a', 'b', (char32_t)-1} };
+   helperstate[3] = (helper_state_t) { state_EMPTY, 1, (size_t[]) { 3 }, 0, 0 };
+   TEST(0 == helper_compare_states(&ndfa, 4, helperstate))
    // reset
    TEST(0 == free_automat(&ndfa));
    reset_automatmman(mman);
@@ -6553,6 +6858,41 @@ static int test_optimize(void)
       reset_automatmman(mman);
    }
 
+   // TEST makedfa_automat: overlapping ranges
+   for (unsigned tc = 0; tc <= 1; ++tc) {
+      TEST(0 == initmatch_automat(&ndfa, &use_mman, 2, (char32_t[2]){1,500}, (char32_t[2]){1000,2000}));
+      TEST(2 == refcount_automatmman(mman));
+      // test
+      if (tc == 0) {
+         TEST( 0 == makedfa_automat(&ndfa));
+      } else {
+         TEST( 0 == makedfa2_automat(&ndfa, OP_AND, &ndfa1));
+      }
+      // check mman released
+      TEST( 1 == refcount_automatmman(mman));
+      // check ndfa
+      TEST( ndfa.mman      != mman);
+      TEST( ndfa.nrstate   == 2);
+      TEST( ndfa.allocated == 2*state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(1));
+      TEST( ! isempty_slist(&ndfa.states));
+      TEST( ndfa.isDFA     == 1);
+      // check ndfa.states
+      startend_automat(&ndfa, &start_state, &end_state);
+      TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
+      TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
+      TEST( start_state->nremptytrans == 0);
+      TEST( start_state->nrrangetrans == 1);
+      TEST( isempty_slist(&start_state->emptylist));
+      TEST( ! isempty_slist(&start_state->rangelist));
+      TEST( last_rangelist(&start_state->rangelist)->size == 1);
+      TEST( last_rangelist(&start_state->rangelist)->array[0].from  == 1);
+      TEST( last_rangelist(&start_state->rangelist)->array[0].to    == 2000);
+      TEST( last_rangelist(&start_state->rangelist)->array[0].state == end_state);
+      // reset
+      TEST(0 == free_automat(&ndfa));
+      reset_automatmman(mman);
+   }
+
    // TEST makedfa_automat: 1 range && optimize continuous ranges into single transition
    for (unsigned tc = 0; tc <= 1; ++tc) {
       // prepare
@@ -6591,15 +6931,21 @@ static int test_optimize(void)
       reset_automatmman(mman);
    }
 
-   // TEST makedfa_automat: or'ed states
+   // TEST makedfa_automat: or'ed states and repeat
    for (unsigned tc = 0; tc <= 1; ++tc) {
       // prepare
-      TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 0 }, (char32_t[]) { 1 }));
-      for (unsigned i = 1; i < 4*255; ++i) {
-         TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { 3*i }, (char32_t[]) { 3*i+1 }));
+      TEST(0 == initmatch_automat(&ndfa, &use_mman, 1, (char32_t[]) { 0 }, (char32_t[]) { 0 }));
+      for (unsigned i = 1; i < 100; ++i) {
+         TEST(0 == initmatch_automat(&ndfa2, &use_mman, 1, (char32_t[]) { i }, (char32_t[]) { i }));
          TEST(0 == opor_automat(&ndfa, &ndfa2));
       }
-      // test
+      TEST(0 == oprepeat_automat(&ndfa, 1));
+      // test (slow cause every follow_empty yields more than 200 states iterated 100 times)
+      // if you have 1000 states it is slow, with 10000 very slow and with 100000 you could wait for minutes
+      // ==> OPTIMIZATION: compute follow states per state and store them in state as statevector
+      //                   use bitmap indizes instead of statevector_t
+      //                   use fast sorted multi-insert in btree
+      //                   ==> database should support all these operations with manual intervention
       if (tc == 0) {
          TEST( 0 == makedfa_automat(&ndfa));
       } else {
@@ -6609,28 +6955,38 @@ static int test_optimize(void)
       TEST( 1 == refcount_automatmman(mman));
       // check ndfa
       TEST( ndfa.mman      != mman);
-      TEST( ndfa.nrstate   == 2);
-      TEST( ndfa.allocated == 2 * state_SIZE + state_SIZE_EMPTYTRANS(1) + state_SIZE_RANGETRANS(4*255));
+      TEST( ndfa.nrstate   == 3);
+      TEST( ndfa.allocated == 3 * state_SIZE + state_SIZE_EMPTYTRANS(2) + 2*state_SIZE_RANGETRANS(1));
       TEST( ! isempty_slist(&ndfa.states));
       TEST( ndfa.isDFA     == 1);
       // check ndfa.states
       startend_automat(&ndfa, &start_state, &end_state);
-      TEST( end_state == next_statelist(start_state)); // only 2 in list (end == start->next)
+      state_t *next_state = next_statelist(start_state);
       TEST( 0 == check_dfa_endstate(&ndfa, &end_addr));
       TEST( start_state->nremptytrans == 0);
-      TEST( start_state->nrrangetrans == 4*255);
+      TEST( start_state->nrrangetrans == 1);
       TEST( isempty_slist(&start_state->emptylist));
       TEST( ! isempty_slist(&start_state->rangelist));
-      range_transition_t* range_trans = first_rangelist(&start_state->rangelist);
+      range_transition_t* range_trans = last_rangelist(&start_state->rangelist);
       TEST( range_trans == last_rangelist(&start_state->rangelist));
       TEST( range_trans == (void*) ((uintptr_t)start_state + state_SIZE));
-      TEST( end_addr == &range_trans->array[4*255]);
-      TEST( range_trans->size == 4*255);
-      for (unsigned i = 0; i < 4*255; ++i) {
-         TEST( range_trans->array[i].from  == 3*i);
-         TEST( range_trans->array[i].to    == 3*i+1);
-         TEST( range_trans->array[i].state == end_state);
-      }
+      TEST( range_trans->size == 1);
+      TEST( range_trans->array[0].from  == 0);
+      TEST( range_trans->array[0].to    == 100-1);
+      TEST( range_trans->array[0].state == next_state);
+      TEST( next_state == (void*) &range_trans->array[1]);
+      TEST( next_state->nremptytrans == 1);
+      TEST( next_state->nrrangetrans == 1);
+      empty_transition_t* empty_trans = last_emptylist(&next_state->emptylist);
+      TEST( empty_trans->state == end_state);
+      TEST( empty_trans == (void*) ((uintptr_t)next_state + state_SIZE));
+      range_trans = first_rangelist(&next_state->rangelist);
+      TEST( range_trans == (void*) &empty_trans[1]);
+      TEST( range_trans->size == 1);
+      TEST( range_trans->array[0].from  == 0);
+      TEST( range_trans->array[0].to    == 100-1);
+      TEST( range_trans->array[0].state == next_state);
+      TEST( end_addr == &range_trans->array[1]);
       // reset
       TEST(0 == free_automat(&ndfa));
       reset_automatmman(mman);

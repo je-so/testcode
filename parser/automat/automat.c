@@ -14,6 +14,7 @@
 #include "automat_mman.h"
 #include "patriciatrie.h"
 #include "foreach.h"
+#include "utf8.h"
 #include "test_errortimer.h"
 
 typedef uint32_t char32_t;
@@ -1898,17 +1899,10 @@ static size_t matchchar32_dfa_automat(const automat_t* ndfa, size_t len, const c
    if (err) goto ONERR;
    err = insert1_statearray(&states, start);
    if (err) goto ONERR;
-   start->isused = 1;
    // start has empty transition to end state?
    isEnd = (start->nremptytrans != 0);
 
    for (;;) {
-      // === reset: clear insert flags ===
-      init_statearrayiter(&iter, &states);
-      while (next_statearrayiter(&iter, &states, &next)) {
-         next->isused = 0;
-      }
-
       // === check end of match reached ===
       if (isEnd) {
          isEnd = 0;
@@ -1951,6 +1945,12 @@ static size_t matchchar32_dfa_automat(const automat_t* ndfa, size_t len, const c
             }
          }
       } while (0 == remove2_statearray(&states, &next));
+
+      // === reset: clear insert flags ===
+      init_statearrayiter(&iter, &states);
+      while (next_statearrayiter(&iter, &states, &next)) {
+         next->isused = 0;
+      }
 
       ++ stroffset;
    }
@@ -2392,12 +2392,12 @@ ONERR:
    return err;
 }
 
-/* function: remove_singleemptytrans_states
+/* function: remove_single_empty_transitions
  * Verkürze lange Ketten von Zuständen, die nur eine leere Transition besitzen.
  * Ein Kette s: '' -> s1; s1: '' -> s2; s2: '' -> s3; s3: 'a' -> o1
  * wird dann optmiert zu s: '' -> s3; s1: '' -> s3; s2: '' -> s3; s3: 'a' -> o1
  * */
-static void remove_singleemptytrans_states(automat_t *ndfa)
+static void remove_single_empty_transitions(automat_t *ndfa)
 {
    // check every state s
    // if exists chain s: '' -> s1; s1: '' -> s2; ... ; sn-1: '' -> sn
@@ -2478,7 +2478,7 @@ int makedfa_automat(automat_t* ndfa)
       goto ONERR;
    }
 
-   remove_singleemptytrans_states(ndfa);
+   remove_single_empty_transitions(ndfa);
 
    // init local var
    init_patriciatrie(&svec_index, keyadapter_statevector());
@@ -2698,8 +2698,8 @@ static int makedfa2_automat(automat_t* ndfa, op_e op, automat_t* ndfa2)
       goto ONERR;
    }
 
-   remove_singleemptytrans_states(ndfa);
-   remove_singleemptytrans_states(ndfa2);
+   remove_single_empty_transitions(ndfa);
+   remove_single_empty_transitions(ndfa2);
 
    // init local var
    init_patriciatrie(&svec_index, keyadapter_statevector());
@@ -2935,7 +2935,7 @@ int opnot_automat(automat_t* restrict ndfa)
       goto ONERR;
    }
 
-   err = initmatch_automat(&all, ndfa, 1, (char32_t[]){0}, (char32_t[]){(char32_t)-1});
+   err = initmatch_automat(&all, ndfa, 1, (char32_t[]){0}, (char32_t[]){maxchar_utf8()});
    if (err) goto ONERR;
    err = oprepeat_automat(&all, 0);
    if (err) goto ONERR;

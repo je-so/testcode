@@ -29,7 +29,7 @@ int main()
    free_regexpr(&regex);
 
    // build automaton without using regex
-   printf("\nMake dfa from ndfa '(\\u0000|\\u0001|...|\\u0400)+'with 1024 ored states:\n");
+   printf("\nMake dfa from ndfa '(\\u0000|\\u0001|...|\\u0400)+' with 1024 ored states:\n");
    automat_t ndfa = automat_FREE;
    initmatch_automat(&ndfa, 0, 1, (char32_t[1]){0}, (char32_t[1]){0}); // match '\0' char
    for (char32_t c = 1; c <= 1024; ++c) {

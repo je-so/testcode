@@ -9,7 +9,9 @@ Prototype algorithm _Parsing with Context_ implemented
 which parses simple expressions.
 See [context_oriented_parser.c](parser/context_oriented_parser.c).
 
-For a regular exression parser matcher which allows to and(&) and and-not(&!) regular expressions see [regex-main.c](parser/automat/main.c) <br> Example: `"[a-zA-Z0-9_]+ &! [0-9].*"` 
+For a regular exression parser matcher which allows to and(&) and and-not(&!) regular expressions see [regex-main.c](parser/automat/main.c) <br> Example: `"[a-zA-Z0-9_]+ &! [0-9].*"` The trick to implement this
+is to build the deterministic version for the left and right hand side of `&!` and combine the results
+[`makedfa2_automat(ndfa, OP_AND_NOT, ndfa2)`](parser/automat/automat.c#L2913).
 
 iperf
 -----

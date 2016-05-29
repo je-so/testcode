@@ -321,7 +321,7 @@ static int parse_atom(buffer_t* buffer)
       char32_t to;
       if (next == '.') {
          from = 0;
-         to   = 0x7fffffff;
+         to   = maxchar_utf8();
       } else {
          err = parse_char(buffer, next, &from);
          if (err) goto ONERR;

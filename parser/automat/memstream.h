@@ -135,6 +135,14 @@ size_t offset_memstream(const memstream_t * memstr, uint8_t * start);
  * The value 0 is returned if *memstr* does not contain the byte. */
 /*const*/ uint8_t * findbyte_memstream(const memstream_t * memstr, uint8_t byte);
 
+/* function: peek_memstream
+ * Returns next to read byte in memstr without consuming it.
+ * Several calls always return the same byte.
+ *
+ * Unchecked Precondition:
+ * size_memstream(memstr) >= 1 */
+uint8_t peek_memstream(const memstream_t * memstr);
+
 // group: update
 
 /* function: skip_memstream
@@ -308,6 +316,11 @@ memstream_t * cast_memstream(void * obj, IDNAME nameprefix);
  * Implements <memstream_t.offset_memstream>. */
 #define offset_memstream(memstr, start) \
          ((size_t)((memstr)->next - (start)))
+
+/* define: peek_memstream
+ * Implements <memstream_t.peek_memstream>. */
+#define peek_memstream(memstr) \
+         (*((memstr)->next))
 
 /* define: printf_memstream
  * Implements <memstream_t.printf_memstream>. */

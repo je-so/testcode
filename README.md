@@ -28,6 +28,10 @@ OS API
 -------------
 * How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).
 
+New-C
+-------------
+* Design of my database language which I call new-C during design phase. Documents are mostly in German.
+
 License
 -------
 

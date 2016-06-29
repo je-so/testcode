@@ -30,7 +30,7 @@ OS API
 
 New-C
 -------------
-* Design of my database language which I call new-C during design phase. Documents are mostly in German.
+* Design of my database language which I call [new-C](new-C) during design phase. Documents are mostly in *German*.
 
 License
 -------

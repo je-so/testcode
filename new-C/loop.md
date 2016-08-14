@@ -39,7 +39,7 @@ Lokale Initialsierungsblöcke dürfen vor den reservierten Kommandos **for, if, 
 
 ```C
 {  char c;
-}  if ( (c == *str) == 'a' ) {
+}  if ( (c = *str) == 'a' ) {
       ... // Verwendung von C
    } else if (c == 'b') {
       ... // Verwendung von C

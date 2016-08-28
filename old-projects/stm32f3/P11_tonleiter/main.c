@@ -55,10 +55,10 @@ void systick_interrupt(void)
 {
    counter += period_systick();
    if (isON) {
-      write0_gpio(GPIO_PORTA, GPIO_PIN4);
+      write0_gpio(GPIOA, GPIO_PIN4);
       isON = 0;
    } else {
-      write1_gpio(GPIO_PORTA, GPIO_PIN4);
+      write1_gpio(GPIOA, GPIO_PIN4);
       isON = 1;
    }
 }
@@ -98,24 +98,24 @@ void systick_interrupt(void)
 */
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch+audio out*/|GPIO_PORTE_BIT/*led*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch+audio out*/|GPIOE_BIT/*led*/);
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTA, GPIO_PIN4);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOA, GPIO_PIN4);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
    config_systick(8000000/*dummy*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT);
 
-   write1_gpio(GPIO_PORTE, GPIO_PIN8);
+   write1_gpio(GPIOE, GPIO_PIN8);
 
    while (1) {
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) {
+      if (read_gpio(GPIOA, GPIO_PIN0) == 1) {
          setperiod_systick(note_period[C1]);
          counter = 0;
          isON = 1;
          start_systick();
          for (unsigned tone = C1+1; tone <= C2; ++tone) {
             unsigned led = 8 + (tone & 7);
-            write_gpio(GPIO_PORTE, GPIO_PINS(led,led), GPIO_PINS(15,8)&~led);
+            write_gpio(GPIOE, GPIO_PINS(led,led), GPIO_PINS(15,8)&~led);
             while (4000000 > counter) ;
             while (! isON) ;
             while (isON) ;
@@ -123,7 +123,7 @@ int main(void)
             setperiod_systick(note_period[tone]);
          }
          stop_systick();
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) ;
+         while (read_gpio(GPIOA, GPIO_PIN0) == 1) ;
       }
    }
 

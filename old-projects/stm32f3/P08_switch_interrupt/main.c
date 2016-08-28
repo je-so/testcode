@@ -8,7 +8,7 @@ volatile uint32_t button2_stable_msec = 0;
 static void set_led_representing_counter(void)
 {
    uint32_t leds = 1u << (8+(counter&0x7));
-   write_gpio(GPIO_PORTE, leds/*on*/, GPIO_PINS(15,8)&~leds/*off*/);
+   write_gpio(GPIOE, leds/*on*/, GPIO_PINS(15,8)&~leds/*off*/);
 }
 
 void systick_interrupt(void)
@@ -20,7 +20,7 @@ void systick_interrupt(void)
    msec += 10;
    if (msec == flash_time) {
       // flashe alle 8 LEDs on
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
 
    } else if (msec == flash_time+10) {
       flash_time += 1000;
@@ -31,7 +31,7 @@ void systick_interrupt(void)
    // entprelle button2
    if (msec == button2_stable_msec) {
       button2_stable_msec = 0;
-      if (read_gpio(GPIO_PORTD, GPIO_PIN2) == 0) {
+      if (read_gpio(GPIOD, GPIO_PIN2) == 0) {
          // button 2 an PD2 gedrückt (negative Logik) ==> Simuliere Button0
          generate_interrupts_gpio(GPIO_PIN0);
       }
@@ -86,20 +86,20 @@ void gpiopin2_tsc_interrupt(void)
 int main(void)
 {
    enable_syscfg_clockcntrl(); // für gpio Interrupts an anderen Ports als PORTA benötigt
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch*/|GPIO_PORTE_BIT/*led*/|GPIO_PORTD_BIT/*additional switch*/);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_input_gpio(GPIO_PORTD, GPIO_PIN2, GPIO_PULL_UP);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch*/|GPIOE_BIT/*led*/|GPIOD_BIT/*additional switch*/);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_input_gpio(GPIOD, GPIO_PIN2, GPIO_PULL_UP);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
    config_systick(80000/*10 msec assuming 8Mhz bus clock*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
 
    set_led_representing_counter();
 
-   config_interrupts_gpio(GPIO_PORTA_BIT, GPIO_PIN0, interrupt_edge_RISING);
-   config_interrupts_gpio(GPIO_PORTD_BIT, GPIO_PIN2, interrupt_edge_FALLING); // negative Logik
+   config_interrupts_gpio(GPIOA_BIT, GPIO_PIN0, interrupt_edge_RISING);
+   config_interrupts_gpio(GPIOD_BIT, GPIO_PIN2, interrupt_edge_FALLING); // negative Logik
 
    enable_interrupts_gpio(GPIO_PIN0|GPIO_PIN2);
-   enable_interrupt_nvic(interrupt_GPIOPIN0);
-   enable_interrupt_nvic(interrupt_GPIOPIN2_TSC);
+   enable_interrupt(interrupt_GPIOPIN0);
+   enable_interrupt(interrupt_GPIOPIN2_TSC);
 
    // warte 1 Sekunde, damit openocd genug Zeit hat zu flashen usw.
    while (msec != 1000);
@@ -107,15 +107,15 @@ int main(void)
 // #define TEST_MASK_INTERRUPTS_WITH_BASEPRIORITY
 #ifdef TEST_MASK_INTERRUPTS_WITH_BASEPRIORITY
    // Falls gesetzt, wird interrupt_GPIOPIN0 maskiert, weil seine Priorität nicht höher ist als die Basispriorität
-   setbasepriority_interrupt(1);
-   setpriority_interrupt_nvic(interrupt_GPIOPIN0, 1);
+   setprioritymask_interrupt(1);
+   setpriority_interrupt(interrupt_GPIOPIN0, 1);
 #endif
 
    while (1) {
 // #define TEST_DEBUG
 #ifdef TEST_DEBUG
       if (0 == (msec % 1010)) {
-         generate_interrupt_nvic(interrupt_GPIOPIN0);
+         generate_interrupt(interrupt_GPIOPIN0);
          while (0 == (msec % 1010)) ;
       }
 #else

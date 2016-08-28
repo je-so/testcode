@@ -9,7 +9,7 @@ static void set_led(uint32_t sampled_value)
       // if (sampled_value >= 1024-((i+1)*128)) {  // 10-Bit
       // if (sampled_value >= 256-((i+1)*32)) {    // 8-Bit
       // if (sampled_value >= 64-((i+1)*8)) {      // 6-Bit
-         write_gpio(GPIO_PORTE, GPIO_PIN15>>i, GPIO_PINS(15,8));
+         write_gpio(GPIOE, GPIO_PIN15>>i, GPIO_PINS(15,8));
          break;
       }
    }
@@ -43,13 +43,13 @@ int main(void)
    uint32_t stop_time;
    uint32_t diff_time;
 
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch+adc*/|GPIO_PORTE_BIT/*led*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch+adc*/|GPIOE_BIT/*led*/);
    enable_clock_adc(ADC1and2);
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF); // switch
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF); // switch
    // Wichtig: Zuerst IOPIN auf analog umschalten, damit keine parasitären Ströme fliessen
-   config_analog_gpio(GPIO_PORTA, GPIO_PIN1);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_analog_gpio(GPIOA, GPIO_PIN1);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    config_systick(8000000, systickcfg_CORECLOCK|systickcfg_START);
 
@@ -99,7 +99,7 @@ int main(void)
       if (! isdata_adc(ADC1))  goto ONERR;   // Flag ist gesetzt, dann kann Wert gelesen werden
       if (! iseos_adc(ADC1))   goto ONERR;   // End-of-Sequenz erreicht, da nur ein Kanal lang
       if (isstarted_adc(ADC1)) goto ONERR;   // Start-flag wurde am Ende der Wandlung auch zurückgesetzt
-      clear_iseos_adc(ADC1);                 // lösche Flag
+      clear_eos_adc(ADC1);                   // lösche Flag
       if (iseos_adc(ADC1))  goto ONERR;      // End-of-Sequenz Flag gelöscht
       if (! isdata_adc(ADC1))  goto ONERR;   // data-Flag ist immer noch gesetzt
       uint32_t data = read_adc(ADC1);        // Lese den Spannungs-Wert.
@@ -116,13 +116,13 @@ int main(void)
       if (!isdata_adc(ADC1))    goto ONERR;  // Datenflag gesetzt !
       if (isoverflow_adc(ADC1)) goto ONERR;  // Es trat kein Overflow auf
       if (!iseos_adc(ADC1))     goto ONERR;  // End-of-Sequenz Flag gesetzt
-      clear_iseos_adc(ADC1);                 // Lösche EOS-Flag
+      clear_eos_adc(ADC1);                   // Lösche EOS-Flag
       if (iseos_adc(ADC1))       goto ONERR; // End-of-Sequenz Flag gelöscht
       if (!isdata_adc(ADC1))    goto ONERR;  // Datenflag immer noch gesetzt !
       start_adc(ADC1);
       while (isstarted_adc(ADC1)) ;
       if (!isoverflow_adc(ADC1)) goto ONERR; // Es trat ein Overflow auf !
-      clear_isoverflow_adc(ADC1);            // Lösche Overflow Flags
+      clear_overflow_adc(ADC1);              // Lösche Overflow Flags
       if (isoverflow_adc(ADC1))  goto ONERR; // Overflow wurde gelöscht
       if (! iseos_adc(ADC1))     goto ONERR; // End-of-Sequenz noch gesetzt
       if (! isdata_adc(ADC1))    goto ONERR; // Datenflag noch gesetzt
@@ -143,7 +143,7 @@ int main(void)
             if (isjeos_adc(ADC1) != 0) goto ONERR;  // Noch kein Ende der J-Sequenz erreicht
          } else if (i == len-1) {
             if (isjeos_adc(ADC1) != 1) goto ONERR;  // End of J-Sequenz Flag gesetzt
-            clear_isjeos_adc(ADC1);                 // lösche Flag
+            clear_jeos_adc(ADC1);                   // lösche Flag
             if (isjeos_adc(ADC1) != 0) goto ONERR;  // End of J-Sequenz Flag gelöscht
          }
          if (! isjdata_adc(ADC1)) goto ONERR;   // Datenflag gesetzt
@@ -159,7 +159,7 @@ int main(void)
    }
 
 ONERR:
-   write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   write1_gpio(GPIOE, GPIO_PINS(15,8));
    while (1) ;
 }
 
@@ -318,7 +318,7 @@ static int test_config_jpart(void)
    if (! isjeos_adc(ADC1))   goto ONERR;
    if (isoverflow_adc(ADC1)) goto ONERR;
    if (isjstarted_adc(ADC1)) goto ONERR;
-   clear_isjeos_adc(ADC1);
+   clear_jeos_adc(ADC1);
 
    // reset
    ADC1->cfgr = 0;
@@ -417,7 +417,7 @@ static int test_config_seq(void)
    if (! iseos_adc(ADC1))    goto ONERR;
    if (isoverflow_adc(ADC1)) goto ONERR;
    if (isstarted_adc(ADC1))  goto ONERR;
-   clear_iseos_adc(ADC1);
+   clear_eos_adc(ADC1);
 
    // reset
    ADC1->cfgr = 0;
@@ -514,7 +514,7 @@ static int test_config_cont(void)
          // Wiederhole Sequenz
          if (! iseos_adc(ADC1))     goto ONERR;
          if (! isstarted_adc(ADC1)) goto ONERR;
-         clear_iseos_adc(ADC1);
+         clear_eos_adc(ADC1);
       }
       if (iseos_adc(ADC1)) goto ONERR;
       while (!isdata_adc(ADC1)) ;
@@ -529,7 +529,7 @@ static int test_config_cont(void)
    stop_adc(ADC1);
    if (isstarted_adc(ADC1))  goto ONERR;
    if (! iseos_adc(ADC1))    goto ONERR;
-   clear_iseos_adc(ADC1);
+   clear_eos_adc(ADC1);
 
    // reset
    ADC1->cfgr = 0;
@@ -640,7 +640,7 @@ static int test_config_partioned(void)
    if (! iseos_adc(ADC1))    goto ONERR;
    if (isoverflow_adc(ADC1)) goto ONERR;
    if (isstarted_adc(ADC1))  goto ONERR;
-   clear_iseos_adc(ADC1);
+   clear_eos_adc(ADC1);
 
    // reset
    ADC1->cfgr = 0;
@@ -723,10 +723,10 @@ static int test_config_auto(void)
       if (i == 16 || i == 36) {
          // Ende der regulären Sequenz
          if (!iseos_adc(ADC1)) goto ONERR;
-         clear_iseos_adc(ADC1);
+         clear_eos_adc(ADC1);
       } else if (i == 20) {
          if (!isjeos_adc(ADC1)) goto ONERR;
-         clear_isjeos_adc(ADC1);
+         clear_jeos_adc(ADC1);
       }
       if (!isstarted_adc(ADC1)) goto ONERR;
       if (iseos_adc(ADC1)) goto ONERR;
@@ -752,7 +752,7 @@ static int test_config_auto(void)
    stop_adc(ADC1);
    if (isstarted_adc(ADC1))  goto ONERR;
    if (! isjeos_adc(ADC1))   goto ONERR;
-   clear_isjeos_adc(ADC1);
+   clear_jeos_adc(ADC1);
 
    // TEST config_autojseq_adc: partionierte Sequenz ==> EAGAIN
    if (config_seq_adc(ADC1, 1, 2, seq[0], adc_config_SAMPLETIME_601_5)) goto ONERR;

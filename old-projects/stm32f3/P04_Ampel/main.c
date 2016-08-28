@@ -38,9 +38,9 @@ int main(void)
        Im Gelb-Zustand soll exakt 2+2 Sekunden verblieben werden.
    */
 
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT|GPIO_PORTE_BIT);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT|GPIOE_BIT);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
    config_systick(8000000/5/*wait 200msec if 8Mhz bus clock*/, systickcfg_CORECLOCK);
 
    uint8_t s = Nord_Gruen;
@@ -51,13 +51,13 @@ int main(void)
       uint16_t an  = 0;
       aus &= ~ states[s].licht;
       an  |= states[s].licht;
-      write_gpio(GPIO_PORTE, an, aus);
+      write_gpio(GPIOE, an, aus);
       start_systick();
       for (unsigned i = 0; i < states[s].wartezeit; ++i) {
          while (!isexpired_systick()) ;
-         if (s == s_old && read_gpio(GPIO_PORTA, GPIO_PIN0) != 0) break;
+         if (s == s_old && read_gpio(GPIOA, GPIO_PIN0) != 0) break;
       }
-      uint8_t isSwitchTraffic = (read_gpio(GPIO_PORTA, GPIO_PIN0) != 0) ;
+      uint8_t isSwitchTraffic = (read_gpio(GPIOA, GPIO_PIN0) != 0) ;
       s_old = s;
       s = states[s].weiter[isSwitchTraffic];
    }

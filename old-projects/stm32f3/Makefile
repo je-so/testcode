@@ -48,6 +48,6 @@ build_projects:
 	done;
 
 clean_projects:
-	for i in P[0-9][0-9]_*; do\
+	for i in P[0-9][0-9]_* test/; do\
 		cd $$i; make clean; cd ..;\
 	done;

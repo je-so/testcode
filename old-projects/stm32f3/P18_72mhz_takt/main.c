@@ -13,9 +13,9 @@
 
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT|GPIO_PORTE_BIT);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT|GPIOE_BIT);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
    config_systick(8000000/5, systickcfg_CORECLOCK|systickcfg_START);
 
    // Interner 8-MHZ Crystal wird als Systemclock benutzt (nach Reset)
@@ -34,12 +34,12 @@ int main(void)
    uint16_t mask = GPIO_PINS(15,12);
 
    while (1) {
-      write_gpio(GPIO_PORTE, mask, GPIO_PINS(15,8)&~mask);
+      write_gpio(GPIOE, mask, GPIO_PINS(15,8)&~mask);
       mask >>= 1;
       mask = (mask & GPIO_PINS(15,8)) | ((mask & GPIO_PINS(7,0)) << 8);
 
       /* Warte, bis User Button gedrückt */
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) {
+      if (read_gpio(GPIOA, GPIO_PIN0) == 1) {
          if (getsysclock_clockcntrl() == clock_PLL) {
             setsysclock_clockcntrl(clock_INTERNAL); // 8 MHZ
             if (disable_clock_clockcntrl(clock_PLL) != 0) goto ONERR;
@@ -54,15 +54,15 @@ int main(void)
             if (disable_clock_clockcntrl(clock_INTERNAL) != 0) goto ONERR;
             if (getHZ_clockcntrl() != 72000000) goto ONERR;
          }
-         write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) ;
+         write1_gpio(GPIOE, GPIO_PINS(15,8));
+         while (read_gpio(GPIOA, GPIO_PIN0) == 1) ;
       }
 
       /* Warte 1/5 bzw. 1/45 Sekunde */
-      while (!isexpired_systick() && read_gpio(GPIO_PORTA, GPIO_PIN0) == 0) ;
+      while (!isexpired_systick() && read_gpio(GPIOA, GPIO_PIN0) == 0) ;
    }
 
 ONERR:
-   write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   write1_gpio(GPIOE, GPIO_PINS(15,8));
    while (1) ;
 }

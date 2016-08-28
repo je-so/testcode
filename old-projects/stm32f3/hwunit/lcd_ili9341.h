@@ -8,7 +8,7 @@ void init_lcd(void);
 
 /* Gibt die Nummer des verwendeten Ports zurück. Dieser Port muss im vom Hautpprogramm aus
  * mittels enable_gpio_clockcntrl aktiviert werden. */
-gpio_port_bit_e getportconfig_lcd(void);
+gpio_bit_t getportconfig_lcd(void);
 
 /* Füllt den ein Rechteckbereich des Bildschirms (maximal 240(x)*320(y)) mit der Farbe color.
  * Der Füllbereich geht von horizontal von x1 bis x2 und vertikal von y1 bis y2 inklusive.

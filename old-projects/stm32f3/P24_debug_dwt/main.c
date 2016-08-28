@@ -60,7 +60,7 @@ void systick_interrupt(void)
 
 void timer6_dac_interrupt(void)
 {
-   clear_isexpired_basictimer(TIMER6);
+   clear_expired_basictimer(TIMER6);
 }
 
 void debugmonitor_interrupt(void)
@@ -86,7 +86,7 @@ int main(void)
    enable_basictimer_clockcntrl(TIMER6_BIT);
    config_input_gpio(SWITCH_PORT, SWITCH_PIN, GPIO_PULL_OFF);
    config_output_gpio(LED_PORT, LED_PINS);
-   enable_interrupt_nvic(interrupt_TIMER6_DAC);
+   enable_interrupt(interrupt_TIMER6_DAC);
 
    // Wait, until debugger detached and device could use debugmonitor to catch debug events
    while (isdebugger_dbg()) {

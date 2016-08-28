@@ -8,9 +8,9 @@ void assert_failed_exception(const char *filename, int linenr)
 {
    setsysclock_clockcntrl(clock_INTERNAL);
    while (1) {
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
-      write_gpio(GPIO_PORTE, GPIO_PIN15, GPIO_PINS(15,8));
+      write_gpio(GPIOE, GPIO_PIN15, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
    }
 }
@@ -30,14 +30,14 @@ void assert_failed_exception(const char *filename, int linenr)
 int main(void)
 {
    enable_dma_clockcntrl(DMA2_BIT);
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch+audio-out*/|GPIO_PORTE_BIT/*led*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch+audio-out*/|GPIOE_BIT/*led*/);
    enable_basictimer_clockcntrl(TIMER6_BIT);
    enable_dac_clockcntrl();
 
    // Wichtig: Zuerst IOPIN auf analog umschalten, damit keine parasitären Ströme fliessen
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_analog_gpio(GPIO_PORTA, GPIO_PIN4|GPIO_PIN6);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_analog_gpio(GPIOA, GPIO_PIN4|GPIO_PIN6);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    // Test config_dac
    config_dac(DAC1, dac_channel_1, daccfg_ENABLE_TRIGGER|daccfg_TRIGGER_TIMER7|daccfg_ENABLE_CHANNEL);
@@ -144,16 +144,16 @@ int main(void)
    start_basictimer(TIMER6);
 
    // Schalte blaue LED ein
-   write1_gpio(GPIO_PORTE, GPIO_PIN8);
+   write1_gpio(GPIOE, GPIO_PIN8);
 
    while (1) {
       // Stelle sicher, dass DMA noch aktiv ist (kein Fehler)
       assert(isenabled_dma(DMA2, dma_channel_3) == 1);
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) {
+      if (read_gpio(GPIOA, GPIO_PIN0) == 1) {
          // Schalte alle LED ein, falls der User-Button gedrückt wird
-         write1_gpio(GPIO_PORTE, GPIO_PINS(15,9));
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) ;
-         write0_gpio(GPIO_PORTE, GPIO_PINS(15,9));
+         write1_gpio(GPIOE, GPIO_PINS(15,9));
+         while (read_gpio(GPIOA, GPIO_PIN0) == 1) ;
+         write0_gpio(GPIOE, GPIO_PINS(15,9));
       }
    }
 

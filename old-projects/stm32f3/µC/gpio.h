@@ -22,24 +22,25 @@
 #define STM32F303xC_MC_GPIO_HEADER
 
 // == exported Peripherals/HW-Units
-#define GPIO_PORTA ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOA)
-#define GPIO_PORTB ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOB)
-#define GPIO_PORTC ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOC)
-#define GPIO_PORTD ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOD)
-#define GPIO_PORTE ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOE)
-#define GPIO_PORTF ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOF)
+#define GPIOA ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOA)
+#define GPIOB ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOB)
+#define GPIOC ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOC)
+#define GPIOD ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOD)
+#define GPIOE ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOE)
+#define GPIOF ((gpio_port_t*)HW_REGISTER_BASEADDR_GPIOF)
 
-#define GPIO_PORTA_BIT  ((1u << 0))
-#define GPIO_PORTB_BIT  ((1u << 1))
-#define GPIO_PORTC_BIT  ((1u << 2))
-#define GPIO_PORTD_BIT  ((1u << 3))
-#define GPIO_PORTE_BIT  ((1u << 4))
-#define GPIO_PORTF_BIT  ((1u << 5))
+#define GPIOA_BIT  ((gpio_bit_t)(1u << 0))
+#define GPIOB_BIT  ((gpio_bit_t)(1u << 1))
+#define GPIOC_BIT  ((gpio_bit_t)(1u << 2))
+#define GPIOD_BIT  ((gpio_bit_t)(1u << 3))
+#define GPIOE_BIT  ((gpio_bit_t)(1u << 4))
+#define GPIOF_BIT  ((gpio_bit_t)(1u << 5))
 
 #define GPIO_PORT_NR(PORT)    (((uintptr_t)port >> 10) & 0x07)
 #define GPIO_PORT_BIT(PORT)   (1u << GPIO_PORT_NR(PORT))
 
 // == exported types
+typedef uint8_t gpio_bit_t;
 struct gpio_port_t;
 
 typedef enum gpio_function_e {
@@ -310,24 +311,24 @@ static inline uint32_t portnr_gpio(const gpio_port_t* port)
    static_assert((((uintptr_t)HW_REGISTER_BASEADDR_GPIOD >> 10)&0x7) == 3);
    static_assert((((uintptr_t)HW_REGISTER_BASEADDR_GPIOE >> 10)&0x7) == 4);
    static_assert((((uintptr_t)HW_REGISTER_BASEADDR_GPIOF >> 10)&0x7) == 5);
-   static_assert(GPIO_PORT_NR(GPIO_PORTA) == 0);
-   static_assert(GPIO_PORT_NR(GPIO_PORTB) == 0);
-   static_assert(GPIO_PORT_NR(GPIO_PORTC) == 0);
-   static_assert(GPIO_PORT_NR(GPIO_PORTD) == 0);
-   static_assert(GPIO_PORT_NR(GPIO_PORTE) == 0);
-   static_assert(GPIO_PORT_NR(GPIO_PORTF) == 0);
+   static_assert(GPIO_PORT_NR(GPIOA) == 0);
+   static_assert(GPIO_PORT_NR(GPIOB) == 0);
+   static_assert(GPIO_PORT_NR(GPIOC) == 0);
+   static_assert(GPIO_PORT_NR(GPIOD) == 0);
+   static_assert(GPIO_PORT_NR(GPIOE) == 0);
+   static_assert(GPIO_PORT_NR(GPIOF) == 0);
 
-   return GPIO_PORT_NR(GPIO_PORTA);
+   return GPIO_PORT_NR(GPIOA);
 }
 
 static inline uint32_t portbit_gpio(const gpio_port_t* port)
 {
-   static_assert(GPIO_PORT_BIT(GPIO_PORTA) == 1);
-   static_assert(GPIO_PORT_BIT(GPIO_PORTB) == 2);
-   static_assert(GPIO_PORT_BIT(GPIO_PORTC) == 4);
-   static_assert(GPIO_PORT_BIT(GPIO_PORTD) == 8);
-   static_assert(GPIO_PORT_BIT(GPIO_PORTE) == 16);
-   static_assert(GPIO_PORT_BIT(GPIO_PORTF) == 32);
+   static_assert(GPIO_PORT_BIT(GPIOA) == 1);
+   static_assert(GPIO_PORT_BIT(GPIOB) == 2);
+   static_assert(GPIO_PORT_BIT(GPIOC) == 4);
+   static_assert(GPIO_PORT_BIT(GPIOD) == 8);
+   static_assert(GPIO_PORT_BIT(GPIOE) == 16);
+   static_assert(GPIO_PORT_BIT(GPIOF) == 32);
    return GPIO_PORT_BIT(port);
 }
 
@@ -447,6 +448,8 @@ static inline void write0_gpio(gpio_port_t *port, uint16_t pins)
    port->outbrr = pins;
 }
 
+/* Setzt die Ausgangspins in highpins auf 1 und in lowpins auf 0.
+ * In beiden Parameterwerten gelistete Pinausgänge ((highpins&lowpins) != 0) werden auf 1 gesetzt. */
 static inline void write_gpio(volatile struct gpio_port_t *port, uint16_t highpins/*1*/, uint16_t lowpins/*0*/)
 {
    port->outbsrr = highpins | ((uint32_t)lowpins << 16);

@@ -9,8 +9,8 @@
 
 // Pinout Konfiguration
 
-#define LCD_PORT  GPIO_PORTA
-#define LCD_PORT_BIT GPIO_PORTA_BIT
+#define LCD_PORT  GPIOA
+#define LCD_PORT_BIT GPIOA_BIT
 #define LCD_SCK   GPIO_PIN1   // PA1
 #define LCD_MOSI  GPIO_PIN3   // PA3
 #define LCD_DC    GPIO_PIN2   // PA2
@@ -19,9 +19,9 @@
 
 // Query Pinout
 
-gpio_port_bit_e getportconfig_lcd(void)
+gpio_bit_t getportconfig_lcd(void)
 {
-   return GPIO_PORTA_BIT;
+   return GPIOA_BIT;
 }
 
 // Commands

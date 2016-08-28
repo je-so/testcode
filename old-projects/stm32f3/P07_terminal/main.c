@@ -47,10 +47,10 @@ uint32_t read_number(void)
          break;
       }
       // echo character
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
       while (! iswritepossible_uart(UART4)) ;
       write_uart(UART4, data);
-      write0_gpio(GPIO_PORTE, red_led);
+      write0_gpio(GPIOE, red_led);
    }
 
    return nr;
@@ -72,21 +72,21 @@ uint32_t read_number(void)
 */
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch*/|GPIO_PORTE_BIT/*led*/|GPIO_PORTC_BIT/*uart*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch*/|GPIOE_BIT/*led*/|GPIOC_BIT/*uart*/);
    enable_uart_clockcntrl(UART4_BIT);
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
-   config_function_gpio(GPIO_PORTC, GPIO_PINS(11,10), GPIO_FUNCTION_5/*select UART4*/);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
+   config_function_gpio(GPIOC, GPIO_PINS(11,10), GPIO_FUNCTION_5/*select UART4*/);
 
 
    if (config_uart(UART4, 8, 0, 1, 115200)) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    // yellow led signals wait for receiving Return key from serial port
-   write1_gpio(GPIO_PORTE, yellow_led);
+   write1_gpio(GPIOE, yellow_led);
 
    for (;;) {
       while (! isreadpossible_uart(UART4)) ;
@@ -94,19 +94,19 @@ int main(void)
       if (data == '\r' || data == '\n') break;
    }
 
-   write0_gpio(GPIO_PORTE, yellow_led);
+   write0_gpio(GPIOE, yellow_led);
 
    for (;;) {
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
       write_string("\nEingabe: ");
-      write0_gpio(GPIO_PORTE, red_led);
-      write1_gpio(GPIO_PORTE, green_led);
+      write0_gpio(GPIOE, red_led);
+      write1_gpio(GPIOE, green_led);
       uint32_t nr = read_number();
-      write0_gpio(GPIO_PORTE, green_led);
-      write1_gpio(GPIO_PORTE, red_led);
+      write0_gpio(GPIOE, green_led);
+      write1_gpio(GPIOE, red_led);
       write_string(" gelesene Eingabe: ");
       write_number(nr);
-      write0_gpio(GPIO_PORTE, red_led);
+      write0_gpio(GPIOE, red_led);
    }
 
 }

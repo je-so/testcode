@@ -38,10 +38,10 @@ static void loop();
 int main(void)
 {
    enable_fpu(1);
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT|GPIO_PORTE_BIT|getportconfig_lcd());
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15, 8));
-   write1_gpio(GPIO_PORTE, GPIO_PIN8);
+   enable_gpio_clockcntrl(GPIOA_BIT|GPIOE_BIT|getportconfig_lcd());
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15, 8));
+   write1_gpio(GPIOE, GPIO_PIN8);
 
 #if 1
    // Setzt Taktfrequenz auf 72 MHz
@@ -68,10 +68,10 @@ static void loop()
    config_systick(getHZ_clockcntrl() / (1000/5) /*5ms*/, systickcfg_CORECLOCK|systickcfg_START);
 
    while (1) {
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) != 0) {
-         write1_gpio(GPIO_PORTE, GPIO_PINS(15, 8));
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0)) ;
-         write0_gpio(GPIO_PORTE, GPIO_PINS(15, 9));
+      if (read_gpio(GPIOA, GPIO_PIN0) != 0) {
+         write1_gpio(GPIOE, GPIO_PINS(15, 8));
+         while (read_gpio(GPIOA, GPIO_PIN0)) ;
+         write0_gpio(GPIOE, GPIO_PINS(15, 9));
       }
 
       scrolly_lcd(offset);

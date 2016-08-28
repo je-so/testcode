@@ -60,8 +60,8 @@
 
    Typische Verwendung:
    > enable_dac_clockcntrl();
-   > enable_gpio_clockcntrl(GPIO_PORTA_BIT);
-   > config_analog_gpio(GPIO_PORTA, GPIO_PIN4);
+   > enable_gpio_clockcntrl(GPIOA_BIT);
+   > config_analog_gpio(GPIOA, GPIO_PIN4);
    >
    > config_dac(DAC1, dac_channel_1, daccfg_DISABLE_TRIGGER|daccfg_ENABLE_CHANNEL);
    >
@@ -153,8 +153,8 @@ typedef enum daccfg_e {
 } daccfg_e;
 
 typedef enum dac_channel_e {
-   dac_channel_1 = 1, // DAC1_OUT1 == GPIO_PIN4/GPIO_PORTA
-   dac_channel_2 = 2, // DAC1_OUT2 == GPIO_PIN5/GPIO_PORTA
+   dac_channel_1 = 1, // DAC1_OUT1 == GPIO_PIN4/GPIOA
+   dac_channel_2 = 2, // DAC1_OUT2 == GPIO_PIN5/GPIOA
    dac_channel_DUAL = dac_channel_1|dac_channel_2
 } dac_channel_e;
 

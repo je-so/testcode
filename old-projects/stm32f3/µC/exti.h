@@ -22,11 +22,11 @@
    ┌─────────┬───────────────────────────────────────────────────────────────┐
    │EXTI Line│ Leitung ist verbunden mit:                                    │
    ├─────────┼───────────────────────────────────────────────────────────────┤
-   │ EXTI0   │ GPIO-Pin0 von einem Port A..F konfiguriert in SYSCFG_EXTICR1  │
+   │ EXTI0   │ GPIO-Pin0 zu einem in SYSCFG_EXTICR1 konfigurierten Port A-F  │
    ├─────────┼───────────────────────────────────────────────────────────────┤
-   │EXTI2..14│ GPIO-PinX von einem Port A..F konfiguriert in SYSCFG_EXTICRY  │
+   │EXTI2..14│ GPIO-PinY zu einem in SYSCFG_EXTICR2 konfigurierten Port A-F  │
    ├─────────┼───────────────────────────────────────────────────────────────┤
-   │ EXTI15  │ GPIO-Pin15 von einem Port A..F konfiguriert in SYSCFG_EXTICR4 │
+   │ EXTI15  │ GPIO-Pin15 zu einem in SYSCFG_EXTICR4 konfigurierten Port A-F │
    ├─────────┼───────────────────────────────────────────────────────────────┤
    │ EXTI16  │ Ausgabe von Programmable voltage detector (PVD):überwacht VDD │
    ├─────────┼───────────────────────────────────────────────────────────────┤
@@ -114,119 +114,116 @@ static inline void set_edge_exti(exti_line_e linenr, bool isRising, bool isFalli
 
 // == definitions
 typedef volatile struct exti_t {
-   /* Interrupt mask register (EXTI_IMR1); Address offset: 0x00; Reset value: 0x1F800000
-    * The reset value for the internal lines (23, 24, 25, 26, 27 and 28) is set to ‘1’ in order to
-    * enable the interrupt by default.
-    * Bits 31:0 MRx: Interrupt Mask on external/internal line x, x = 0..31
-    * 0: Interrupt request from Line x is masked
-    * 1: Interrupt request from Line x is not masked */
-   uint32_t    imr1;
-   /* Event mask register (EXTI_EMR1); Address offset: 0x04; Reset value: 0x00000000
-    * Bits 31:0 MRx: Event Mask on external/internal line x
-    * 0: Event request from Line x is masked
-    * 1: Event request from Line x is not masked */
-   uint32_t    emr1;
-   /* Rising trigger selection register (EXTI_RTSR1); Address offset: 0x08; Reset value: 0x00000000
-    * Bits 31:29 TRx: Rising trigger event configuration bit of line x
-    * Bits 28:23 Reserved, must be kept at reset value (internal lines).
-    * Bits 22:0 TRx: Rising trigger event configuration bit of line x
-    * 0: Rising trigger disabled (for Event and Interrupt) for input line x
-    * 1: Rising trigger enabled (for Event and Interrupt) for input line x.
-    * The external wakeup lines are edge-triggered. No glitches must be generated on these
-    * lines. If a rising edge on an external interrupt line occurs during a write operation in the
-    * EXTI_RTSR register, the pending bit is not set. */
-   uint32_t    rtsr1;
-   /* Falling trigger selection register (EXTI_FTSR1); Address offset: 0x0C; Reset value: 0x00000000
-    * Bits 31:29 TRx: Falling trigger event configuration bit of line x
-    * Bits 28:23 Reserved, must be kept at reset value (internal lines).
-    * Bits 22:0 TRx: Falling trigger event configuration bit of line x
-    * 0: Falling trigger disabled (for Event and Interrupt) for input line x
-    * 1: Falling trigger enabled (for Event and Interrupt) for input line x.
-    * The external wakeup lines are edge-triggered. No glitches must be generated on these
-    * lines. If a falling edge on an external interrupt line occurs during a write operation to the
-    * EXTI_FTSR register, the pending bit is not set. */
-   uint32_t    ftsr1;
-   /* Software interrupt event register (EXTI_SWIER1); Address offset: 0x10; Reset value: 0x00000000
-    * Bits 31: 29 SWIERx: Software interrupt on line x
-    * Bits 28:23 Reserved, must be kept at reset value (internal lines).
-    * Bits 22:0 SWIERx: Software interrupt on line x
-    * If the interrupt is enabled on this line in the EXTI_IMR, writing a '1' to this bit when
-    * it is at '0' sets the corresponding pending bit in EXTI_PR resulting in an interrupt
-    * request generation.
-    * This bit is cleared by clearing the corresponding bit of EXTI_PR (by writing a ‘1’ to the bit). */
-   uint32_t    swier1;
-   /* Pending register (EXTI_PR1); Address offset: 0x14; Reset value: undefined
-    * Bits 31:29 PRx: Pending bit on line x (x = 31 to 29)
-    * Bits 28:23 Reserved, must be kept at reset value (internal lines).
-    * Bits 22:0 PRx: Pending bit on line x
-    * 0: No trigger request occurred
-    * 1: Selected trigger request occurred
-    * This bit is set when the selected edge event arrives on the external interrupt line.
-    * TODO: check that only set if value of imr1 == 1
-    * This bit is cleared by writing a ‘1’ to the bit. */
-   uint32_t    pr1;
-   uint32_t    _reserved1;
-   uint32_t    _reserved2;
-   /* Interrupt mask register (EXTI_IMR2); Address offset: 0x20; Reset value: 0xFFFFFFFC
-    * The reset value for the internal lines (EXTI Lines 34 and 35) and the reserved lines is set to ‘1’.
-    * Bits 3:0 MRx: Interrupt mask on external/internal line x+32
-    * 0: Interrupt request from Line x+32 is masked
-    * 1: Interrupt request from Line x+32 is not masked */
-   uint32_t    imr2;
-   /* Event mask register (EXTI_EMR2); Address offset: 0x24; Reset value: 0x00000000
-    * Bits 3:0 MRx: Event mask on external/internal line x+32
-    * 0: Event request from Line x+32 is masked
-    * 1: Event request from Line x+32 is not masked */
-   uint32_t    emr2;
-   /* Rising trigger selection register (EXTI_RTSR2); Address offset: 0x28; Reset value: 0x00000000
-    * Bits 1:0 TRx: Rising trigger event configuration bit of line x+32
-    * 0: Rising trigger disabled (for Event and Interrupt) for input line x+32
-    * 1: Rising trigger enabled (for Event and Interrupt) for input line x+32.
-    * The external wakeup lines are edge-triggered. No glitches must be generated on these
-    * lines. If a rising edge on an external interrupt line occurs during a write operation to the
-    * EXTI_RTSR register, the pending bit is not set. */
-   uint32_t    rtsr2;
-   /* Falling trigger selection register (EXTI_FTSR2); Address offset: 0x2C; Reset value: 0x00000000
-    * Bits 1:0 TRx: Falling trigger event configuration bit of line x+32
-    * 0: Falling trigger disabled (for Event and Interrupt) for input line x+32
-    * 1: Falling trigger enabled (for Event and Interrupt) for input line x+32.
-    * The external wakeup lines are edge-triggered. No glitches must be generated on these
-    * lines. If a falling edge on an external interrupt line occurs during a write operation to the
-    * EXTI_FTSR register, the pending bit is not set. */
-   uint32_t    ftsr2;
-   /* Software interrupt event register (EXTI_SWIER2); Address offset: 0x30; Reset value: 0x00000000
-    * Bits 1:0 SWIERx: Software interrupt on line x+32
-    * If the interrupt is enabled on this line in the EXTI_IMR, writing a '1' to this bit when
-    * it is at '0' sets the corresponding pending bit in EXTI_PR resulting in an interrupt
-    * request generation.
-    * This bit is cleared by clearing the corresponding bit of EXTI_PR (by writing a ‘1’ to the bit). */
-   uint32_t    swier2;
-   /* Pending register (EXTI_PR2); Address offset: 0x34; Reset value: undefined
-    * Bits 1:0 PRx: Pending bit on line x+32
-    * 0: No trigger request occurred
-    * 1: Selected trigger request occurred
-    * This bit is set when the selected edge event arrives on the external interrupt line.
-    * This bit is cleared by writing a ‘1’ into the bit. */
-   uint32_t    pr2;
+   uint32_t       imr1;   /* Interrupt Mask Register, rw, Offset: 0x00, Reset: 0x1F800000
+                           * Enables interrupts generated from external/internal line 0..31.
+                           * The reset value for the internal lines 23..28 is set to ‘1’ in order to enable the interrupt by default.
+                           * Bit[x] INTENA 1: Interrupt request from Line x is enabled. 0: Interrupt request is masked.
+                           */
+   uint32_t       emr1;   /* Event Mask Register, rw, Offset: 0x04, Reset: 0x00000000
+                           * Enables events (SEV/WFE) generated from external/internal line 0..31.
+                           * Bit[x] EVTENA 1: Event request from Line x is enabled. 0: Event request is masked.
+                           */
+   uint32_t       rtsr1;  /* Rising Trigger Selection Register, rw, Offset: 0x08, Reset: 0x00000000
+                           * Enables rising-edge detection on external line 0..22,28..31. Bits 28:23 reserved (internal lines).
+                           * The external wakeup lines are edge-triggered. No glitches must be generated on these lines.
+                           * If a rising edge on an external line occurs during a write operation to the RTSR1/2 register,
+                           * the pending bit is not set.
+                           * Bit[x] RISENA 1: Rising trigger enabled for Line x. 0: Rising trigger disabled.
+                           */
+   uint32_t       ftsr1;  /* Falling Trigger Selection Register, rw, Offset: 0x0C, Reset: 0x00000000
+                           * Enables falling-edge detection on external line 0..22,28..31. Bits 28:23 reserved (internal lines).
+                           * If a falling edge on an external line occurs during a write operation to the FTSR1/2 register,
+                           * the pending bit is not set.
+                           * Bit[x] FALENA 1: Falling trigger enabled for Line x. 0: Falling trigger disabled.
+                           */
+   uint32_t       swier1; /* Software Interrupt Event Register, rw, Offset: 0x10, Reset: 0x00000000
+                           * Allows software to generates interrupt/event on external line 0..22,28..31. Bits 28:23 reserved (internal lines).
+                           * Bit[x] SWIEGEN 0->1: Generates interrupt/Eventfor Line x if interrupt/event is enabled (bit must be 0 before changing to 1, clear it if it is 1). 0: Nothing generated.
+                           */
+   uint32_t       pr1;    /* Pending Register, rw, Offset: 0x14, Reset: Undefined
+                           * Reads or clears pending state of interrupt on external line 0..22,28..31. Bits 28:23 reserved (internal lines).
+                           * Bit[x] PEND reads 1: Selected trigger request occurred for Line x. 0: No trigger occurred. writes 1: Bit is cleared. 0: No effect.
+                           */
+   uint32_t       _reserved0[2];
+   uint32_t       imr2;   /* Interrupt Mask Register, rw, Offset: 0x20, Reset: 0xFFFFFFFC
+                           * Enables interrupts generated from external/internal line 32..35.
+                           * The reset value for the internal lines 34..35 and reserved bits is set to ‘1’.
+                           * Bit[x] INTENA 1: Interrupt request from Line x+32 is enabled. 0: Interrupt request is masked.
+                           */
+   uint32_t       emr2;   /* Event Mask Register, rw, Offset: 0x24, Reset: 0x00000000
+                           * Enables events (see also SEV/WFE) generated from external/internal line 32..35.
+                           * Bit[x] EVTENA 1: Event request from Line x+32 is enabled. 0: Event request is masked.
+                           */
+   uint32_t       rtsr2;  /* Rising Trigger Selection Register, rw, Offset: 0x28, Reset: 0x00000000
+                           * Enables rising-edge detection on external line 32..33. Bits 31:2 reserved (internal lines).
+                           * The external wakeup lines are edge-triggered. No glitches must be generated on these lines.
+                           * If a rising edge on an external line occurs during a write operation to the RTSR1/2 register,
+                           * the pending bit is not set.
+                           * Bit[x] RISENA 1: Rising trigger enabled for Line x+32. 0: Rising trigger disabled.
+                           */
+   uint32_t       ftsr2;  /* Falling Trigger Selection Register, rw, Offset: 0x2C, Reset: 0x00000000
+                           * Enables falling-edge detection on external line 32..33. Bits 31:2 reserved (internal lines).
+                           * If a falling edge on an external line occurs during a write operation to the FTSR1/2 register,
+                           * the pending bit is not set.
+                           * Bit[x] FALENA 1: Falling trigger enabled for Line x+32. 0: Falling trigger disabled.
+                           */
+   uint32_t       swier2; /* Software Interrupt Event Register, rw, Offset: 0x30, Reset: 0x00000000
+                           * Allows software to generates interrupt/event on external line 32..33. Bits 31:2 reserved (internal lines).
+                           * Bit[x] SWIEGEN 1: Generates interrupt/Eventfor Line x+32 if interrupt/event is enabled. 0: Nothing generated.
+                           */
+   uint32_t       pr2;    /* Pending Register, rw, Offset: 0x34, Reset: Undefined
+                           * Reads or clears pending state of interrupt on external line 32..33. Bits 31:2 reserved (internal lines).
+                           * Bit[x] PEND reads 1: Selected trigger request occurred for Line x+32. 0: No trigger occurred. writes 1: Bit is cleared. 0: No effect.
+                           */
 } exti_t;
+
+
+// == Register Offsets and Bit-Fields
+
+enum exti_register_e {
+   /* IMR1: Interrupt Mask Register */
+   HW_DEF_OFF(EXTI, IMR1,  0x00),
+   /* EMR1: Event Mask Register */
+   HW_DEF_OFF(EXTI, EMR1,  0x04),
+   /* RTSR1: Rising Trigger Selection Register */
+   HW_DEF_OFF(EXTI, RTSR1, 0x08),
+   /* FTSR1: Falling Trigger Selection Register */
+   HW_DEF_OFF(EXTI, FTSR1, 0x0C),
+   /* SWIER1: Software Interrupt Event Register */
+   HW_DEF_OFF(EXTI, SWIER1, 0x10),
+   /* PR1: Pending Register */
+   HW_DEF_OFF(EXTI, PR1,   0x14),
+   /* IMR2: Interrupt Mask Register */
+   HW_DEF_OFF(EXTI, IMR2,  0x20),
+   /* EMR2: Event Mask Register */
+   HW_DEF_OFF(EXTI, EMR2,  0x24),
+   /* RTSR2: Rising Trigger Selection Register */
+   HW_DEF_OFF(EXTI, RTSR2, 0x28),
+   /* FTSR2: Falling Trigger Selection Register */
+   HW_DEF_OFF(EXTI, FTSR2, 0x2C),
+   /* SWIER2: Software Interrupt Event Register */
+   HW_DEF_OFF(EXTI, SWIER2, 0x30),
+   /* PR2: Pending Register */
+   HW_DEF_OFF(EXTI, PR2,   0x34),
+};
 
 
 // section: inline implementation
 
 static inline void assert_offset_exti(void)
 {
-   static_assert(offsetof(exti_t, imr1) == 0);
-   static_assert(offsetof(exti_t, emr1) == 4);
-   static_assert(offsetof(exti_t, rtsr1) == 8);
-   static_assert(offsetof(exti_t, ftsr1) == 12);
-   static_assert(offsetof(exti_t, swier1) == 16);
-   static_assert(offsetof(exti_t, pr1) == 20);
-   static_assert(offsetof(exti_t, imr2) == 0+32);
-   static_assert(offsetof(exti_t, emr2) == 4+32);
-   static_assert(offsetof(exti_t, rtsr2) == 8+32);
-   static_assert(offsetof(exti_t, ftsr2) == 12+32);
-   static_assert(offsetof(exti_t, swier2) == 16+32);
-   static_assert(offsetof(exti_t, pr2) == 20+32);
+   static_assert(offsetof(exti_t, imr1)   == HW_OFF(EXTI, IMR1));
+   static_assert(offsetof(exti_t, emr1)   == HW_OFF(EXTI, EMR1));
+   static_assert(offsetof(exti_t, rtsr1)  == HW_OFF(EXTI, RTSR1));
+   static_assert(offsetof(exti_t, ftsr1)  == HW_OFF(EXTI, FTSR1));
+   static_assert(offsetof(exti_t, swier1) == HW_OFF(EXTI, SWIER1));
+   static_assert(offsetof(exti_t, pr1)    == HW_OFF(EXTI, PR1));
+   static_assert(offsetof(exti_t, imr2)   == HW_OFF(EXTI, IMR2));
+   static_assert(offsetof(exti_t, emr2)   == HW_OFF(EXTI, EMR2));
+   static_assert(offsetof(exti_t, rtsr2)  == HW_OFF(EXTI, RTSR2));
+   static_assert(offsetof(exti_t, ftsr2)  == HW_OFF(EXTI, FTSR2));
+   static_assert(offsetof(exti_t, swier2) == HW_OFF(EXTI, SWIER2));
+   static_assert(offsetof(exti_t, pr2)    == HW_OFF(EXTI, PR2));
 }
 
 // only external line number supported, internal line numbers are ignored

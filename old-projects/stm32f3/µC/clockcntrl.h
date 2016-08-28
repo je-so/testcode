@@ -109,10 +109,10 @@ static inline void setsysclock_clockcntrl(clock_e clk);
 
 // == definitions
 typedef volatile struct clockcntrl_t {
-   /* Clock control register; Offset: 0x00; Reset value: 0x0000XX83 (X is undefined). */
-   uint32_t    cr;
-   /* Clock configuration register; Offset: 0x04; Reset value: 0x00000000 */
-   uint32_t    cfgr;
+   uint32_t       cr;     /* Clock control register, rw, Offset: 0x00; Reset: 0x0000XX83 (X is undefined)
+                           */
+   uint32_t       cfgr;   /* Clock configuration register, rw, Offset: 0x04; Reset: 0x00000000
+                           */
 } clockcntrl_t;
 
 /* == RCC Reset and Clock Control == */

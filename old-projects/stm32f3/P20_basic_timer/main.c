@@ -18,9 +18,9 @@ void assert_failed_exception(const char *filename, int linenr)
 {
    setsysclock_clockcntrl(clock_INTERNAL);
    while (1) {
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
-      write_gpio(GPIO_PORTE, GPIO_PIN15, GPIO_PINS(15,8));
+      write_gpio(GPIOE, GPIO_PIN15, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
    }
 }
@@ -30,7 +30,7 @@ void timer6_dac_interrupt(void)
    // Würde der Interrupt nicht bestätigt, käme es zu einer Endlosschleife,
    // d.h. der Interrupt würde nach Beendigung dieser Funktion sofort wieder aktiviert.
    assert(isexpired_basictimer(TIMER6));
-   clear_isexpired_basictimer(TIMER6);
+   clear_expired_basictimer(TIMER6);
    assert(! isexpired_basictimer(TIMER6));
    ++s_counter6;
 }
@@ -40,14 +40,14 @@ void timer7_interrupt(void)
    // Würde der Interrupt nicht bestätigt, käme es zu einer Endlosschleife,
    // d.h. der Interrupt würde nach Beendigung dieser Funktion sofort wieder aktiviert.
    assert(isexpired_basictimer(TIMER7));
-   clear_isexpired_basictimer(TIMER7);
+   clear_expired_basictimer(TIMER7);
    assert(! isexpired_basictimer(TIMER7));
    ++s_counter7;
 }
 
 static void switch_used_led(void)
 {
-   write0_gpio(GPIO_PORTE, GPIO_PIN(8 + s_lednr));
+   write0_gpio(GPIOE, GPIO_PIN(8 + s_lednr));
    if (s_leddesc) {
       --s_lednr;
       if (s_lednr > 7) s_lednr = 7;
@@ -55,7 +55,7 @@ static void switch_used_led(void)
       ++s_lednr;
       if (s_lednr == 8) s_lednr = 0;
    }
-   write1_gpio(GPIO_PORTE, GPIO_PIN(8 + s_lednr));
+   write1_gpio(GPIOE, GPIO_PIN(8 + s_lednr));
    if (getHZ_clockcntrl() > 8000000) {
       for (volatile int i = 0; i < 250000; ++i) ;
    } else {
@@ -86,9 +86,9 @@ static void switch_used_led(void)
  */
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*user-switch*/|GPIO_PORTE_BIT/*user-LEDs*/);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT/*user-switch*/|GPIOE_BIT/*user-LEDs*/);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    // Teste enable_timer_clockcntrl und disable_timer_clockcntrl
    switch_used_led();
@@ -164,7 +164,7 @@ int main(void)
          assert(! isstarted_basictimer(timer));    // Timer hat sich selbst abgeschaltet
          assert(isexpired_basictimer(timer));      // Abgelaufen-Flag gesetzt
          assert(exvalue_basictimer(timer) == 0x80000000);  // Timer count == 0 + Abgelaufen
-         clear_isexpired_basictimer(timer);        // lösche Abgelaufen-Flag
+         clear_expired_basictimer(timer);          // lösche Abgelaufen-Flag
          assert(exvalue_basictimer(timer) == 0);   // Timer count == 0 ohne Abgelaufen
 
          // Teste Timer: stop_basictimer löscht isexpired_basictimer  flag
@@ -270,8 +270,8 @@ int main(void)
          assert(config_basictimer(timer, 10000, 1, basictimercfg_ONCE|basictimercfg_INTERRUPT) == 0);
          assert(! isstarted_basictimer(timer));             // Timer gestoppt
          assert(! isexpired_basictimer(timer));             // Abgelaufen-Flag gelöscht
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche Pending Interrupt von Timer6
-         clear_interrupt_nvic(interrupt_TIMER7);            // Lösche Pending Interrupt von Timer7
+         clear_interrupt(interrupt_TIMER6_DAC);             // Lösche Pending Interrupt von Timer6
+         clear_interrupt(interrupt_TIMER7);                 // Lösche Pending Interrupt von Timer7
          start_basictimer(timer);                           // Starte Timer
          assert(isstarted_basictimer(timer));               // Timer läuft
          while (isstarted_basictimer(timer)) ;              // Warte auf Timereende
@@ -281,21 +281,21 @@ int main(void)
 
          // Teste Interrupt pending
          switch_used_led();
-         assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
-         assert(is_interrupt_nvic(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche Pending Interrupt von Timer6
-         clear_interrupt_nvic(interrupt_TIMER7);            // Lösche Pending Interrupt von Timer7
+         assert(is_interrupt(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
+         assert(is_interrupt(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
+         clear_interrupt(interrupt_TIMER6_DAC);                   // Lösche Pending Interrupt von Timer6
+         clear_interrupt(interrupt_TIMER7);                       // Lösche Pending Interrupt von Timer7
          for (volatile int i = 0; i < 2; ++i) ;
-         assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC erneut gemeldet
-         assert(is_interrupt_nvic(interrupt_TIMER7) == is7);      // Interrupt an NVIC erneut gemeldet
+         assert(is_interrupt(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC erneut gemeldet
+         assert(is_interrupt(interrupt_TIMER7) == is7);      // Interrupt an NVIC erneut gemeldet
          assert(isexpired_basictimer(timer));               // Timer abgelaufen
-         clear_isexpired_basictimer(timer);                 // Lösche Abgelaufen-Flag
+         clear_expired_basictimer(timer);                   // Lösche Abgelaufen-Flag
          assert(! isexpired_basictimer(timer));             // Abgelaufen-Flag gelöscht
          assert(exvalue_basictimer(timer) == 0);            // Timer count == 0 ohne Abgelaufenflag
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche Pending Interrupt von Timer6
-         clear_interrupt_nvic(interrupt_TIMER7);            // Lösche Pending Interrupt von Timer7
-         assert(! is_interrupt_nvic(interrupt_TIMER6_DAC)); // NVIC Interruptflag gelöscht
-         assert(! is_interrupt_nvic(interrupt_TIMER7));     // NVIC Interruptflag gelöscht
+         clear_interrupt(interrupt_TIMER6_DAC);        // Lösche Pending Interrupt von Timer6
+         clear_interrupt(interrupt_TIMER7);            // Lösche Pending Interrupt von Timer7
+         assert(! is_interrupt(interrupt_TIMER6_DAC)); // NVIC Interruptflag gelöscht
+         assert(! is_interrupt(interrupt_TIMER7));     // NVIC Interruptflag gelöscht
 
          // Teste NVIC Interrupts ausgeschaltet
          switch_used_led();
@@ -306,10 +306,10 @@ int main(void)
          switch_used_led();
          // schalte Interrupt ein und Timer stoppt sich nach Ablauf selbst
          assert(config_basictimer(timer, 2, 1, basictimercfg_ONCE|basictimercfg_INTERRUPT) == 0);
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);     // Vorherige Interrupts haben pending-Flag in NVIC gesetzt,
-         clear_interrupt_nvic(interrupt_TIMER7);         // d.h. Interruptflags löschen, so dass nur ein erneuter Interrupt gemeldet wird
-         enable_interrupt_nvic(interrupt_TIMER6_DAC);       // Schalte NVIC Interrupt für Timer6 ein
-         enable_interrupt_nvic(interrupt_TIMER7);           // Schalte NVIC Interrupt für Timer7 ein
+         clear_interrupt(interrupt_TIMER6_DAC);     // Vorherige Interrupts haben pending-Flag in NVIC gesetzt,
+         clear_interrupt(interrupt_TIMER7);         // d.h. Interruptflags löschen, so dass nur ein erneuter Interrupt gemeldet wird
+         enable_interrupt(interrupt_TIMER6_DAC);       // Schalte NVIC Interrupt für Timer6 ein
+         enable_interrupt(interrupt_TIMER7);           // Schalte NVIC Interrupt für Timer7 ein
          assert(s_counter6 == 0);                           // Zähler Timer6 ist 0
          assert(s_counter7 == 0);                           // Zähler Timer7 ist 0
          start_basictimer(timer);                           // Starte Timer
@@ -318,10 +318,10 @@ int main(void)
          assert(! isexpired_basictimer(timer));             // Abgelaufen-Flag gelöscht von Interruptroutine
          assert(s_counter6 == is6);                         // Nur der s_counter des eingeschalteten Timers wurde erhöht
          assert(s_counter7 == is7);                         // dito
-         disable_interrupt_nvic(interrupt_TIMER6_DAC);      // Schalte NVIC Interruptbehandlung aus für Timer6
-         disable_interrupt_nvic(interrupt_TIMER7);          // Schalte NVIC Interruptbehandlung aus für Timer7
-         assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == 0);  // keinen Interrupt an NVIC gemeldet
-         assert(is_interrupt_nvic(interrupt_TIMER7) == 0);      // keinen Interrupt an NVIC gemeldet
+         disable_interrupt(interrupt_TIMER6_DAC);      // Schalte NVIC Interruptbehandlung aus für Timer6
+         disable_interrupt(interrupt_TIMER7);          // Schalte NVIC Interruptbehandlung aus für Timer7
+         assert(is_interrupt(interrupt_TIMER6_DAC) == 0);  // keinen Interrupt an NVIC gemeldet
+         assert(is_interrupt(interrupt_TIMER7) == 0);      // keinen Interrupt an NVIC gemeldet
          s_counter6 = 0;
          s_counter7 = 0;
 
@@ -330,8 +330,8 @@ int main(void)
          assert(config_basictimer(timer, 10000, 1, basictimercfg_ONCE) == 0);
          assert(! isstarted_basictimer(timer));             // Timer ist abgeschaltet
          assert(! isenabled_interrupt_basictimer(timer));   // Interrupt wird nicht an NVIC weitergemeldet
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Vorherige Interrupts habe pending-Flag in NVIC gesetzt,
-         clear_interrupt_nvic(interrupt_TIMER7);            // d.h. Interruptflags löschen, so dass nur ein erneuter Interrupt gemeldet wird
+         clear_interrupt(interrupt_TIMER6_DAC);        // Vorherige Interrupts habe pending-Flag in NVIC gesetzt,
+         clear_interrupt(interrupt_TIMER7);            // d.h. Interruptflags löschen, so dass nur ein erneuter Interrupt gemeldet wird
          start_basictimer(timer);                           // Starte Timer
          assert(isstarted_basictimer(timer));               // Timer ist gestartet
          while (isstarted_basictimer(timer)) ;              // Warte bis Timerende
@@ -340,15 +340,15 @@ int main(void)
          assert(exvalue_basictimer(timer) == 0x80000000);   // Timer count == 0 + Abgelaufen
                                                             // ABER:
          for (int i = 0; i < 5; ++i) {
-            assert(!is_interrupt_nvic(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
-            assert(!is_interrupt_nvic(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
+            assert(!is_interrupt(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
+            assert(!is_interrupt(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
             enable_interrupt_basictimer(timer);                // schalte Interrupt an
             assert(isenabled_interrupt_basictimer(timer));     // Interrupt wird jetzt an NVIC weitergemeldet
-            assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
-            assert(is_interrupt_nvic(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
+            assert(is_interrupt(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
+            assert(is_interrupt(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
             disable_interrupt_basictimer(timer);               // schalte Interrupt wieder ab
-            clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche NVIC Interruptflag Timer6
-            clear_interrupt_nvic(interrupt_TIMER7);            // Lösche NVIC Interruptflag Timer7
+            clear_interrupt(interrupt_TIMER6_DAC);        // Lösche NVIC Interruptflag Timer6
+            clear_interrupt(interrupt_TIMER7);            // Lösche NVIC Interruptflag Timer7
          }
 
          // Teste reset_basictimer: ein Reset setzt den Timer auf 0 zurück, ohne dass er abläuft
@@ -356,24 +356,24 @@ int main(void)
          assert(config_basictimer(timer, 65536, 1000, basictimercfg_INTERRUPT) == 0);
          start_basictimer(timer);                           // Starte Timer
          while (value_basictimer(timer) < 30) ;             // Warte bis 30000 Clockticks vergangen sind
-         assert(!is_interrupt_nvic(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
-         assert(!is_interrupt_nvic(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
          reset_basictimer(timer);                           // Setze Timer zurück
          while (value_basictimer(timer) != 0) ;             // Es dauert ein paar Takte bis das passiert
          assert(value_basictimer(timer) == 0);              // count zurückgesetzt
          assert(isstarted_basictimer(timer));               // Timer läuft noch
          assert(!isexpired_basictimer(timer));              // Timer nicht abgelaufen
          stop_basictimer(timer);                            // stoppe Timer
-         assert(!is_interrupt_nvic(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
-         assert(!is_interrupt_nvic(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
 
          // Teste resetandexpire_basictimer: setzt den Timer zurück und kennzeichnet ihn als abgelaufen
          switch_used_led();
          assert(config_basictimer(timer, 65536, 1000, basictimercfg_INTERRUPT) == 0);
          start_basictimer(timer);                           // Starte Timer
          while (value_basictimer(timer) < 30) ;             // Warte bis 30000 Clockticks vergangen sind
-         assert(!is_interrupt_nvic(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
-         assert(!is_interrupt_nvic(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER6_DAC));  // keinen Interrupt an NVIC gemeldet
+         assert(!is_interrupt(interrupt_TIMER7));      // keinen Interrupt an NVIC gemeldet
          resetandexpire_basictimer(timer);                  // Setze Timer zurück und kennzeichne ihn als abgelaufen
          while (value_basictimer(timer) != 0) ;             // Es dauert ein paar Takte bis das passiert
          assert(value_basictimer(timer) == 0);              // count zurückgesetzt
@@ -381,12 +381,12 @@ int main(void)
          assert(isexpired_basictimer(timer));               // Timer ist auch abgelaufen
          stop_basictimer(timer);                            // stoppe Timer
          assert(! isexpired_basictimer(timer));             // Stopp löscht auch Abgelaufen-Flag
-         assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
-         assert(is_interrupt_nvic(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche NVIC Interruptflag Timer6
-         clear_interrupt_nvic(interrupt_TIMER7);            // Lösche NVIC Interruptflag Timer7
-         assert(! is_interrupt_nvic(interrupt_TIMER6_DAC)); // NVIC Interruptflag gelöscht
-         assert(! is_interrupt_nvic(interrupt_TIMER7));     // NVIC Interruptflag gelöscht
+         assert(is_interrupt(interrupt_TIMER6_DAC) == is6);  // Interrupt an NVIC gemeldet
+         assert(is_interrupt(interrupt_TIMER7) == is7);      // Interrupt an NVIC gemeldet
+         clear_interrupt(interrupt_TIMER6_DAC);        // Lösche NVIC Interruptflag Timer6
+         clear_interrupt(interrupt_TIMER7);            // Lösche NVIC Interruptflag Timer7
+         assert(! is_interrupt(interrupt_TIMER6_DAC)); // NVIC Interruptflag gelöscht
+         assert(! is_interrupt(interrupt_TIMER7));     // NVIC Interruptflag gelöscht
 
 
          // Teste config_basictimer: Alte Timerperiod wird bei Verwendung von continue_basictimer weiterverwendet
@@ -418,7 +418,7 @@ int main(void)
          update_basictimer(timer, 7, 1000);     // setze neue Werte
          while (!isexpired_basictimer(timer)) ; // Warte auf abgelaufenenen Timer
          s_main.time1 = value_systick();        // ab hier - nach Timerablauf - werden die neuen Werte genutzt
-         clear_isexpired_basictimer(timer);
+         clear_expired_basictimer(timer);
          while (!isexpired_basictimer(timer)) ;
          s_main.time2 = value_systick();
          stop_systick();
@@ -437,7 +437,7 @@ int main(void)
          start_systick();
          while (!isexpired_basictimer(timer)) ;
          s_main.time1 = value_systick();
-         clear_isexpired_basictimer(timer);
+         clear_expired_basictimer(timer);
          while (!isexpired_basictimer(timer)) ;
          s_main.time2 = value_systick();
          stop_systick();
@@ -456,7 +456,7 @@ int main(void)
             update_basictimer(timer, 7, 1000);
             if (i) {
                resetandexpire_basictimer(timer);   // hier werden neue Werte geladen
-               clear_isexpired_basictimer(timer);  // Expirationflag wurde auch gesetzt, also löschen
+               clear_expired_basictimer(timer);  // Expirationflag wurde auch gesetzt, also löschen
                                                    // Dieser befehl verbraucht etwas Zeit, daher muss
                                                    // die Testgrenze von time1 angepasst werden.
             } else {
@@ -465,7 +465,7 @@ int main(void)
             start_systick();
             while (!isexpired_basictimer(timer)) ;
             s_main.time1 = value_systick();
-            clear_isexpired_basictimer(timer);
+            clear_expired_basictimer(timer);
             while (!isexpired_basictimer(timer)) ;
             s_main.time2 = value_systick();
             stop_systick();
@@ -480,10 +480,10 @@ int main(void)
          switch_used_led();
          // schalte Interrupt ein und Timer stoppt sich nach Ablauf selbst
          assert(config_basictimer(timer, 55555, 1, basictimercfg_INTERRUPT) == 0);
-         clear_interrupt_nvic(interrupt_TIMER6_DAC);        // Lösche mögliches pending Interruptflag Timer6
-         clear_interrupt_nvic(interrupt_TIMER7);            // Lösche mögliches pending Interruptflag Timer7
-         enable_interrupt_nvic(interrupt_TIMER6_DAC);       // Schalte NVIC Interrupt für Timer6 ein
-         enable_interrupt_nvic(interrupt_TIMER7);           // Schalte NVIC Interrupt für Timer7 ein
+         clear_interrupt(interrupt_TIMER6_DAC);        // Lösche mögliches pending Interruptflag Timer6
+         clear_interrupt(interrupt_TIMER7);            // Lösche mögliches pending Interruptflag Timer7
+         enable_interrupt(interrupt_TIMER6_DAC);       // Schalte NVIC Interrupt für Timer6 ein
+         enable_interrupt(interrupt_TIMER7);           // Schalte NVIC Interrupt für Timer7 ein
          assert(s_counter6 == 0);                           // Zähler Timer6 ist 0
          assert(s_counter7 == 0);                           // Zähler Timer7 ist 0
          resetandexpire_basictimer(timer);                  // Löst manuell (Timer abgeschaltet) einen Interrupt aus
@@ -491,10 +491,10 @@ int main(void)
          assert(! isexpired_basictimer(timer));             // Abgelaufen-Flag gelöscht von Interruptroutine
          assert(s_counter6 == is6);                         // Nur der s_counter des zurückgesetzten Timers wurde erhöht
          assert(s_counter7 == is7);                         // dito
-         disable_interrupt_nvic(interrupt_TIMER6_DAC);      // Schalte NVIC Interruptbehandlung aus für Timer6
-         disable_interrupt_nvic(interrupt_TIMER7);          // Schalte NVIC Interruptbehandlung aus für Timer7
-         assert(is_interrupt_nvic(interrupt_TIMER6_DAC) == 0);  // kein weiterer Interrupt an NVIC gemeldet
-         assert(is_interrupt_nvic(interrupt_TIMER7) == 0);      // kein weiterer Interrupt an NVIC gemeldet
+         disable_interrupt(interrupt_TIMER6_DAC);      // Schalte NVIC Interruptbehandlung aus für Timer6
+         disable_interrupt(interrupt_TIMER7);          // Schalte NVIC Interruptbehandlung aus für Timer7
+         assert(is_interrupt(interrupt_TIMER6_DAC) == 0);  // kein weiterer Interrupt an NVIC gemeldet
+         assert(is_interrupt(interrupt_TIMER7) == 0);      // kein weiterer Interrupt an NVIC gemeldet
          s_counter6 = 0;
          s_counter7 = 0;
 

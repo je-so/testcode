@@ -7,7 +7,7 @@ volatile uint32_t pos[16];
 static void turn_on_led(uint8_t nrled)
 {
    uint32_t led = 1u << (8+(nrled&0x7));
-   write_gpio(GPIO_PORTE, led/*on*/, GPIO_PINS(15,8)&~led/*off*/);
+   write_gpio(GPIOE, led/*on*/, GPIO_PINS(15,8)&~led/*off*/);
 }
 
 void nmi_interrupt(void)
@@ -84,9 +84,9 @@ int main(void)
    uint8_t  led = 0;
    unsigned i;
 
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch*/|GPIO_PORTE_BIT/*led*/);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch*/|GPIOE_BIT/*led*/);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    // Teste Interrupt Ausführung
 
@@ -192,7 +192,7 @@ int main(void)
          enable_coreinterrupt(i);
          if (setpriority_coreinterrupt((coreinterrupt_e)i, 3) != 0) goto ONERR;
          if (getpriority_coreinterrupt((coreinterrupt_e)i) != 3) goto ONERR;
-         setbasepriority_interrupt(3);
+         setprioritymask_interrupt(3);
          if (generate_coreinterrupt((coreinterrupt_e)i) != 0) goto ONERR;
          if (is_coreinterrupt((coreinterrupt_e)i) != 1) goto ONERR;
          if (setpriority_coreinterrupt((coreinterrupt_e)i, 2) != 0) goto ONERR;
@@ -231,13 +231,13 @@ int main(void)
 
    // 2 grüne LEDs
    turn_on_led(3);
-   write1_gpio(GPIO_PORTE, GPIO_PIN11|GPIO_PIN15);
+   write1_gpio(GPIOE, GPIO_PIN11|GPIO_PIN15);
    while (1) ;
 
 ONERR:
    // 2 rote LEDs
    enable_all_interrupt();
    enable_fault_interrupt();
-   write1_gpio(GPIO_PORTE, GPIO_PIN9|GPIO_PIN13);
+   write1_gpio(GPIOE, GPIO_PIN9|GPIO_PIN13);
    while (1) ;
 }

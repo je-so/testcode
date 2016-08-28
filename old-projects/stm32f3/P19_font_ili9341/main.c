@@ -35,10 +35,10 @@
 int main(void)
 {
    enable_fpu(1);
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT|GPIO_PORTE_BIT|getportconfig_lcd());
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15, 8));
-   write1_gpio(GPIO_PORTE, GPIO_PIN8);
+   enable_gpio_clockcntrl(GPIOA_BIT|GPIOE_BIT|getportconfig_lcd());
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15, 8));
+   write1_gpio(GPIOE, GPIO_PIN8);
 
    // Setzt Taktfrequenz auf 72 MHz
    // Mit dieser Taktfrequenz können maximal 5 ganze Bildschirmseiten
@@ -56,10 +56,10 @@ int main(void)
    uint8_t height = fontheight_lcd();
 
    while (1) {
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) != 0) {
-         write1_gpio(GPIO_PORTE, GPIO_PINS(15, 8));
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0)) ;
-         write0_gpio(GPIO_PORTE, GPIO_PINS(15, 9));
+      if (read_gpio(GPIOA, GPIO_PIN0) != 0) {
+         write1_gpio(GPIOE, GPIO_PINS(15, 8));
+         while (read_gpio(GPIOA, GPIO_PIN0)) ;
+         write0_gpio(GPIOE, GPIO_PINS(15, 9));
       }
 
       for (uint8_t rotate = 0; rotate < 4; ++rotate) {
@@ -72,6 +72,6 @@ int main(void)
       if (chr == 127) chr = 32;
 
       start_systick();
-      while (!isexpired_systick() && read_gpio(GPIO_PORTA, GPIO_PIN0) == 0) ;
+      while (!isexpired_systick() && read_gpio(GPIOA, GPIO_PIN0) == 0) ;
    }
 }

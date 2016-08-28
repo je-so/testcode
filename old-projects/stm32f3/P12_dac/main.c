@@ -133,34 +133,34 @@ void systick_interrupt(void)
 */
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch+audio-out*/|GPIO_PORTE_BIT/*led*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch+audio-out*/|GPIOE_BIT/*led*/);
    enable_dac_clockcntrl();
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
    // Wichtig: Zuerst IOPIN auf analog umschalten, damit keine parasitären Ströme fliessen
-   config_analog_gpio(GPIO_PORTA, GPIO_PIN4);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_analog_gpio(GPIOA, GPIO_PIN4);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
    config_dac(DAC1, dac_channel_1, daccfg_DISABLE_TRIGGER|daccfg_ENABLE_CHANNEL);
    if (isenabled_dac(DAC1, dac_channel_1) != 1
       || isenabled_dac(DAC1, dac_channel_2) != 0
       || isenabled_dac(DAC1, dac_channel_DUAL) != 0) {
       // error
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
    }
 
    config_systick((8000000+11025/2) / 11025, systickcfg_CORECLOCK|systickcfg_INTERRUPT);
 
-   write1_gpio(GPIO_PORTE, GPIO_PIN8);
+   write1_gpio(GPIOE, GPIO_PIN8);
 
    while (1) {
-      if (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) {
+      if (read_gpio(GPIOA, GPIO_PIN0) == 1) {
          stop_systick();
          counter = 0;
          soundnr = 0;
          start_systick();
-         write1_gpio(GPIO_PORTE, GPIO_PIN9);
-         while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 1) ;
-         write0_gpio(GPIO_PORTE, GPIO_PIN9);
+         write1_gpio(GPIOE, GPIO_PIN9);
+         while (read_gpio(GPIOA, GPIO_PIN0) == 1) ;
+         write0_gpio(GPIOE, GPIO_PIN9);
       }
    }
 

@@ -57,13 +57,9 @@
 #define CORTEXM4_MC_SYSTICK_HEADER
 
 // == exported Peripherals/HW-Units
+#define hSYSTICK    ((core_systick_t*) HW_REGISTER_BASEADDR_SYSTICK)
 
 // == exported types
-
-typedef enum systick_clock_e {
-   systick_clock_OTHER = 0, /* Use vendor specific reference clock (AHB/8 for STM32F303xC) */
-   systick_clock_CORE       /* use core clock the AHB Bus and the processor runs with */
-} systick_clock_e;
 
 typedef enum systickcfg_e {
    // 1. -- select one of --
@@ -80,7 +76,9 @@ static inline int config_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/, sy
 static inline int setperiod_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/);
 static inline uint32_t period_systick(void);
 static inline uint32_t value_systick(void);
-static inline unsigned isexpired_systick(void);
+static inline int isexpired_systick(void);
+static inline int isstarted_systick(void);
+static inline int isenabled_interrupt_systick(void);
 static inline void enable_interrupt_systick(void);
 static inline void disable_interrupt_systick(void);
 static inline void stop_systick(void);
@@ -89,35 +87,15 @@ static inline void continue_systick(void);
 
 // == definitions
 
-// === Register der core hwunit SysTick
-
-/* Registeroffset (CTRL) Control and Status Register von core hwunit SysTick */
-#define HW_REGISTER_OFFSET_SYSTICK_CTRL    0x000
-/* Registeroffset (LOAD) Reload Value Register (24 Bit) von core hwunit SysTick */
-#define HW_REGISTER_OFFSET_SYSTICK_LOAD    0x004
-/* Registeroffset (VAL) Current Value Register (24 Bit) von core hwunit SysTick */
-#define HW_REGISTER_OFFSET_SYSTICK_VAL     0x008
-
-// === Bits der SysTick Register
-
-#define HW_REGISTER_BIT_SYSTICK_CTRL_COUNTFLAG  (1u << 16)  // Returns 1 if timer counted to 0 since last time this was read.
-#define HW_REGISTER_BIT_SYSTICK_CTRL_CLKSOURCE  (1u << 2)   // Clock source selection: 0: AHB/8 ; 1: Processor clock (AHB)
-#define HW_REGISTER_BIT_SYSTICK_CTRL_CLKSOURCE_POS 2u
-#define HW_REGISTER_BIT_SYSTICK_CTRL_TICKINT    (1u << 1)   // 1: enable SysTick exception request
-#define HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE     (1u << 0)   // 1: Counter enabled
-
-#define HW_REGISTER_BIT_SYSTICK_LOAD_RELOAD_POS    0u
-#define HW_REGISTER_BIT_SYSTICK_LOAD_RELOAD_BITS   0x00ffffff
-#define HW_REGISTER_BIT_SYSTICK_LOAD_RELOAD_MASK   HW_REGISTER_MASK(SYSTICK, LOAD, RELOAD)
 
 // section: inline implementation
 
 static inline void assert_config_systick(void)
 {
    static_assert(systickcfg_CORECLOCKDIV8 == 0);
-   static_assert(systickcfg_CORECLOCK     == HW_REGISTER_BIT_SYSTICK_CTRL_CLKSOURCE);
-   static_assert(systickcfg_INTERRUPT   == HW_REGISTER_BIT_SYSTICK_CTRL_TICKINT);
-   static_assert(systickcfg_START      == HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE);
+   static_assert(systickcfg_CORECLOCK  == (uint32_t) HW_BIT(SYSTICK, CSR, CLKSOURCE));
+   static_assert(systickcfg_INTERRUPT  == (uint32_t) HW_BIT(SYSTICK, CSR, TICKINT));
+   static_assert(systickcfg_START      == (uint32_t) HW_BIT(SYSTICK, CSR, ENABLE));
 }
 
 static inline int config_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/, systickcfg_e config)
@@ -126,10 +104,10 @@ static inline int config_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/, sy
    if (ticks == 0 || (ticks & 0xff000000) != 0) {
       return EINVAL;
    }
-   HW_REGISTER(SYSTICK, CTRL) = 0;  // disable + default config values
-   HW_REGISTER(SYSTICK, LOAD) = ticks;
-   HW_REGISTER(SYSTICK, VAL)  = 0; // reset counter ==> ensure full period before expiration
-   HW_REGISTER(SYSTICK, CTRL) = (uint32_t) (config);
+   hSYSTICK->csr = 0;  // disable + default config values
+   hSYSTICK->rvr = ticks;
+   hSYSTICK->cvr = 0;  // reset counter ==> ensure full period before expiration
+   hSYSTICK->csr = (uint32_t) (config);
    return 0;
 }
 
@@ -140,20 +118,21 @@ static inline int config_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/, sy
 static inline int setperiod_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/)
 {
    uint32_t ticks = nrticks_per_period-1;
-   if (ticks == 0 || (ticks & ~HW_REGISTER_BIT_SYSTICK_LOAD_RELOAD_BITS) != 0) return EINVAL;
-   HW_REGISTER(SYSTICK, LOAD) = ticks; // HW_REGISTER_BIT_SYSTICK_LOAD_RELOAD_POS == 0
+   if (ticks == 0 || (ticks & ~HW_BIT(SYSTICK, RVR, RELOAD_MAX)) != 0) return EINVAL;
+   static_assert( 0 == HW_BIT(SYSTICK, RVR, RELOAD_POS));
+   hSYSTICK->rvr = ticks;
    return 0;
 }
 
 static inline uint32_t period_systick(void)
 {
-   return HW_REGISTER(SYSTICK, LOAD) + 1;
+   return hSYSTICK->rvr + 1;
 }
 
 /* Liest den aktuellen Zählerstand aus. Läuft von period_systick()-1 bis 0. */
 static inline uint32_t value_systick(void)
 {
-   return HW_REGISTER(SYSTICK, VAL);
+   return hSYSTICK->cvr;
 }
 
 /* function: isexpired_systick
@@ -167,36 +146,46 @@ static inline uint32_t value_systick(void)
  * Returns:
  * 0 - System Timer nicht abgelaufen.
  * 1 - System Timer abgelaufen. Flag, welches das Ende der Periode anzeigt, wurde zurückgesetzt. */
-static inline unsigned isexpired_systick(void)
+static inline int isexpired_systick(void)
 {
-   return (HW_REGISTER(SYSTICK, CTRL) / HW_REGISTER_BIT_SYSTICK_CTRL_COUNTFLAG) & 1u;
+   return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, COUNTFLAG_POS)) & 1;
+}
+
+static inline int isstarted_systick(void)
+{
+   return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, ENABLE_POS)) & 1;
+}
+
+static inline int isenabled_interrupt_systick(void)
+{
+   return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, TICKINT_POS)) & 1;
 }
 
 static inline void enable_interrupt_systick(void)
 {
-   HW_REGISTER(SYSTICK, CTRL) |= HW_REGISTER_BIT_SYSTICK_CTRL_TICKINT;
+   hSYSTICK->csr |= HW_BIT(SYSTICK, CSR, TICKINT);
 }
 
 static inline void disable_interrupt_systick(void)
 {
-   HW_REGISTER(SYSTICK, CTRL) &= ~HW_REGISTER_BIT_SYSTICK_CTRL_TICKINT;
+   hSYSTICK->csr &= ~HW_BIT(SYSTICK, CSR, TICKINT);
 }
 
 static inline void stop_systick(void)
 {
-   HW_REGISTER(SYSTICK, CTRL) &= ~HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE;
+   hSYSTICK->csr &= ~HW_BIT(SYSTICK, CSR, ENABLE);
 }
 
 static inline void start_systick(void)
 {
-   HW_REGISTER(SYSTICK, CTRL) &= ~HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE; // disable
-   HW_REGISTER(SYSTICK, VAL)   = 0; // reset counter ==> ensure full period before expiration
-   HW_REGISTER(SYSTICK, CTRL) |= HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE; // enable
+   hSYSTICK->csr &= ~HW_BIT(SYSTICK, CSR, ENABLE);   // disable
+   hSYSTICK->cvr  = 0;                               // reset counter ==> ensure full period before expiration
+   hSYSTICK->csr |= HW_BIT(SYSTICK, CSR, ENABLE);    // enable
 }
 
 static inline void continue_systick(void)
 {
-   HW_REGISTER(SYSTICK, CTRL) |= HW_REGISTER_BIT_SYSTICK_CTRL_ENABLE; // enable without reset of counter
+   hSYSTICK->csr |= HW_BIT(SYSTICK, CSR, ENABLE);    // enable without reset of counter
 }
 
 #endif

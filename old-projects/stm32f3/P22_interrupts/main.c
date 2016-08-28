@@ -1,17 +1,26 @@
 #include "konfig.h"
 
-static volatile uint32_t s_lednr1;
-static volatile uint32_t s_lednr2;
+#define SWITCH_PORT     HW_KONFIG_USER_SWITCH_PORT
+#define SWITCH_PORT_BIT HW_KONFIG_USER_SWITCH_PORT_BIT
+#define SWITCH_PIN      HW_KONFIG_USER_SWITCH_PIN
+#define LED_PORT        HW_KONFIG_USER_LED_PORT
+#define LED_PORT_BIT    HW_KONFIG_USER_LED_PORT_BIT
+#define LED_PINS        HW_KONFIG_USER_LED_PINS
+
 static volatile uint32_t s_counter6;
 static volatile uint32_t s_counter7;
+volatile const char     *filename/*set by assert_failed_exception*/;
+volatile int             linenr/*set by assert_failed_exception*/;
 
-void assert_failed_exception(const char *filename, int linenr)
+void assert_failed_exception(const char *_filename, int _linenr)
 {
+   filename = _filename;
+   linenr   = _linenr;
    setsysclock_clockcntrl(clock_INTERNAL);
    while (1) {
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(LED_PORT, LED_PINS);
       for (volatile int i = 0; i < 80000; ++i) ;
-      write_gpio(GPIO_PORTE, GPIO_PIN15, GPIO_PINS(15,8));
+      write_gpio(LED_PORT, GPIO_PIN15, LED_PINS);
       for (volatile int i = 0; i < 80000; ++i) ;
    }
 }
@@ -23,29 +32,34 @@ void timer6_dac_interrupt(void)
 
 void timer7_interrupt(void)
 {
-   clear_isexpired_basictimer(TIMER7); // ackn. peripheral
+   clear_expired_basictimer(TIMER7); // ackn. peripheral
    ++s_counter7;
 }
 
 static void switch_led(void)
 {
-   write0_gpio(GPIO_PORTE, GPIO_PIN(8 + s_lednr2)|GPIO_PIN(8 + s_lednr1));
-   ++ s_lednr1;
-   -- s_lednr2;
-   if (s_lednr1 >= 8) s_lednr1 = 0;
-   if (s_lednr2 >= 8) s_lednr2 = 7;
-   write1_gpio(GPIO_PORTE, GPIO_PIN(8 + s_lednr1)|GPIO_PIN(8 + s_lednr2));
+   static uint32_t lednr1;
+   static uint32_t lednr2;
+   static uint32_t counter1;
+   static uint32_t counter2;
+   uint16_t off = GPIO_PIN(8 + lednr2) | GPIO_PIN(8 + lednr1);
+   static_assert(LED_PINS == GPIO_PINS(15,8));
+   counter1 = (counter1 + 1) % 2;
+   counter2 = (counter2 + 1) % 3;
+   lednr1 = (lednr1 + (counter1 == 0)) % 8;
+   lednr2 = (lednr2 + (counter2 == 0)) % 8;
+   write_gpio(LED_PORT, GPIO_PIN(8 + lednr1) | GPIO_PIN(8 + lednr2), off);
    if (getHZ_clockcntrl() > 8000000) {
-      for (volatile int i = 0; i < 250000; ++i) ;
+      for (volatile int i = 0; i < 100000; ++i) ;
    } else {
-      for (volatile int i = 0; i < 50000; ++i) ;
+      for (volatile int i = 0; i < 20000; ++i) ;
    }
 }
 
 /* Dieses Programm ist ein reines Testprogramm für NVIC Interrupts.
  *
- * Es werden Funktionen für normale Interrupts wie setpriority_interrupt_nvic, enable_interrupt_nvic,
- * generate_interrupt_nvic use. getestet.
+ * Es werden Funktionen für normale Interrupts wie setpriority_interrupt, enable_interrupt,
+ * generate_interrupt use. getestet.
  *
  * Nach jedem ausgeführten Test werden zwei User-LED gegenläufig weiter im Kreis bewegt.
  *
@@ -69,158 +83,147 @@ static void switch_led(void)
  */
 int main(void)
 {
+   enable_gpio_clockcntrl(SWITCH_PORT_BIT|LED_PORT_BIT);
    enable_basictimer_clockcntrl(TIMER7_BIT);
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*user-switch*/|GPIO_PORTE_BIT/*user-LEDs*/);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_input_gpio(SWITCH_PORT, SWITCH_PIN, GPIO_PULL_OFF);
+   config_output_gpio(LED_PORT, LED_PINS);
 
-   s_lednr1 = 3;  // green LED is starting point
-   s_lednr2 = 3;  // green LED is starting point
-   switch_led();
+   for (;;) {
 
-   for (unsigned clock = 0; 1/*repeat forever*/; ++clock) {
-
-      if ((clock&1) == 0) {
+      if (getHZ_clockcntrl() > 8000000) {
          setsysclock_clockcntrl(clock_INTERNAL/*8MHz*/);
       } else {
          setsysclock_clockcntrl(clock_PLL/*72MHz*/);
       }
 
+      switch_led();
+
       // TEST isenabled_interrupt_nvic EINVAL
       assert( 0 == isenabled_interrupt_nvic(0));
       assert( 0 == isenabled_interrupt_nvic(16-1));
-      assert( 0 == isenabled_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      assert( 0 == isenabled_interrupt_nvic(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // TEST enable_interrupt_nvic EINVAL
-      assert( EINVAL == enable_interrupt_nvic(0));
-      assert( EINVAL == enable_interrupt_nvic(16-1));
-      assert( EINVAL == enable_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      // TEST enable_interrupt EINVAL
+      assert( EINVAL == enable_interrupt(0));
+      assert( EINVAL == enable_interrupt(16-1));
+      assert( EINVAL == enable_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // TEST disable_interrupt_nvic EINVAL
-      assert( EINVAL == disable_interrupt_nvic(0));
-      assert( EINVAL == disable_interrupt_nvic(16-1));
-      assert( EINVAL == disable_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      // TEST disable_interrupt EINVAL
+      assert( EINVAL == disable_interrupt(0));
+      assert( EINVAL == disable_interrupt(16-1));
+      assert( EINVAL == disable_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // TEST is_interrupt_nvic EINVAL
-      assert( 0 == is_interrupt_nvic(0));
-      assert( 0 == is_interrupt_nvic(16-1));
-      assert( 0 == is_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      // TEST is_interrupt EINVAL
+      assert( 0 == is_interrupt(0));
+      assert( 0 == is_interrupt(16-1));
+      assert( 0 == is_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // TEST generate_interrupt_nvic EINVAL
-      assert( EINVAL == generate_interrupt_nvic(0));
-      assert( EINVAL == generate_interrupt_nvic(16-1));
-      assert( EINVAL == generate_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      // TEST generate_interrupt EINVAL
+      assert( EINVAL == generate_interrupt(0));
+      assert( EINVAL == generate_interrupt(16-1));
+      assert( EINVAL == generate_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // TEST clear_interrupt_nvic EINVAL
-      assert( EINVAL == clear_interrupt_nvic(0));
-      assert( EINVAL == clear_interrupt_nvic(16-1));
-      assert( EINVAL == clear_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      // TEST clear_interrupt EINVAL
+      assert( EINVAL == clear_interrupt(0));
+      assert( EINVAL == clear_interrupt(16-1));
+      assert( EINVAL == clear_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
-      // Test setpriority_interrupt_nvic EINVAL
-      assert( EINVAL == setpriority_interrupt_nvic(0, interrupt_priority_HIGH));
-      assert( EINVAL == setpriority_interrupt_nvic(16-1, interrupt_priority_HIGH));
-      assert( EINVAL == setpriority_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1, interrupt_priority_HIGH));
+      // Test setpriority_interrupt EINVAL
+      assert( EINVAL == setpriority_interrupt(0, interrupt_priority_HIGH));
+      assert( EINVAL == setpriority_interrupt(16-1, interrupt_priority_HIGH));
+      assert( EINVAL == setpriority_interrupt(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1, interrupt_priority_HIGH));
 
       // Test getpriority_interrupt_nvic EINVAL
       assert( 255 == getpriority_interrupt_nvic(0));
       assert( 255 == getpriority_interrupt_nvic(16-1));
-      assert( 255 == getpriority_interrupt_nvic(HW_KONFIG_NVIC_EXCEPTION_MAXNR+1));
+      assert( 255 == getpriority_interrupt_nvic(HW_KONFIG_NVIC_INTERRUPT_MAXNR+1));
 
       // TEST Interrupt enable
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
          assert( ! isenabled_interrupt_nvic(i));
-         assert( 0 == enable_interrupt_nvic(i));
+         assert( 0 == enable_interrupt(i));
          assert( 1 == isenabled_interrupt_nvic(i));
       }
 
       // TEST Interrupt disable
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
          assert(   isenabled_interrupt_nvic(i));
-         assert( 0 == disable_interrupt_nvic(i));
+         assert( 0 == disable_interrupt(i));
          assert( ! isenabled_interrupt_nvic(i));
       }
 
-      // TEST generate_interrupt_nvic
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
-         assert( ! is_interrupt_nvic(i));
-         assert( 0 == generate_interrupt_nvic(i));
-         assert(   is_interrupt_nvic(i));
+      // TEST generate_interrupt
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
+         assert( ! is_interrupt(i));
+         assert( 0 == generate_interrupt(i));
+         assert(   is_interrupt(i));
       }
 
-      // TEST clear_interrupt_nvic
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
-         assert(   is_interrupt_nvic(i));
-         assert( 0 == clear_interrupt_nvic(i));
-         assert( ! is_interrupt_nvic(i));
+      // TEST clear_interrupt
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
+         assert(   is_interrupt(i));
+         assert( 0 == clear_interrupt(i));
+         assert( ! is_interrupt(i));
       }
 
       // TEST interrupt_TIMER6_DAC execution
-      switch_led();
-      assert( 0 == generate_interrupt_nvic(interrupt_TIMER6_DAC));
-      assert( 1 == is_interrupt_nvic(interrupt_TIMER6_DAC));
+      assert( 0 == generate_interrupt(interrupt_TIMER6_DAC));
+      assert( 1 == is_interrupt(interrupt_TIMER6_DAC));
       assert( 0 == s_counter6);  // not executed
       __asm( "sev\nwfe\n");      // clear event flag
-      assert( 0 == enable_interrupt_nvic(interrupt_TIMER6_DAC));
+      assert( 0 == enable_interrupt(interrupt_TIMER6_DAC));
       for (volatile int i = 0; i < 1000; ++i) ;
-      assert( 0 == is_interrupt_nvic(interrupt_TIMER6_DAC));
+      assert( 0 == is_interrupt(interrupt_TIMER6_DAC));
       assert( 1 == s_counter6);  // executed
-      assert( 0 == disable_interrupt_nvic(interrupt_TIMER6_DAC));
+      assert( 0 == disable_interrupt(interrupt_TIMER6_DAC));
       __asm( "wfe\n");           // interrupt exit sets event flag ==> wfe returns immediately
       s_counter6 = 0;
 
       // TEST interrupt_TIMER7 execution
-      switch_led();
-      assert( 0 == is_interrupt_nvic(interrupt_TIMER7));
-      assert( 0 == enable_interrupt_nvic(interrupt_TIMER7));
+      assert( 0 == is_interrupt(interrupt_TIMER7));
+      assert( 0 == enable_interrupt(interrupt_TIMER7));
       assert( 0 == config_basictimer(TIMER7, 10000, 1, basictimercfg_ONCE|basictimercfg_INTERRUPT));
       assert( 0 == s_counter7); // not executed
       start_basictimer(TIMER7);
       assert( isstarted_basictimer(TIMER7));
       wait_for_interrupt();
-      assert( 0 == is_interrupt_nvic(interrupt_TIMER7));
+      assert( 0 == is_interrupt(interrupt_TIMER7));
       assert( 1 == s_counter7); // executed
-      assert( 0 == disable_interrupt_nvic(interrupt_TIMER7));
+      assert( 0 == disable_interrupt(interrupt_TIMER7));
       s_counter7 = 0;
 
-      // TEST setpriority_interrupt_nvic
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
+      // TEST setpriority_interrupt
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
          const uint8_t L = interrupt_priority_LOW;
          assert( 0 == getpriority_interrupt_nvic(i)); // default after reset
-         assert( 0 == setpriority_interrupt_nvic(i, L));
+         assert( 0 == setpriority_interrupt(i, L));
          assert( L == getpriority_interrupt_nvic(i)); // LOW priority set
       }
 
       // TEST getpriority_interrupt_nvic
-      switch_led();
-      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_EXCEPTION_MAXNR; ++i) {
+      for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
          const uint8_t L = interrupt_priority_LOW;
          assert( L == getpriority_interrupt_nvic(i)); // default after reset
-         assert( 0 == setpriority_interrupt_nvic(i, interrupt_priority_HIGH));
+         assert( 0 == setpriority_interrupt(i, interrupt_priority_HIGH));
          assert( 0 == getpriority_interrupt_nvic(i)); // HIGH priority set
       }
 
-      // TEST setpriority_interrupt_nvic + setbasepriority_interrupt + interrupt_TIMER6_DAC
-      switch_led();
-      assert( 0 == setpriority_interrupt_nvic(interrupt_TIMER6_DAC, 1));
-      setbasepriority_interrupt(1); // inhibit all interrupts with priority lower or equal than 1
-      assert( 0 == generate_interrupt_nvic(interrupt_TIMER6_DAC));
-      assert( 1 == is_interrupt_nvic(interrupt_TIMER6_DAC));
-      assert( 0 == enable_interrupt_nvic(interrupt_TIMER6_DAC));
+      // TEST setprioritymask_interrupt: interrupt_TIMER6_DAC
+      assert( 0 == setpriority_interrupt(interrupt_TIMER6_DAC, 1));
+      setprioritymask_interrupt(1); // inhibit all interrupts with priority lower or equal than 1
+      assert( 0 == generate_interrupt(interrupt_TIMER6_DAC));
+      assert( 1 == is_interrupt(interrupt_TIMER6_DAC));
+      assert( 0 == enable_interrupt(interrupt_TIMER6_DAC));
       assert( 0 == s_counter6); // not executed
       for (volatile int i = 0; i < 1000; ++i) ;
       assert( 0 == s_counter6); // not executed
-      assert( 1 == is_interrupt_nvic(interrupt_TIMER6_DAC));
-      assert( 0 == setpriority_interrupt_nvic(interrupt_TIMER6_DAC, 0)); // set priority higher than 1
+      assert( 1 == is_interrupt(interrupt_TIMER6_DAC));
+      assert( 0 == setpriority_interrupt(interrupt_TIMER6_DAC, 0)); // set priority higher than 1
       for (volatile int i = 0; i < 1000; ++i) ;
       assert( 1 == s_counter6); // executed
-      assert( 0 == is_interrupt_nvic(interrupt_TIMER6_DAC));
-      assert( 0 == disable_interrupt_nvic(interrupt_TIMER6_DAC));
-      setbasepriority_interrupt(0/*off*/);
+      assert( 0 == is_interrupt(interrupt_TIMER6_DAC));
+      assert( 0 == disable_interrupt(interrupt_TIMER6_DAC));
+      setprioritymask_interrupt(0/*off*/);
       s_counter6 = 0;
 
    }

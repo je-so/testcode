@@ -21,7 +21,7 @@
 
    In diesem Moment wird ein Update-Event ausgelöst. Dieses setzt das Interrupt-Flag
    des Timers, das zur Erkennung eines Überlaufs und des damit Zusammenhängenden Zurücksetzens
-   auf 0 dient. Dieses Flag muss nach dem Lesen explizit mit clear_isexpired_basictimer
+   auf 0 dient. Dieses Flag muss nach dem Lesen explizit mit clear_expired_basictimer
    zurückgesetzt werden.
 
    Wurde auch die Interruptunterstützung eingeschaltet mittels enable_interrupt_basictimer
@@ -30,7 +30,7 @@
    des Cortex-M4 µControllers und setzt dessen Interruptflag interrupt_TIMER6_DAC bzw. interrupt_TIMER7.
 
    Der Interrupt kann mittels den Funktionen timer6_dac_interrupt bzw. timer7_interrupt behandelt werden.
-   Innerhalb dieser Funktionen *muss* spätestens mit clear_isexpired_basictimer der Interrupt bestätigt
+   Innerhalb dieser Funktionen *muss* spätestens mit clear_expired_basictimer der Interrupt bestätigt
    oder mindestens disable_interrupt_basictimer aufgerufen werden, damit es zu keiner Endlosinterrupt-
    schleife kommt.
 
@@ -65,7 +65,7 @@
    > start_basictimer(TIMER6);
    > while (!isexpired_basictimer()) ; // Warte 65536 Buszyklen
    > // Timer hat sich selbst abgeschaltet
-   > clear_isexpired_basictimer();     // Muss manuall gelöscht werden
+   > clear_expired_basictimer();     // Muss manuall gelöscht werden
 
    > enable_timer_clockcntrl(timernr_6);  // schalte Taktung
    > int err = config_basictimer(timer, 65536, 1, basictimercfg_REPEAT);
@@ -145,7 +145,7 @@ typedef enum basictimer_bits_e {
  *                                 Wenn der entsprechende Interrupt am NVIC angeschaltet wurde (interrupt_TIMER6_DAC bzw.
  *                                 interrupt_TIMER7) und die Priorität ausreichend hoch ist, wird die Interruptserviceroutine
  *                                 (timer6_dac_interrupt bzw. timer7_interrupt) aufgerufen. Diese darf nicht vergessen,
- *                                 vor ihrem Ende clear_isexpired_basictimer aufzurufen, sonst wird nach ihrem verlassen,
+ *                                 vor ihrem Ende clear_expired_basictimer aufzurufen, sonst wird nach ihrem verlassen,
  *                                 der Interrupt sofort wieder am NVIC aktiv gesetzt.
  * basictimercfg_DMA             - Meldet das interne Updateevent an den DMA-Controller, z.B. für Memmory-Memory Transfers.
  *                                 Zuvor muss der DMA-Controller initialisiert worden sein.
@@ -179,7 +179,7 @@ static inline int config_basictimer(volatile struct basictimer_t *timer, uint32_
 static inline basictimercfg_e getconfig_basictimer(const volatile struct basictimer_t *timer);
 static inline int update_basictimer(volatile struct basictimer_t *timer, uint32_t period/*2..65536*/, uint32_t prescale/*1..65536*/);
 static inline int isexpired_basictimer(const volatile struct basictimer_t *timer);
-static inline void clear_isexpired_basictimer(volatile struct basictimer_t *timer);
+static inline void clear_expired_basictimer(volatile struct basictimer_t *timer);
 static inline uint16_t value_basictimer(const volatile struct basictimer_t *timer);
 static inline uint32_t exvalue_basictimer(const volatile struct basictimer_t *timer);
 static inline int isenabled_interrupt_basictimer(const volatile struct basictimer_t *timer);
@@ -474,7 +474,7 @@ static inline int isexpired_basictimer(const basictimer_t *timer)
 /* Löscht das "Expiration"-Flag, das angibt, ob der Timer abgelaufen ist,
  * d.h. eine Timerperiode*Prescaler Clockticks vergangen sind.
  */
-static inline void clear_isexpired_basictimer(basictimer_t *timer)
+static inline void clear_expired_basictimer(basictimer_t *timer)
 {
    timer->sr = 0; // clear pending interrupt
 }

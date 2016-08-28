@@ -19,35 +19,35 @@ int main(void)
    uint16_t yellow_led = GPIO_PIN(14);
    uint16_t green_led = GPIO_PIN(15);
 
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*switch*/|GPIO_PORTE_BIT/*led*/|GPIO_PORTC_BIT/*uart*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*switch*/|GPIOE_BIT/*led*/|GPIOC_BIT/*uart*/);
    enable_uart_clockcntrl(UART4_BIT);
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
-   config_function_gpio(GPIO_PORTC, GPIO_PINS(11,10), GPIO_FUNCTION_5/*select UART4*/);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
+   config_function_gpio(GPIOC, GPIO_PINS(11,10), GPIO_FUNCTION_5/*select UART4*/);
 
    // yellow led signals ready
-   write1_gpio(GPIO_PORTE, yellow_led);
+   write1_gpio(GPIOE, yellow_led);
    // wait until user button pressed
-   while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 0) ;
+   while (read_gpio(GPIOA, GPIO_PIN0) == 0) ;
    // turn off yellow
-   write0_gpio(GPIO_PORTE, yellow_led);
+   write0_gpio(GPIOE, yellow_led);
 
    if (config_uart(UART4, 8, 0, 2, 115200)) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    if (iswritepossible_uart(UART4) == 0
       || isreceiving_uart(UART4)) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
    write_uart(UART4, 0x0ff);
    // check data register not yet transfered into shift register
    if (iswritepossible_uart(UART4) != 0) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    // wait until uart is receiving something
@@ -58,14 +58,14 @@ int main(void)
       || iswritepossible_uart(UART4) == 0
       || ! issending_uart(UART4)) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    while (isreadpossible_uart(UART4) == 0) ; // wait until data reveived
    // check no ongoing transfer on RX line
    if (isreceiving_uart(UART4)) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    uint32_t data = read_uart(UART4);
@@ -73,23 +73,23 @@ int main(void)
    // check read buffer is empty
    if (isreadpossible_uart(UART4) != 0) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    // check no read error
    if (errorflags_uart(UART4) == 0) {
       // signal error
-      write1_gpio(GPIO_PORTE, red_led);
+      write1_gpio(GPIOE, red_led);
    }
 
    while (issending_uart(UART4)) ; // check that sender stops some time after sending last byte
 
    if (data == 0x0ff) {
       // turn on green LED to signal correct byte received
-      write1_gpio(GPIO_PORTE, green_led);
+      write1_gpio(GPIOE, green_led);
    } else {
       // turn on yellow to signal received data
-      write1_gpio(GPIO_PORTE, yellow_led);
+      write1_gpio(GPIOE, yellow_led);
    }
 
    while (1) ;

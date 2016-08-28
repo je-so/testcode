@@ -319,13 +319,13 @@ static inline int  isenabled_adc(volatile struct adc_t *adc);
 static inline void setsampletime_adc(volatile struct adc_t *adc, adc_chan_e chan, adc_config_e time/*time&adc_config_MASK_SAMPLETIME*/);
 static inline adc_config_e getsampletime_adc(volatile struct adc_t *adc, adc_chan_e chan);
 static inline int  isoverflow_adc(const volatile struct adc_t *adc);
-static inline void clear_isoverflow_adc(volatile struct adc_t *adc);
+static inline void clear_overflow_adc(volatile struct adc_t *adc);
 // == reguläre Sequenz
 static inline void start_adc(volatile struct adc_t *adc);
 static inline void stop_adc(volatile struct adc_t *adc);
 static inline int  isstarted_adc(const volatile struct adc_t *adc);
 static inline int  iseos_adc(const volatile struct adc_t *adc);
-static inline void clear_iseos_adc(volatile struct adc_t *adc);
+static inline void clear_eos_adc(volatile struct adc_t *adc);
 static inline void config_single_adc(volatile struct adc_t *adc, adc_chan_e chan, adc_config_e config);
 static inline int  config_seq_adc(volatile struct adc_t *adc, uint32_t size_part/*1..8 or size_seq*/, uint32_t size_seq/*1..16*/, adc_chan_e chan[size_seq], adc_config_e config);
 static inline int  config_contseq_adc(volatile struct adc_t *adc, uint32_t size_seq/*1..16*/, adc_chan_e chan[size_seq], adc_config_e config);
@@ -341,8 +341,8 @@ static inline int  config_jseq_adc(volatile struct adc_t *adc, uint32_t size_par
 static inline uint32_t lenjseq_adc(const volatile struct adc_t *adc);
 static inline int  isjdata_adc(const volatile struct adc_t *adc);
 static inline int  isjeos_adc(const volatile struct adc_t *adc);
-static inline void clear_isjdata_adc(volatile struct adc_t *adc);
-static inline void clear_isjeos_adc(volatile struct adc_t *adc);
+static inline void clear_jdata_adc(volatile struct adc_t *adc);
+static inline void clear_jeos_adc(volatile struct adc_t *adc);
 static inline uint32_t readj_adc(volatile struct adc_t *adc, uint32_t seq_pos/*0..3*/);
 
 // == definitions
@@ -806,7 +806,7 @@ static inline int isoverflow_adc(const adc_t *adc)
 }
 
 /* Löscht Overflowflag. */
-static inline void clear_isoverflow_adc(adc_t *adc)
+static inline void clear_overflow_adc(adc_t *adc)
 {
    adc->isr = HW_REGISTER_BIT_ADC_ISR_OVR;
 }
@@ -937,8 +937,8 @@ static inline uint32_t lenseq_adc(const adc_t *adc)
 /* Zeigt an, dass der nächste Wert einer Wandlung aus dem dr Register gelesen werden kann.
  * Falls eine Sequenz weitere ADC-Kanäle umfasst, wird im Hintergrund der nächste Kanal-Pin
  * gewandelt. Das Lesen mittels read_adc löscht dieses Flag. Erfolgt eine erneute Wandlung
- * noch bevor dieses Flag gelöscht wurde (durch Lesen z.B. oder Schreiben des Bits HW_REGISTER_BIT_ADC_ISR_EOC
- * in das adc->isr Register), dann gibt es einen Overflow. */
+ * noch bevor dieses Flag gelöscht wurde (durch Aufruf von read_adc oder Schreiben des Bits
+ * HW_REGISTER_BIT_ADC_ISR_EOC in das adc->isr Register), dann gibt es einen Overflow. */
 static inline int isdata_adc(const adc_t *adc)
 {
    return (adc->isr & HW_REGISTER_BIT_ADC_ISR_EOC) / HW_REGISTER_BIT_ADC_ISR_EOC;
@@ -950,7 +950,7 @@ static inline int iseos_adc(const adc_t *adc)
 }
 
 /* Löscht End-Of-Sequence-Flag, das gesetzt wird, wenn der letzte Wert einer Sequenz konvertiert wurde. */
-static inline void clear_iseos_adc(adc_t *adc)
+static inline void clear_eos_adc(adc_t *adc)
 {
    adc->isr = HW_REGISTER_BIT_ADC_ISR_EOS;
 }
@@ -1089,12 +1089,12 @@ static inline int isjeos_adc(const adc_t *adc)
    return (adc->isr & HW_REGISTER_BIT_ADC_ISR_JEOS) / HW_REGISTER_BIT_ADC_ISR_JEOS;
 }
 
-static inline void clear_isjdata_adc(adc_t *adc)
+static inline void clear_jdata_adc(adc_t *adc)
 {
    adc->isr = HW_REGISTER_BIT_ADC_ISR_JEOC;
 }
 
-static inline void clear_isjeos_adc(adc_t *adc)
+static inline void clear_jeos_adc(adc_t *adc)
 {
    adc->isr = HW_REGISTER_BIT_ADC_ISR_JEOS;
 }

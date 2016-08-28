@@ -19,40 +19,40 @@
 
 int main(void)
 {
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT|GPIO_PORTE_BIT);
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   enable_gpio_clockcntrl(GPIOA_BIT|GPIOE_BIT);
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    uint16_t mask = GPIO_PINS(15,12);
    for (int i = 0; i < 10; ++i) {
-      write_gpio(GPIO_PORTE, mask, GPIO_PINS(15,8)&~mask);
+      write_gpio(GPIOE, mask, GPIO_PINS(15,8)&~mask);
       for (volatile int i = 0; i < 50000; ++i) ;
       mask >>= 1;
       mask = (mask & GPIO_PINS(15,8)) | ((mask & GPIO_PINS(7,0)) << 8);
    }
-   write_gpio(GPIO_PORTE, 0, GPIO_PINS(15,8));
+   write_gpio(GPIOE, 0, GPIO_PINS(15,8));
 
    /* Warte, bis User Button gedrückt */
-   while (read_gpio(GPIO_PORTA, GPIO_PIN0) == 0) ;
+   while (read_gpio(GPIOA, GPIO_PIN0) == 0) ;
 
    while (1) {
       for (int round = 0; round < 1; ++round) {
          for (int pin = 15; pin >= 8; --pin) {
-            write1_gpio(GPIO_PORTE, GPIO_PIN(pin));
+            write1_gpio(GPIOE, GPIO_PIN(pin));
             for (volatile int i = 0; i < 50000; ++i) ;
          }
          for (int pin = 8; pin <= 15; ++pin) {
-            write_gpio(GPIO_PORTE, 0, GPIO_PIN(pin)/*off*/);
+            write_gpio(GPIOE, 0, GPIO_PIN(pin)/*off*/);
             for (volatile int i = 0; i < 50000; ++i) ;
          }
       }
       for (int round = 0; round < 1; ++round) {
          for (int pin = 8; pin <= 15; ++pin) {
-            write_gpio(GPIO_PORTE, GPIO_PIN(pin)/*on*/, 0);
+            write_gpio(GPIOE, GPIO_PIN(pin)/*on*/, 0);
             for (volatile int i = 0; i < 50000; ++i) ;
          }
          for (int pin = 15; pin >= 8; --pin) {
-            write0_gpio(GPIO_PORTE, GPIO_PIN(pin));
+            write0_gpio(GPIOE, GPIO_PIN(pin));
             for (volatile int i = 0; i < 50000; ++i) ;
          }
       }

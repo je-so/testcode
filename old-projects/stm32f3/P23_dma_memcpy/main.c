@@ -38,9 +38,9 @@ void assert_failed_exception(const char *filename, int linenr)
 {
    setsysclock_clockcntrl(clock_INTERNAL);
    while (1) {
-      write1_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
-      write_gpio(GPIO_PORTE, GPIO_PIN15, GPIO_PINS(15,8));
+      write_gpio(GPIOE, GPIO_PIN15, GPIO_PINS(15,8));
       for (volatile int i = 0; i < 80000; ++i) ;
    }
 }
@@ -56,7 +56,7 @@ static void switch_led(void)
    counter2 = (counter2 + 1) % 3;
    lednr1 = (lednr1 + (counter1 == 0)) % 8;
    lednr2 = (lednr2 + (counter2 == 0)) % 8;
-   write_gpio(GPIO_PORTE, GPIO_PIN(8 + lednr1) | GPIO_PIN(8 + lednr2), off);
+   write_gpio(GPIOE, GPIO_PIN(8 + lednr1) | GPIO_PIN(8 + lednr2), off);
    if (getHZ_clockcntrl() > 8000000) {
       for (volatile int i = 0; i < 100000; ++i) ;
    } else {
@@ -112,16 +112,16 @@ int main(void)
    dma_t   *dma = DMA1;
 
    enable_dma_clockcntrl(DMA1_BIT|DMA2_BIT);
-   enable_gpio_clockcntrl(GPIO_PORTA_BIT/*user-switch*/|GPIO_PORTE_BIT/*user-LEDs*/);
+   enable_gpio_clockcntrl(GPIOA_BIT/*user-switch*/|GPIOE_BIT/*user-LEDs*/);
    enable_basictimer_clockcntrl(TIMER6_BIT);
 
-   config_input_gpio(GPIO_PORTA, GPIO_PIN0, GPIO_PULL_OFF);
-   config_output_gpio(GPIO_PORTE, GPIO_PINS(15,8));
+   config_input_gpio(GPIOA, GPIO_PIN0, GPIO_PULL_OFF);
+   config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    // Schalte alle DMA interrupts für jeden Kanal einzeln
    for (uint32_t i = 0; i < 7; ++i) {
-      enable_interrupt_nvic(interrupt_DMA1_CHANNEL1 + i);
-      if (i < 5) enable_interrupt_nvic(interrupt_DMA2_CHANNEL1 + i);
+      enable_interrupt(interrupt_DMA1_CHANNEL1 + i);
+      if (i < 5) enable_interrupt(interrupt_DMA2_CHANNEL1 + i);
    }
 
    // Test EINVAL
@@ -198,7 +198,7 @@ int main(void)
          assert( 1 == isstarted_basictimer(TIMER6));
          assert( i == counter_dma(DMA2, dma_channel_3));
          while (!isexpired_basictimer(TIMER6)) ;
-         clear_isexpired_basictimer(TIMER6);
+         clear_expired_basictimer(TIMER6);
          assert(queue.size == (i==1)+(i <= lengthof(romdata)/2+1));
       }
       stop_basictimer(TIMER6);
@@ -417,7 +417,7 @@ int main(void)
          assert( 1 == isstarted_basictimer(TIMER6));
          assert( i == counter_dma(DMA2, dma_channel_3));
          while (!isexpired_basictimer(TIMER6)) ;
-         clear_isexpired_basictimer(TIMER6);
+         clear_expired_basictimer(TIMER6);
       }
       // disable_dma: behält konfigurierte Werte
       disable_dma(DMA2, dma_channel_3);

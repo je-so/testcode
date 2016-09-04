@@ -70,18 +70,19 @@ void fault_interrupt(void)
       // d.h. beim Ausführen von "bx lr" wird aus dem Interrupt zurückgekehrt und
       // die Register r0-r3,r12,lr,pc,psr vom Stack gelesen und an der Adresse in pc
       // mit der Ausführung im Thread-Mode fortgefahren.
+      // stm = stmia, ldm = ldmia, (ia = increment after)
       __asm(   "ldr r0, =cpustate\n"
                "ldr r1, [r0], #4\n"
                "ldr r7, [r0], #4\n"
                "sub r1, #8*4\n"
                "mov sp, r1\n"
-               "ldmia r0!, {r1-r3,r12}\n"
-               "stm   sp, {r1-r3,r12}\n"
-               "ldm   r0, {r1-r3,r12}\n"
-               "add   r0, sp, #4*4\n"
-               "stm   r0, {r1-r3,r12}\n"
-               "mov   lr, #0xfffffff9\n"
-               "bx    lr\n"
+               "ldm r0!, {r1-r3,r12}\n" // copy regs {r0-r3}
+               "stm sp, {r1-r3,r12}\n"  // to stack
+               "ldm r0, {r1-r3,r12}\n"  // copy regs {r12,lr,pc,psr}
+               "add r0, sp, #4*4\n"     // r0 points to sp + #4*4
+               "stm r0, {r1-r3,r12}\n"  // to stack
+               "mov lr, #0xfffffff9\n"  // ret from interrupt
+               "bx  lr\n"
             );
    } else if (faultcount == 6) {
       clear_mpu(3, 1);
@@ -226,7 +227,7 @@ int main(void)
    if (nextfreeregion_mpu(0) != 3)   goto ONERR;
 
    // Sichere aktuellen Zustand der CPU in cpustate (Interrupt-kompatibel).
-   // Warum? Da der Stack nicht berschreibbar oder lesbar ist (MPU-Schutz)
+   // Warum? Da der Stack nicht beschreibbar oder lesbar ist (MPU-Schutz)
    // wird ein fault_interrupt ausgelöst, der aber die Register nicht auf den
    // Stack retten kann. Also nutzt in diesem Fall der fault_interrupt die
    // in cpustate geretteten Werte, um die Ausführung an der Stelle "next_pc: "

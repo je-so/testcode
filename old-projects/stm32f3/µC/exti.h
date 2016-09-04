@@ -110,7 +110,7 @@ static inline void clear_interrupts_exti(uint32_t bits/*bits of lines 0..31*/);
 static inline void generate_interrupts_exti(uint32_t bits/*bits of lines 0..31*/);
 static inline void clear_interrupt_exti(exti_line_e linenr);
 static inline void generate_interrupt_exti(exti_line_e linenr);
-static inline void set_edge_exti(exti_line_e linenr, bool isRising, bool isFalling);
+static inline void setedge_exti(exti_line_e linenr, bool isRising, bool isFalling);
 
 // == definitions
 typedef volatile struct exti_t {
@@ -302,7 +302,7 @@ static inline void generate_interrupt_exti(exti_line_e linenr)
    ENABLE_BIT_EXTI(swier1, linenr);
 }
 
-static inline void set_edge_exti(exti_line_e linenr, bool isRising, bool isFalling)
+static inline void setedge_exti(exti_line_e linenr, bool isRising, bool isFalling)
 {
    VALIDATE_EXTLINENR_EXTI(linenr);
    const uint32_t bit = 1u << (linenr&0x1f);

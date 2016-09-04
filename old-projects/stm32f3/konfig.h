@@ -15,8 +15,9 @@ void assert_failed_exception(const char *filename, int linenr); // implemented b
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "µC/core.h"
+#include "µC/atomic.h" // helper
 #include "µC/board.h"
+#include "µC/core.h"
 #include "µC/hwmap.h"
 #include "µC/debug.h"
 #include "µC/exti.h"

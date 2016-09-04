@@ -35,6 +35,7 @@ struct core_sys_t;
 // == exported functions
 static inline void waitevent_core(void);
 static inline void sendevent_core(void);
+static inline void reset_core(void);
 static inline void enable_fpu(int allowUnprivilegedAccess); // TODO: own module
 static inline void disable_fpu(void); // TODO: own module
 
@@ -78,7 +79,7 @@ static inline void disable_fpu(void); // TODO: own module
  * The name HW_BIT(BASE, REG, NAME) contains the bit-mask where every bit between MSBit and LSBit is 1 all other 0.
  * The name HW_BIT(BASE, REG, NAME_POS) contains the value LSBit which is the position of the first one bit in HW_BIT(BASE, REG, NAME).
  * The name HW_BIT(BASE, REG, NAME_MAX) contains the value HW_BIT(BASE, REG, NAME) shifted HW_BIT(BASE, REG, NAME_POS) bit positions to the right. */
-#define HW_DEF_BIT(BASE, REG, MSBit, LSBit, NAME) \
+#define HW_DEF_BIT(BASE, REG, NAME, MSBit, LSBit) \
          HW_REGISTER_BIT_##BASE##_##REG##_##NAME##_POS = LSBit, \
          HW_REGISTER_BIT_##BASE##_##REG##_##NAME##_MAX = ((((1u << ((MSBit) - HW_REGISTER_BIT_##BASE##_##REG##_##NAME##_POS))-1u)<<1u)+1u), \
          HW_REGISTER_BIT_##BASE##_##REG##_##NAME       = HW_REGISTER_BIT_##BASE##_##REG##_##NAME##_MAX << HW_REGISTER_BIT_##BASE##_##REG##_##NAME##_POS
@@ -135,29 +136,24 @@ typedef volatile struct core_systick_t {
 typedef volatile struct core_nvic_t {
    uint32_t       iser[8];      /* Interrupt Set Enable Register, rw, Offset: 0x000, Reset: 0x00000000
                                  * Enables, or reads the enable state of a group of interrupts.
-                                 * reg[n] bit[m] SETENA reads: 1: Interrupt (32*n+m) enabled. 0: Disabled. writes: 1: Enable interrupt. 0: No effect.
-                                 */
-   uint32_t       _reserved0[24];
+                                 * reg[n] bit[m] SETENA reads: 1: Interrupt (32*n+m) enabled. 0: Disabled. writes: 1: Enable interrupt. 0: No effect. */
+   uint32_t       _res0[24]; /*  */
    uint32_t       icer[8];      /* Interrupt Clear Enable Register, rw, Offset: 0x080, Reset: 0x00000000
                                  * Disables, or reads the enable state of a group of interrupts.
-                                 * reg[n] bit[m] CLRENA reads: 1: Interrupt (32*n+m) enabled. 0: Disabled. writes: 1: Disable interrupt. 0: No effect.
-                                 */
-   uint32_t       _reserved1[24];
+                                 * reg[n] bit[m] CLRENA reads: 1: Interrupt (32*n+m) enabled. 0: Disabled. writes: 1: Disable interrupt. 0: No effect. */
+   uint32_t       _res1[24]; /*  */
    uint32_t       ispr[8];      /* Interrupt Set Pending Register, rw, Offset: 0x100, Reset: 0x00000000
                                  * Changes interrupt status to pending, or shows the current pending status of a group of interrupts.
-                                 * reg[n] bit[m] SETPEND reads: 1: Interrupt (32*n+m) is pending. 0: Not pending. writes: 1: Changes interrupt state to pending. 0: No effect.
-                                 */
-   uint32_t       _reserved2[24];
+                                 * reg[n] bit[m] SETPEND reads: 1: Interrupt (32*n+m) is pending. 0: Not pending. writes: 1: Changes interrupt state to pending. 0: No effect. */
+   uint32_t       _res2[24]; /*  */
    uint32_t       icpr[8];      /* Interrupt Clear Pending Register, rw, Offset: 0x180, Reset: 0x00000000
                                  * Clears interrupt pending status, or shows the current pending status of a group of interrupts.
-                                 * reg[n] bit[m] CLRPEND reads: 1: Interrupt (32*n+m) is pending. 0: Not pending. writes: 1: Clears interrupt state to not pending. 0: No effect.
-                                 */
-   uint32_t       _reserved3[24];
+                                 * reg[n] bit[m] CLRPEND reads: 1: Interrupt (32*n+m) is pending. 0: Not pending. writes: 1: Clears interrupt state to not pending. 0: No effect. */
+   uint32_t       _res3[24]; /*  */
    uint32_t const iabr[8];      /* Interrupt Active Bit Register, ro, Offset: 0x200, Reset: 0x00000000
                                  * Shows whether interrupt is active (ISR is executed) of a group of interrupts.
-                                 * reg[n] bit[m] ACTIVE reads: 1: Interrupt (32*n+m) is active. 0: Not active.
-                                 */
-   uint32_t const _reserved4[56];
+                                 * reg[n] bit[m] ACTIVE reads: 1: Interrupt (32*n+m) is active. 0: Not active. */
+   uint32_t const _res4[56]; /*  */
    uint8_t        ipr[240];     /* Interrupt Priority Register, rw, Offset: 0x300, Reset: 0x00000000
                                  * Sets or reads interrupt priorities of a group of interrupts.
                                  * reg[n] bit[7..8-HW_KONFIG_NVIC_INTERRUPT_PRIORITY_NROFBITS] PRI rw: Priority of interrupt n.
@@ -166,114 +162,115 @@ typedef volatile struct core_nvic_t {
 } core_nvic_t;
 
 typedef volatile struct core_scb_t {
-   uint32_t const cpuid;        /* CPUID Base Register, ro, Offset: 0x000, Reset: IMP.DEF.
-                                 * The CPUID scheme provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t       icsr;         /* Interrupt Control and State Register, rw, Offset: 0x004, Reset:
-                                 * Provides pending state for NMI, PendSV and SysTick, nr of highest priority pending exception, whether there are preempted active exceptions.
-                                 */
-   uint32_t       vtor;         /* Vector Table Offset Register, rw, Offset: 0x008, Reset: 0x00000000
-                                 * Holds the vector table address aligned to 512 bytes.
-                                 */
-   uint32_t       aircr;        /* Application Interrupt and Reset Control Register, rw, Offset: 0x00C, Reset:
-                                 *
-                                 */
-   uint32_t       scr;          /* System Control Register, rw, Offset: 0x010, Reset: 0x00000000
-                                 *
-                                 */
-   uint32_t       ccr;          /* Configuration Control Register, rw, Offset: 0x014, Reset:
-                                 *
-                                 */
-   uint8_t        shpr[12];     /* System Handlers Priority Registers (4-7, 8-11, 12-15), rw, Offset: 0x018, Reset:
-                                 *
-                                 */
-   uint32_t       shcsr;        /* System Handler Control and State Register, rw, Offset: 0x024, Reset:
-                                 *
-                                 */
-   uint32_t       cfsr;         /* Configurable Fault Status Register, rw, Offset: 0x028, Reset:
-                                 *
-                                 */
-   uint32_t       hfsr;         /* HardFault Status Register, rw, Offset: 0x02C, Reset:
-                                 *
-                                 */
-   uint32_t       dfsr;         /* Debug Fault Status Register, rw, Offset: 0x030, Reset:
-                                 *
-                                 */
-   uint32_t       mmfar;        /* MemManage Fault Address Register, rw, Offset: 0x034, Reset:
-                                 */
-   uint32_t       bfar;         /* BusFault Address Register, rw, Offset: 0x038, Reset:
-                                 */
-   uint32_t       afsr;         /* Auxiliary Fault Status Register, rw, Offset: 0x03C, Reset:
-                                 */
-   uint32_t const pfr[2];       /* Processor Feature Register, rw, Offset: 0x040, Reset: IMP.DEF.
-                                 * Provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t const dfr;          /* Debug Feature Register, rw, Offset: 0x048, Reset: IMP.DEF.
-                                 * Provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t const afr;          /* Auxiliary Feature Register, ro, Offset: 0x04C, Reset: IMP.DEF.
-                                 * Provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t const mmfr[4];      /* Memory Model Feature Register, ro, Offset: 0x050, Reset: IMP.DEF.
-                                 * Provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t const isar[5];      /* Instruction Set Attributes Register, ro, Offset: 0x060, Reset: IMP.DEF.
-                                 * Provides a description of the features of an ARM processor implementation.
-                                 */
-   uint32_t const _reserved0[5];
-   uint32_t       cpacr;        /* Coprocessor Access Control Register, rw, Offset: 0x088, Reset:
-                                 * Specifies access privileges for coprocessors (FPU only).
-                                 */
+   uint32_t const cpuid;     /* CPUID Base Register, ro, Offset: 0x000, Reset: IMP.DEF.
+                              * The CPUID scheme provides a description of the features of an ARM processor implementation.
+                              */
+   uint32_t       icsr;      /* Interrupt Control and State Register, rw, Offset: 0x004, Reset:
+                              * Provides pending state for NMI, PendSV and SysTick, nr of highest priority pending exception, whether there are preempted active exceptions.
+                              */
+   uint32_t       vtor;      /* Vector Table Offset Register, rw, Offset: 0x008, Reset: 0x00000000
+                              * Holds the vector table address aligned to 512 bytes.
+                              */
+   uint32_t       aircr;     /* Application Interrupt and Reset Control Register, rw, Offset: 0x00C, Reset: 0xFA050000
+                              * Sets or returns interrupt control data.
+                              */
+   uint32_t       scr;       /* System Control Register, rw, Offset: 0x010, Reset: 0x00000000
+                              * Determines sleep mode(low power state) and pending wakeup events.
+                              */
+   uint32_t       ccr;       /* Configuration Control Register, rw, Offset: 0x014, Reset: 0x00000200
+                              * Configures behaviour of exc. handlers, trapping of divide by zero and unaligned accesses and unprivileged access STIR.
+                              */
+   uint8_t        shpr[12];  /* System Handlers Priority Registers (4-7, 8-11, 12-15), rw, Offset: 0x018, Reset: 0x00000000
+                              * Control the priority of the handlers for the system faults that have configurable priority.
+                              * Exceptions 1, 2, and 3, Reset, NMI, and HardFault, have fixed priorities.
+                              * Therefore, the first defined priority field is 4 that controls coreinterrupt_MPUFAULT exception.
+                              */
+   uint32_t       shcsr;     /* System Handler Control and State Register, rw, Offset: 0x024, Reset: 0x00000000
+                              * Controls and provides the active and pending status of system exceptions.
+                              */
+   uint32_t       cfsr;      /* Configurable Fault Status Register, rw, Offset: 0x028, Reset: 0x00000000
+                              *
+                              */
+   uint32_t       hfsr;      /* HardFault Status Register, rw, Offset: 0x02C, Reset: 0x00000000
+                              *
+                              */
+   uint32_t       dfsr;      /* Debug Fault Status Register, rw, Offset: 0x030, Reset:
+                              *
+                              */
+   uint32_t       mmfar;     /* MemManage Fault Address Register, rw, Offset: 0x034, Reset: Undefined
+                              */
+   uint32_t       bfar;      /* BusFault Address Register, rw, Offset: 0x038, Reset: Undefined
+                              */
+   uint32_t       afsr;      /* Auxiliary Fault Status Register, rw, Offset: 0x03C, Reset: Undefined
+                              */
+   uint32_t const pfr[2];    /* Processor Feature Register, rw, Offset: 0x040, Reset: IMP.DEF.
+                              * Provides a description of the features of an ARM processor implementation.
+                              */
+   uint32_t const dfr;       /* Debug Feature Register, rw, Offset: 0x048, Reset: IMP.DEF.
+                              * Provides a description of the features of an ARM processor implementation.
+                              */
+   uint32_t const afr;       /* Auxiliary Feature Register, ro, Offset: 0x04C, Reset: IMP.DEF.
+                              * Provides a description of the features of an ARM processor implementation.
+                              */
+   uint32_t const mmfr[4];   /* Memory Model Feature Register, ro, Offset: 0x050, Reset: IMP.DEF.
+                              * Provides a description of the features of an ARM processor implementation.
+                              */
+   uint32_t const isar[5];   /* Instruction Set Attributes Register, ro, Offset: 0x060, Reset: IMP.DEF.
+                              * Provides a description of the features of an ARM processor implementation. */
+   uint32_t const _res0[5];/* */
+   uint32_t       cpacr;     /* Coprocessor Access Control Register, rw, Offset: 0x088, Reset: 0x0000000
+                              * Specifies access privileges for coprocessors (FPU only).
+                              */
 } core_scb_t;
 
 typedef volatile struct core_mpu_t {
-                  // Offset: 0x00, ro, MPU Type Register
-   uint32_t const type;
-                  // Offset: 0x04, rw, MPU Control Register
-   uint32_t       ctrl;
-                  // Offset: 0x08, rw, MPU Region RNRber Register
-   uint32_t       rnr;
-                  // Offset: 0x0C, rw, MPU Region Base Address Register
-   uint32_t       rbar;
-                  // Offset: 0x10, rw, MPU Region Attribute and Size Register
-   uint32_t       rasr;
-                  // Offset: 0x14, rw, MPU Alias 1 Region Base Address Register
-   uint32_t       rbar_a1;
-                  // Offset: 0x18, rw, MPU Alias 1 Region Attribute and Size Register
-   uint32_t       rasr_a1;
-                  // Offset: 0x1C, rw, MPU Alias 2 Region Base Address Register
-   uint32_t       rbar_a2;
-                  // Offset: 0x20, rw, MPU Alias 2 Region Attribute and Size Register
-   uint32_t       rasr_a2;
-                  // Offset: 0x24, rw, MPU Alias 3 Region Base Address Register
-   uint32_t       rbar_a3;
-                  // Offset: 0x28, rw, MPU Alias 3 Region Attribute and Size Register
-   uint32_t       rasr_a3;
+   uint32_t const type;      /* MPU Type Register, ro, Offset: 0x00, Reset:
+                              */
+   uint32_t       ctrl;      /* MPU Control Register, rw, Offset: 0x04, Reset:
+                              */
+   uint32_t       rnr;       /* MPU Region Number Register, rw, Offset: 0x08, Reset:
+                              */
+   uint32_t       rbar;      /* MPU Region Base Address Register, rw, Offset: 0x0C, Reset:
+                              */
+   uint32_t       rasr;      /* MPU Region Attribute and Size Register, rw, Offset: 0x10, Reset:
+                              */
+   uint32_t       rbar_a1;   /* MPU Alias 1 Region Base Address Register, rw, Offset: 0x14, Reset:
+                              */
+   uint32_t       rasr_a1;   /* MPU Alias 1 Region Attribute and Size Register, rw, Offset: 0x18, Reset:
+                              */
+   uint32_t       rbar_a2;   /* MPU Alias 2 Region Base Address Register, rw, Offset: 0x1C, Reset:
+                              */
+   uint32_t       rasr_a2;   /* MPU Alias 2 Region Attribute and Size Register, rw, Offset: 0x20, Reset:
+                              */
+   uint32_t       rbar_a3;   /* MPU Alias 3 Region Base Address Register, rw, Offset: 0x24, Reset:
+                              */
+   uint32_t       rasr_a3;   /* MPU Alias 3 Region Attribute and Size Register, rw, Offset: 0x28, Reset:
+                              */
 } core_mpu_t;
 
 typedef volatile struct core_debug_t {
-                  // Offset: 0x00, rw, Debug Halting Control and Status Register
-   uint32_t       dhcsr;
-                  // Offset: 0x04, wo, Debug Core Register Selector Register
-   uint32_t       dcrsr;
-                  // Offset: 0x08, rw, Debug Core Register Data Register
-   uint32_t       dcrdr;
-                  // Offset: 0x0C, rw, Debug Exception and Monitor Control Register
-   uint32_t       demcr;
+   uint32_t       dhcsr;     /* Debug Halting Control and Status Register, rw, Offset: 0x00, Reset:
+                              */
+   uint32_t       dcrsr;     /* Debug Core Register Selector Register, wo, Offset: 0x04, Reset:
+                              */
+   uint32_t       dcrdr;     /* Debug Core Register Data Register, rw, Offset: 0x08, Reset:
+                              */
+   uint32_t       demcr;     /* Debug Exception and Monitor Control Register, rw, Offset: 0x0C, Reset:
+                              */
 } core_debug_t;
 
 typedef volatile struct core_fpu_t {
-   uint32_t       _reserved0[1];
-                  // Offset: 0x04, rw, Floating-Point Context Control Register
-   uint32_t       fpccr;
-                  // Offset: 0x08, rw, Floating-Point Context Address Register
-   uint32_t       fpcar;
-                  // Offset: 0x0C, rw, Floating-Point Default Status Control Register
-   uint32_t       fpdscr;
-                  // Offset: 0x10, ro, Media and FP Feature Register 0
-   uint32_t const mvfr0;
-                  // Offset: 0x14, ro, Media and FP Feature Register 1
-   uint32_t const mvfr1;
+   uint32_t       _res[1]; /* */
+   uint32_t       fpccr;     /* Floating-Point Context Control Register, rw, Offset: 0x04, Reset:
+                              */
+   uint32_t       fpcar;     /* Floating-Point Context Address Register, rw, Offset: 0x08, Reset:
+                              */
+   uint32_t       fpdscr;    /* Floating-Point Default Status Control Register, rw, Offset: 0x0C, Reset:
+                              */
+   uint32_t const mvfr0;     /* Media and FP Feature Register 0, ro, Offset: 0x10, Reset:
+                              */
+   uint32_t const mvfr1;     /* Media and FP Feature Register 1, ro, Offset: 0x14, Reset:
+                              */
 } core_fpu_t;
 
 typedef volatile struct core_sys_t {
@@ -331,32 +328,32 @@ enum core_register_e {
    /* ICTR_INTLINESNUM[3:0]
     * The total number of interrupt lines supported by an implementation, defined in groups of 32.
     * That is, the total number of interrupt lines is up to (INTLINESNUM+1)*32. */
-   HW_DEF_BIT(SCS, ICTR, 3, 0, INTLINESNUM),
+   HW_DEF_BIT(SCS, ICTR, INTLINESNUM, 3, 0),
 
    /* ACTLR: Auxiliary control register */
    HW_DEF_OFF(SCS, ACTLR, 0x008),
    /* ACTLR_DISOOFP[9]
     * Disables floating point instructions completing out of order with respect to integer instructions. */
-   HW_DEF_BIT(SCS, ACTLR, 9, 9, DISOOFP),
+   HW_DEF_BIT(SCS, ACTLR, DISOOFP, 9, 9),
    /* ACTLR_DISFPCA[8]
     * 1: Disables automatic update of CONTROL.FPCA.
     * The value of this bit should be written as zero or preserved (SBZP). */
-   HW_DEF_BIT(SCS, ACTLR, 8, 8, DISFPCA),
+   HW_DEF_BIT(SCS, ACTLR, DISFPCA, 8, 8),
    /* ACTLR_DISFOLD[2]
     * 1: Disables folding of IT instructions: IT folding can cause jitter in looping.
     * If a task must avoid jitter, set the DISFOLD bit to 1 before executing the task, to disable IT folding. */
-   HW_DEF_BIT(SCS, ACTLR, 2, 2, DISFOLD),
+   HW_DEF_BIT(SCS, ACTLR, DISFOLD, 2, 2),
    /* ACTLR_DISDEFWBUF[1]
     * 1: Disables write buffer use during default memory map accesses: This causes all BusFaults to
     * be precise BusFaults but decreases performance because any store to memory must
     * complete before the processor can execute the next instruction.
     * 0: Enable write buffer use. */
-   HW_DEF_BIT(SCS, ACTLR, 1, 1, DISDEFWBUF),
+   HW_DEF_BIT(SCS, ACTLR, DISDEFWBUF, 1, 1),
    /* ACTLR_DISMCYCINT[0]
     * 1: Disables interruption of load multiple and store multiple instructions (LDM, STM).
     * This increases the interrupt latency of the processor because any LDM or STM must complete
     * before the processor can stack the current state and enter the interrupt handler. */
-   HW_DEF_BIT(SCS, ACTLR, 0, 0, DISMCYCINT),
+   HW_DEF_BIT(SCS, ACTLR, DISMCYCINT, 0, 0),
 
    /* CSR: SysTick Control and Status Register, Reset: 0x00000000
     * Controls the system timer and provides status data. */
@@ -364,42 +361,42 @@ enum core_register_e {
    /* CSR_COUNFLAG[16]
     * ro, 1: Timer transition occurred from 1 to 0. 0: Timer has not counted to 0.
     * COUNTFLAG is cleared to 0 by a read of this register, and by any write to SYSTICK_CVR. */
-   HW_DEF_BIT(SYSTICK, CSR, 16, 16, COUNTFLAG),
+   HW_DEF_BIT(SYSTICK, CSR, COUNTFLAG, 16, 16),
    /* CSR_CLKSOURCE[2]
     * rw, 1: SysTick uses the processor clock. 0: SysTick uses IMP.DEF. external reference clock. */
-   HW_DEF_BIT(SYSTICK, CSR,  2,  2, CLKSOURCE),
+   HW_DEF_BIT(SYSTICK, CSR, CLKSOURCE, 2, 2),
    /* CSR_TICKINT[1]
     * rw, 1: Count to 0 changes the SysTick exception status to pending. 0: Count to 0 does not affect the SysTick exception status. */
-   HW_DEF_BIT(SYSTICK, CSR,  1,  1, TICKINT),
+   HW_DEF_BIT(SYSTICK, CSR, TICKINT, 1, 1),
    /* CSR_ENABLE[1]
     * rw, 1: Counter is operating. 0: Counter is disabled. */
-   HW_DEF_BIT(SYSTICK, CSR,  0,  0, ENABLE),
+   HW_DEF_BIT(SYSTICK, CSR, ENABLE, 0, 0),
 
    /* RVR: SysTick Reload Value Register */
    HW_DEF_OFF(SYSTICK, RVR, 0x04),
    /* RVR_RELOAD[23:0]
     * The value to load into the SYSTICK_CVR when the counter reaches 0. */
-   HW_DEF_BIT(SYSTICK, RVR, 23,  0, RELOAD),
+   HW_DEF_BIT(SYSTICK, RVR, RELOAD, 23, 0),
 
    /* CVR: SysTick Current Value Register */
    HW_DEF_OFF(SYSTICK, CVR, 0x08),
    /* RVR_CURRENT[31:0]
     * This is the value of the counter at the time it is read. Any write clears the register to zero. */
-   HW_DEF_BIT(SYSTICK, CVR, 31,  0, CURRENT),
+   HW_DEF_BIT(SYSTICK, CVR, CURRENT, 31, 0),
 
    /* CALIB: SysTick Calibration value Register */
    HW_DEF_OFF(SYSTICK, CALIB, 0x0C),
    /* CALIB_NOREF[31]
     * 0: The IMP.DEF. reference clock is implemented. 1: It is not implemented. */
-   HW_DEF_BIT(SYSTICK, CALIB, 31, 31, NOREF),
+   HW_DEF_BIT(SYSTICK, CALIB, NOREF, 31, 31),
    /* CALIB_SKEW[30]
     * 1: Calibration value is inexact, because of the clock frequency. 0: Calibration value is exact. */
-   HW_DEF_BIT(SYSTICK, CALIB, 30, 30, SKEW),
+   HW_DEF_BIT(SYSTICK, CALIB, SKEW, 30, 30),
    /* CALIB_TENMS[23:0]
     * Optionally, holds a reload value to be used for 10ms (100Hz) timing, subject to system clock
     * skew errors. If this field is zero, the calibration value is not known.
     * STM32F3 holds value for 1ms period if systick HCLK is programmed with max value and systick uses HCLK/8 as external clock. */
-   HW_DEF_BIT(SYSTICK, CALIB, 23,  0, TENMS),
+   HW_DEF_BIT(SYSTICK, CALIB, TENMS, 23, 0),
 
    /* ISER: Interrupt Set-Enable Registers */
    HW_DEF_OFF(NVIC, ISER, 0x000),
@@ -416,70 +413,183 @@ enum core_register_e {
 
    /* CPUID: CPUID Base Register */
    HW_DEF_OFF(SCB, CPUID, 0x00),
-   /* CPUID_IMPLEMENTER[31:24]
+   /* CPUID_IMPLEMENTER[31:24], ro
     * Implementer code assigned by ARM. Reads as 0x41 for a processor implemented by ARM. */
-   HW_DEF_BIT(SCB, CPUID, 31, 24, IMPLEMENTER),
-   /* CPUID_VARIANT[23:20]
+   HW_DEF_BIT(SCB, CPUID, IMPLEMENTER, 31, 24),
+   /* CPUID_VARIANT[23:20], ro
     * Variant number. */
-   HW_DEF_BIT(SCB, CPUID, 23, 20, VARIANT),
-   /* CPUID_ARCHITECTURE[19:16]
+   HW_DEF_BIT(SCB, CPUID, VARIANT, 23, 20),
+   /* CPUID_ARCHITECTURE[19:16], ro
     * Reads as 0xF indicating use of the CPUID scheme. */
-   HW_DEF_BIT(SCB, CPUID, 19, 16, ARCHITECTURE),
-   /* CPUID_PARTNO[15:4]
+   HW_DEF_BIT(SCB, CPUID, ARCHITECTURE, 19, 16),
+   /* CPUID_PARTNO[15:4], ro
     * Part number. */
-   HW_DEF_BIT(SCB, CPUID, 15,  4, PARTNO),
-   /* CPUID_REVISION[3:0]
+   HW_DEF_BIT(SCB, CPUID, PARTNO, 15, 4),
+   /* CPUID_REVISION[3:0], ro
     * Revision number. */
-   HW_DEF_BIT(SCB, CPUID, 3,  0, REVISION),
+   HW_DEF_BIT(SCB, CPUID, REVISION, 3, 0),
 
    /* ICSR: Interrupt Control and State Register */
    HW_DEF_OFF(SCB, ICSR,  0x04),
    /* ICSR_NMIPENDSET[31]
     * reads 1: NMI is active. 0: NMI is inactive. writes 1: Make NMI exception active. 0: No effect. */
-   HW_DEF_BIT(SCB, ICSR, 31, 31, NMIPENDSET),
+   HW_DEF_BIT(SCB, ICSR, NMIPENDSET, 31, 31),
    /* ICSR_PENDSVSET[28]
     * reads 1: PendSV is pending. 0: Not pending. writes 1: Make PendSV exception pending. 0: No effect. */
-   HW_DEF_BIT(SCB, ICSR, 28, 28, PENDSVSET),
+   HW_DEF_BIT(SCB, ICSR, PENDSVSET, 28, 28),
    /* ICSR_PENDSVCLR[27], wo
     * writes 1: Remove PendSV pending status. 0: No effect. */
-   HW_DEF_BIT(SCB, ICSR, 27, 27, PENDSVCLR),
+   HW_DEF_BIT(SCB, ICSR, PENDSVCLR, 27, 27),
    /* ICSR_PENDSTSET[26]
     * reads 1: SysTick is pending. 0: Not pending. writes 1: Make SysTick exception pending. 0: No effect. */
-   HW_DEF_BIT(SCB, ICSR, 26, 26, PENDSTSET),
+   HW_DEF_BIT(SCB, ICSR, PENDSTSET, 26, 26),
    /* ICSR_PENDSTCLR[25], wo
     * writes 1: Remove SysTick pending status. 0: No effect. */
-   HW_DEF_BIT(SCB, ICSR, 25, 25, PENDSTCLR),
+   HW_DEF_BIT(SCB, ICSR, PENDSTCLR, 25, 25),
    /* ICSR_ISRPREEMPT[23], ro
     * reads 1: Pending exception will be serviced on exit from debug halt state. 0: Will not service. */
-   HW_DEF_BIT(SCB, ICSR, 23, 23, ISRPREEMPT),
+   HW_DEF_BIT(SCB, ICSR, ISRPREEMPT, 23, 23),
    /* ICSR_ISRPENDING[22], ro
     * reads 1: External interrupt, generated by the NVIC, is pending (nr >= 16). 0: No external interrupt pending. */
-   HW_DEF_BIT(SCB, ICSR, 22, 22, ISRPENDING),
+   HW_DEF_BIT(SCB, ICSR, ISRPENDING, 22, 22),
    /* ICSR_VECTPENDING[20:12], ro
     * reads >0: Number of the pending and *enabled* exception with highest priority. 0: No pending exception. */
-   HW_DEF_BIT(SCB, ICSR, 20, 12, VECTPENDING),
+   HW_DEF_BIT(SCB, ICSR, VECTPENDING, 20, 12),
    /* ICSR_RETTOBASE[11], ro
     * (Only valid in "Handler mode") reads 0: There is an active exception other than the exception shown by IPSR. 1: There is no active exception other than the executing one. */
-   HW_DEF_BIT(SCB, ICSR, 11, 11, RETTOBASE),
+   HW_DEF_BIT(SCB, ICSR, RETTOBASE, 11, 11),
    /* ICSR_VECTACTIVE[8:0], ro
     * reads 0: Processor is in "Thread mode". !=0: Exception number of current executing exception ("Handler mode"), same number as in processor register IPSR. */
-   HW_DEF_BIT(SCB, ICSR,  8,  0, VECTACTIVE),
+   HW_DEF_BIT(SCB, ICSR, VECTACTIVE, 8, 0),
 
    /* VTOR: Vector Table Offset Register */
    HW_DEF_OFF(SCB, VTOR,  0x08),
    /* VTOR_TBLOFF[29:9]
     * Bits [29:9] of the vector table base address, other bits are always 0, therefore aligned to 512 bytes within the first GB. */
-   HW_DEF_BIT(SCB, VTOR, 29,  9, TBLOFF),
+   HW_DEF_BIT(SCB, VTOR, TBLOFF, 29, 9),
+
    /* AIRCR: Application Interrupt and Reset Control Register */
    HW_DEF_OFF(SCB, AIRCR, 0x0C),
+   /* AIRCR_VECTKEY[31:16]
+    * reads always 0xFA05. writes 0x05FA: Allows writing to register. !=0x05FA: Write ignored to this register. */
+   HW_DEF_BIT(SCB, AIRCR, VECTKEY, 31, 16),
+   /* AIRCR_ENDIANNESS[15], ro
+    * reads 0: Little endian. 1: Big endian. */
+   HW_DEF_BIT(SCB, AIRCR, ENDIANNESS, 15, 15),
+   /* AIRCR_PRIGROUP[10:8]
+    * The group priority field defines the priority for preemption. If multiple pending exceptions have the same
+    * group priority, the exception processing logic uses the subpriority field to resolve priority within the group.
+    * 0<=x<=7: Interrupt Priority value is divided into "Group Priority Bits[7:x+1]" and "Subpriority Bits[x:0]". */
+   HW_DEF_BIT(SCB, AIRCR, PRIGROUP, 10, 8),
+   /* AIRCR_SYSRESETREQ[2]
+    * 1: Request an external system reset. 0: Do not request a reset.
+    * The architecture does not guarantee that the reset takes place immediately! */
+   HW_DEF_BIT(SCB, AIRCR, SYSRESETREQ, 2, 2),
+   /* AIRCR_VECTCLRACTIVE[1], wo
+    * writes 0: No effect. 1: Clears all active state information for fixed and configurable exceptions.
+    * This includes clearing the IPSR to zero. The effect of writing a 1 to this bit if the processor is not halted in
+    * Debug state is UNPREDICTABLE. */
+   HW_DEF_BIT(SCB, AIRCR, VECTCLRACTIVE, 1, 1),
+   /* AIRCR_VECTRESET[0], wo
+    * 1: Request a local system reset. 0: Do not request a reset.
+    * The effect of writing a 1 to this bit if the processor is not halted in Debug state is UNPREDICTABLE.
+    * When the processor is halted in Debug state, if a write to the register writes a 1 to both VECTRESET and SYSRESETREQ,
+    * the behavior is UNPREDICTABLE. */
+   HW_DEF_BIT(SCB, AIRCR, VECTRESET, 0, 0),
+
    /* SCR: System Control Register */
    HW_DEF_OFF(SCB, SCR,   0x10),
-   /* CCR: System Control Register */
+   /* SCR_SEVEONPEND[4]
+    * Send Event on Pending bit.
+    * 0: Only enabled interrupts or events can wakeup the processor (see WFE), disabled interrupts are excluded.
+    * 1: Enabled events and all interrupts, including disabled interrupts, can wakeup the processor (see WFE). */
+   HW_DEF_BIT(SCB, SCR, SEVEONPEND, 4, 4),
+   /* SCR_SLEEPDEEP[2]
+    * 1: Processor uses deep sleep as its low power mode. 0: Uses sleep as its low power mode. */
+   HW_DEF_BIT(SCB, SCR, SLEEPDEEP, 2, 2),
+   /* SCR_SLEEPONEXIT[1]
+    * 1: Enter sleep, or deep sleep, on return from Handler mode (interrupt service routine) to Thread mode an.
+    * 0: Do not sleep when returning to Thread mode. */
+   HW_DEF_BIT(SCB, SCR, SLEEPONEXIT, 1, 1),
+
+   /* CCR: Configuration Control Register */
    HW_DEF_OFF(SCB, CCR,   0x14),
-   /* SHPR: System Control Register */
+   /* CCR_STKALIGN[9]
+    * 1: On exception entry stack is 8-byte aligned and the processor uses bit 9 of the stacked PSR to indicate if additional alignment was necessary.
+    * 0: Default alignment is 4-Byte. */
+   HW_DEF_BIT(SCB, CCR, STKALIGN, 9, 9),
+   /* CCR_BFHFNMIGN[8]
+    * 0: Precise data access fault ("ldr r0, [r0]") causes a lockup (unrecoverable exception).
+    * 1: Precise bus fault is ignored if running priority is -1 (FAULT handler or "Thread mode" + disable_fault_interrupt()) or -2 (NMI Handler). */
+   HW_DEF_BIT(SCB, CCR, BFHFNMIGN, 8, 8),
+   /* CCR_DIV_0_TRP[4]
+    * 1: Dividing by 0 (SDIV/UDIV) causes FAULT (USAGEFAULT if enabled) exception. 0: A divide by zero returns a quotient of 0 (no fault). */
+   HW_DEF_BIT(SCB, CCR, DIV_0_TRP, 4, 4),
+   /* CCR_UNALIGN_TRP[3]
+    * 1: Unaligned word or halfword accesses FAULT (USAGEFAULT if enabled) exception. 0: Unaligned access allowed.
+    * Unaligned load-store multiples and word or halfword exclusive accesses always fault. */
+   HW_DEF_BIT(SCB, CCR, UNALIGN_TRP, 3, 3),
+   /* CCR_USERSETMPEND[1]
+    * 1: Enables unprivileged software access to register STIR. 0: Unprivileged software cannot access STIR. */
+   HW_DEF_BIT(SCB, CCR, USERSETMPEND, 1, 1),
+   /* CCR_NONBASETHRDENA[0]
+    * 1: Allows return from Handler mode to Thread mode with nested exceptions active. 0: Trying to do so results in INVPC USAGEFAULT (LR = 0xF0000000 + EXC_RETURN). */
+   HW_DEF_BIT(SCB, CCR, NONBASETHRDENA, 0, 0),
+
+   /* SHPR: System Handlers Priority Registers */
    HW_DEF_OFF(SCB, SHPR,  0x18),
+   /* SHPR_PRI[7:4]
+    * Registers are byte accessible. Bits 3:0 read always as 0.
+    * I: Priority of system exception (0==highest, 15==lowest). */
+   HW_DEF_BIT(SCB, SHPR, PRI, 7, (8-HW_KONFIG_NVIC_INTERRUPT_PRIORITY_NROFBITS)),
+
    /* SHCSR: System Handler Control and State Register */
    HW_DEF_OFF(SCB, SHCSR, 0x24),
+   /* SHCSR_USGFAULTENA[18]
+    * 1: USAGEFAULT exception enabled. 1: USAGEFAULT exception disabled, use FAULT exception instead. */
+   HW_DEF_BIT(SCB, SHCSR, USGFAULTENA, 18, 18),
+   /* SHCSR_BUSFAULTENA[17]
+    * 1: BUSFAULT exception enabled. 1: BUSFAULT exception disabled, use FAULT exception instead. */
+   HW_DEF_BIT(SCB, SHCSR, BUSFAULTENA, 17, 17),
+   /* SHCSR_MEMFAULTENA[16]
+    * 1: MPUFAULT exception enabled. 1: MPUFAULT exception disabled, use FAULT exception instead. */
+   HW_DEF_BIT(SCB, SHCSR, MEMFAULTENA, 16, 16),
+   /* SHCSR_SVCALLPENDED[15]
+    * 1: Exception SVCALL is pending. 0: Not pending. */
+   HW_DEF_BIT(SCB, SHCSR, SVCALLPENDED, 15, 15),
+   /* SHCSR_BUSFAULTPENDED[14]
+    * 1: Exception BUSFAULT is pending. 0: Not pending. */
+   HW_DEF_BIT(SCB, SHCSR, BUSFAULTPENDED, 14, 14),
+   /* SHCSR_MEMFAULTPENDED[13]
+    * 1: Exception MPUFAULT is pending. 0: Not pending. */
+   HW_DEF_BIT(SCB, SHCSR, MEMFAULTPENDED, 13, 13),
+   /* SHCSR_USGFAULTPENDED[12]
+    * 1: Exception USAGEFAULT is pending. 0: Not pending. */
+   HW_DEF_BIT(SCB, SHCSR, USGFAULTPENDED, 12, 12),
+   /* SHCSR_SYSTICKACT[11]
+    * 1: Exception SYSTICK is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, SYSTICKACT, 11, 11),
+   /* SHCSR_PENDSVACT[10]
+    * 1: Exception PENDSV is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, PENDSVACT, 10, 10),
+   /* SHCSR_MONITORACT[8]
+    * 1: Exception DEBUGMONITOR is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, MONITORACT, 8, 8),
+   /* SHCSR_SVCALLACT[7]
+    * 1: Exception SVCALL is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, SVCALLACT, 7, 7),
+   /* SHCSR_USGFAULTACT[3]
+    * 1: Exception USAGEFAULT is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, USGFAULTACT, 3, 3),
+   /* SHCSR_BUSFAULTACT[1]
+    * 1: Exception BUSFAULT is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, BUSFAULTACT, 1, 1),
+   /* SHCSR_MEMFAULTACT[0]
+    * 1: Exception MPUFAULT is active. 0: Not active. */
+   HW_DEF_BIT(SCB, SHCSR, MEMFAULTACT, 0, 0),
+
+   // TODO:
+
    /* CFSR: Configurable Fault Status Register */
    HW_DEF_OFF(SCB, CFSR, 0x28),
    /* HFSR: HardFault Status Register */
@@ -513,8 +623,9 @@ enum core_register_e {
    /* STIR: Software Trigger Interrupt Register */
    HW_DEF_OFF(SCS, STIR, 0xF00),
    /* STIR_INTID[8:0], wo
-    * writes I: Triggers external interrupt with exception number (I+16), core interrupts (0..15) could not be triggered with this register. */
-   HW_DEF_BIT(SCS, STIR, 8, 0, INTID),
+    * writes I: Triggers external interrupt with exception number (I+16), core interrupts (0..15) could not be triggered with this register.
+    * Bit USERSETMPEND of register CCR determines if unprivileged access is possible. */
+   HW_DEF_BIT(SCS, STIR, INTID, 8, 0),
 
    // TODO: FPU
 };
@@ -548,11 +659,29 @@ static inline void assert_offset_core(void)
    static_assert( offsetof(core_sys_t, nvic.iabr) == offsetof(core_sys_t, nvic) + HW_OFF(NVIC, IABR));
    static_assert( offsetof(core_sys_t, nvic.ipr)  == offsetof(core_sys_t, nvic) + HW_OFF(NVIC, IPR));
    static_assert( offsetof(core_sys_t, scb)       == HW_REGISTER_BASEADDR_SCB - HW_REGISTER_BASEADDR_SYSTEM);
+   static_assert( offsetof(core_sys_t, scb.cpuid) == offsetof(core_sys_t, scb) + HW_OFF(SCB, CPUID));
+   static_assert( offsetof(core_sys_t, scb.icsr)  == offsetof(core_sys_t, scb) + HW_OFF(SCB, ICSR));
+   static_assert( offsetof(core_sys_t, scb.vtor)  == offsetof(core_sys_t, scb) + HW_OFF(SCB, VTOR));
+   static_assert( offsetof(core_sys_t, scb.aircr) == offsetof(core_sys_t, scb) + HW_OFF(SCB, AIRCR));
+   static_assert( offsetof(core_sys_t, scb.scr)   == offsetof(core_sys_t, scb) + HW_OFF(SCB, SCR));
+   static_assert( offsetof(core_sys_t, scb.ccr)   == offsetof(core_sys_t, scb) + HW_OFF(SCB, CCR));
+   static_assert( offsetof(core_sys_t, scb.shpr)  == offsetof(core_sys_t, scb) + HW_OFF(SCB, SHPR));
+   static_assert( offsetof(core_sys_t, scb.shcsr) == offsetof(core_sys_t, scb) + HW_OFF(SCB, SHCSR));
+   // TODO: SCB
    static_assert( offsetof(core_sys_t, scb.cpacr) == offsetof(core_sys_t, scb) + HW_OFF(SCB, CPACR));
+   static_assert( HW_BIT(SCB, SHPR, PRI)     == 0xf0);
+   static_assert( HW_BIT(SCB, SHPR, PRI_MAX) == 0xf);
+   static_assert( HW_BIT(SCB, SHPR, PRI_POS) == 0x4);
+   static_assert( HW_BIT(SCB, SHCSR, USGFAULTENA) == 1 << 18);
+   static_assert( HW_BIT(SCB, SHCSR, MEMFAULTACT) == 1 << 0);
    static_assert( offsetof(core_sys_t, mpu)     == HW_REGISTER_BASEADDR_MPU - HW_REGISTER_BASEADDR_SYSTEM);
+   // TODO: mpu
    static_assert( offsetof(core_sys_t, debug)   == HW_REGISTER_BASEADDR_COREDEBUG - HW_REGISTER_BASEADDR_SYSTEM);
+   // TODO: debug
    static_assert( offsetof(core_sys_t, stir)    == offsetof(core_sys_t, scs) + HW_OFF(SCS, STIR));
+   static_assert( HW_BIT(SCS, STIR, INTID)      == 0x1ff);
    static_assert( offsetof(core_sys_t, fpu)     == HW_REGISTER_BASEADDR_FPU - HW_REGISTER_BASEADDR_SYSTEM);
+   // TODO: fpu
 }
 
 
@@ -562,15 +691,23 @@ static inline void assert_offset_core(void)
  * Ist das CPU-interne Eventflag gesetzt, wird es gelöscht und der Befehl kehrt sofort zurück. */
 static inline void waitevent_core(void)
 {
-   __asm( "WFE" );
+   __asm volatile( "WFE" );
 }
 
 /* function: sendevent_core
  * Setzt das interne Eventflag und sendet es an Eventout der CPU (falls Multicore-CPU). */
 static inline void sendevent_core(void)
 {
-   __asm( "SEV" );
+   __asm volatile( "SEV" );
 }
+
+static inline void reset_core(void)
+{
+   __asm volatile( "DSB" );
+   hSCB->aircr = (0x05FA << HW_BIT(SCB, AIRCR, VECTKEY_POS)) | HW_BIT(SCB, AIRCR, SYSRESETREQ);
+   while (1) ;
+}
+
 
 
 /* == FPU == */

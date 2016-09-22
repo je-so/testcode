@@ -65,8 +65,16 @@
 
 /* == Memory Regions == */
 
-/* Main Flash Memory of Controller, Mapped to Adress range 0..0x3ffff */
-#define HW_MEMORYREGION_MAINFLASH_START 0x08000000
-#define HW_MEMORYREGION_MAINFLASH_SIZE  0x40000    // 256K
+/* Static Random Access Memory, mapped to address range 0x20000000..0x10001FFF */
+#define HW_MEMORYREGION_SRAM_START        0x20000000
+#define HW_MEMORYREGION_SRAM_SIZE         0xA000      // 40K
+
+/* Core Coupled Memory of Controller, mapped to address range 0x10000000..0x10001FFF */
+#define HW_MEMORYREGION_CCMRAM_START      0x10000000
+#define HW_MEMORYREGION_CCMRAM_SIZE       0x2000      // 8K
+
+/* Main Flash Memory of Controller, mapped to address range 0..0x3ffff */
+#define HW_MEMORYREGION_MAINFLASH_START   0x08000000
+#define HW_MEMORYREGION_MAINFLASH_SIZE    0x40000     // 256K
 
 #endif

@@ -119,7 +119,7 @@ int main(void)
          while (0 == (msec % 1010)) ;
       }
 #else
-      wait_for_interrupt(); // entfernen, falls Debugging
+      waitinterrupt_core(); // entfernen, falls Debugging
 #endif
    }
 

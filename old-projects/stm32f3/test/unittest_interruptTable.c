@@ -14,7 +14,11 @@ static void overwritten1_interruptTable(void)
 
 int unittest_interruptTable(void)
 {
-   uint32_t * const CCMRAM = (uint32_t*) 0x10000000; // start addr of 8K parity checked SRAM on STM32F303 devices
+   uint32_t * const CCMRAM = (uint32_t*) HW_MEMORYREGION_CCMRAM_START;
+   uint32_t   const CCMRAM_SIZE = HW_MEMORYREGION_CCMRAM_SIZE;
+
+   // prepare
+   assert( CCMRAM_SIZE/sizeof(uint32_t) > len_interruptTable())
 
    // TEST sizealign_interruptTable
    assert( 512 == sizealign_interruptTable())
@@ -26,8 +30,6 @@ int unittest_interruptTable(void)
    for (uint32_t i = 1; i < 512; ++i) {
       assert( EINVAL == relocate_interruptTable((uint32_t*)((uintptr_t)CCMRAM + i)));
    }
-   assert( EINVAL == relocate_interruptTable((uint32_t*)(0x80000000)));
-   assert( EINVAL == relocate_interruptTable((uint32_t*)(0x40000000)));
 
    // TEST relocate_interruptTable
    for (uint32_t i = 0; i < len_interruptTable(); ++i) {

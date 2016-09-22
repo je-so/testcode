@@ -152,7 +152,7 @@ int main(void)
       case coreinterrupt_PENDSV:
       case coreinterrupt_SYSTICK:
          enable_coreinterrupt(i);
-         disable_all_interrupt();
+         setprio0mask_interrupt();
          if (generate_coreinterrupt((coreinterrupt_e)i) != 0) goto ONERR;
          if (is_coreinterrupt((coreinterrupt_e)i) != 1) goto ONERR;
          for (unsigned p = 0; p < 16; ++p) {
@@ -163,7 +163,7 @@ int main(void)
          for (unsigned p = 0; p < 16; ++p) {
             if (is_coreinterrupt((coreinterrupt_e)p) != 0) goto ONERR;
          }
-         enable_all_interrupt();
+         clearprio0mask_interrupt();
          if (counter != 0) goto ONERR;
          disable_coreinterrupt(i);
          turn_on_led(led++);
@@ -236,8 +236,8 @@ int main(void)
 
 ONERR:
    // 2 rote LEDs
-   enable_all_interrupt();
-   enable_fault_interrupt();
+   clearprio0mask_interrupt();
+   clearfaultmask_interrupt();
    write1_gpio(GPIOE, GPIO_PIN9|GPIO_PIN13);
    while (1) ;
 }

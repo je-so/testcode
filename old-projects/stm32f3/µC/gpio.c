@@ -68,6 +68,11 @@ static void select_interrupt_port(uint8_t portnr, uint16_t pins)
    }
 }
 
+/* function: config_interrupts_gpio
+ * Für jede Pin-Nummer ist ein Interrupt möglich, aber nur ein einziger Port pro Pin-Nummer.
+ * D.h. Interrupts sind nicht gleichzeitig für Pins PX[n] und PY[n] möglich, sondern nur für PX[n]
+ * oder PY[n]. PX[n] und PY[m] für m != n sind möglich.
+ * Die syscfg HWUnit muss vorher mit Funktion enable_syscfg_clockcntrl() eingeschaltet werden. */
 int config_interrupts_gpio(uint8_t port_bit, uint16_t pins, interrupt_edge_e edge)
 {
    if (((port_bit-1) & port_bit) != 0) {
@@ -95,6 +100,20 @@ int config_interrupts_gpio(uint8_t port_bit, uint16_t pins, interrupt_edge_e edg
 
    // clear any pending interrupts
    HW_SREGISTER(EXTI, PR1) |= pins;
+
+   return 0;
+}
+
+int config_gpio(volatile struct gpio_port_t *port, uint16_t pins, gpiocfg_e cfg)
+{
+   if (! pins) return 0;   // nothing to change
+
+   const uint32_t portnr  = GPIO_PORT_NR(port);
+   const uint32_t portbit = 1u << portnr;
+
+   if (portbit > GPIOF_BIT) return EINVAL;
+
+   // 
 
    return 0;
 }

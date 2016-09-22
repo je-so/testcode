@@ -28,7 +28,7 @@ static void setperiod_systick_interrupt(void)
 
 static void isexpired_systick_interrupt(void)
 {
-   s_systick_counter = isexpired_systick();
+   s_systick_counter += (isexpired_systick() ? 8 : 0);
    stop_systick();
 }
 
@@ -77,8 +77,7 @@ int unittest_systick(void)
    assert( 5000 >= value_systick());
    assert( 2000 <= value_systick());
    start_systick();
-   s_systick_counter = value_systick();
-   assert (9990 <= s_systick_counter);
+   assert (9990 <= s_systick_counter || 0 == s_systick_counter);
    stop_systick();
 
    // TEST continue_systick: value not changed
@@ -114,8 +113,22 @@ int unittest_systick(void)
    // TEST isexpired_systick: stop clears flag
    config_systick(1000, systickcfg_CORECLOCK|systickcfg_START);
    wait_buscycles(1000);
+   stop_systick();                     // Stop löscht Flag
+   assert( 0 == isexpired_systick());  // Gelöscht
+
+   // TEST isexpired_systick: isstarted_systick clears flag
+   config_systick(1000, systickcfg_CORECLOCK|systickcfg_START);
+   wait_buscycles(1000);
+   assert( 1 == isstarted_systick());  // isstarted Löscht Flag
+   assert( 0 == isexpired_systick());  // Gelöscht
    stop_systick();
-   assert( 0 == isexpired_systick());  // Stop löscht Flag
+
+   // TEST isexpired_systick: isenabled_interrupt_systick clears flag
+   config_systick(1000, systickcfg_CORECLOCK|systickcfg_START);
+   wait_buscycles(1000);
+   assert( 0 == isenabled_interrupt_systick()); // isenabled Löscht Flag
+   assert( 0 == isexpired_systick());           // Gelöscht
+   stop_systick();
 
    // TEST isexpired_systick: config clears flag
    config_systick(1000, systickcfg_CORECLOCK|systickcfg_START);
@@ -162,11 +175,24 @@ int unittest_systick(void)
    while (isstarted_systick()) ;
    assert( 1 == s_systick_counter);
 
-   // TEST systick_interrupt: isexpired kann während interrupt gesetzt sein oder auch nicht
+   // TEST systick_interrupt: isexpired ist gesetzt wenn interrupt ausgeführt wird.
    s_systick_fct = &isexpired_systick_interrupt;
+   s_systick_counter = 0;
    config_systick(1000, systickcfg_CORECLOCK|systickcfg_START|systickcfg_INTERRUPT);
-   while (isstarted_systick()) ;
-   assert( 1 >= s_systick_counter); // isexpired kann gesetzt sein oder auch nicht
+   while (s_systick_counter == 0) ;
+   assert( 0 == isstarted_systick());  // wurde in isexpired_systick_interrupt gestoppt
+   assert( 9 == s_systick_counter);    // isexpired gesetzt in interrupt routine
+
+   // TEST systick_interrupt: expired-Flag wird durch interrupt nicht gelöscht
+   s_systick_fct = 0;
+   s_systick_counter = 0;
+   config_systick(1000, systickcfg_CORECLOCK|systickcfg_START|systickcfg_INTERRUPT);
+   while (s_systick_counter == 0) ;
+   assert( 1 == s_systick_counter);
+   assert( isexpired_systick());
+   assert( 1 == s_systick_counter);
+   // reset
+   stop_systick();
 
    // reset
    s_systick_counter = 0;

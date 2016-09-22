@@ -101,6 +101,7 @@ static inline void start_dwtdbg(dwtdbg_e counter/*masked with dwtdbg_COUNTER_AND
 static inline void stop_dwtdbg(dwtdbg_e counter/*masked with dwtdbg_COUNTER_AND_TRACE*/);  // keeps count value
 static inline int  addwatchpoint_dwtdbg(/*out*/uint8_t *wpid, dwtdbg_watchpoint_e wp, uintptr_t comp, uint8_t ignore_nr_lsb_bits);
 static inline void clearwatchpoint_dwtdbg(uint32_t wpid);
+static inline void clearallwatchpoint_dwtdbg(void);
 
 
 // == definitions
@@ -431,6 +432,13 @@ static inline void clearwatchpoint_dwtdbg(uint32_t wpid)
       DWTDBG->comp[wpid].comp      = 0;
       DWTDBG->comp[wpid].mask      = 0;
       DWTDBG->comp[wpid].function &= ~HW_REGISTER_BIT_DWT_FUNCTION_FUNCTION;
+   }
+}
+
+static inline void clearallwatchpoint_dwtdbg(void)
+{
+   for (uint32_t i = nrcomp_dwtdbg(); i > 0; ) {
+      clearwatchpoint_dwtdbg(--i);
    }
 }
 

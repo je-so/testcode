@@ -81,7 +81,7 @@ g_NVIC_vectortable:
 	.word	pendsv_interrupt
 	.word	systick_interrupt
 	.word	WWDG_IRQHandler  /* 16 */
-	.word	PVD_IRQHandler
+	.word	pvd_interrupt
 	.word	TAMP_STAMP_IRQHandler
 	.word	RTC_WKUP_IRQHandler
 	.word	FLASH_IRQHandler /* 20 */
@@ -181,8 +181,8 @@ g_NVIC_vectortable:
 	.thumb_set systick_interrupt,default_interrupt
 	.weak	WWDG_IRQHandler
 	.thumb_set WWDG_IRQHandler,default_interrupt
-	.weak	PVD_IRQHandler
-	.thumb_set PVD_IRQHandler,default_interrupt
+	.weak	pvd_interrupt
+	.thumb_set pvd_interrupt,default_interrupt
 	.weak	TAMP_STAMP_IRQHandler
 	.thumb_set TAMP_STAMP_IRQHandler,default_interrupt
 	.weak	RTC_WKUP_IRQHandler

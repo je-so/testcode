@@ -34,10 +34,10 @@
 #ifndef STM32F303xC_MC_INTERRUPT_HEADER
 #define STM32F303xC_MC_INTERRUPT_HEADER
 
-// == exported Peripherals/HW-Units
+// == Exported Peripherals/HW-Units
 #define hNVIC    ((core_nvic_t*) HW_REGISTER_BASEADDR_NVIC)
 
-// == exported types
+// == Exported Types
 
 // TODO: remove after gpio changed
 typedef enum interrupt_edge_e {
@@ -72,7 +72,7 @@ typedef enum interrupt_e {
    // default state for all interrupt_e: disabled
 
    interrupt_WWDG = 16,    // Window Watchdog interrupt
-   interrupt_PVD  = 17,    // PVD through EXTI line 16 detection interrupt
+   interrupt_PVD  = 17,    // PVD (Programmable Voltage Detector) through EXTI line 16 detection interrupt
    interrupt_GPIOPIN0 = 22,   // EXTI Line0 interrupt (Pin 0 of PortA - PortH)
    // TODO: interrupt_GPIOPIN1 = 23,   // EXTI Line1 interrupt (Pin 1 of PortA - PortH)
    interrupt_GPIOPIN2_TSC = 24, // EXTI Line2 and Touch sensing interrupts
@@ -86,7 +86,7 @@ typedef enum interrupt_e {
    interrupt_DMA1_CHANNEL5 = 31,
    interrupt_DMA1_CHANNEL6 = 32,
    interrupt_DMA1_CHANNEL7 = 33,
-
+   // TODO: interrupt 34-69
    interrupt_TIMER6_DAC = 70, // Timer6 and DAC underflow/underrun interrupt
    interrupt_TIMER7     = 71, // Timer7 interrupt
 
@@ -95,25 +95,35 @@ typedef enum interrupt_e {
    interrupt_DMA2_CHANNEL3 = 74,
    interrupt_DMA2_CHANNEL4 = 75,
    interrupt_DMA2_CHANNEL5 = 76,
+   // TODO: interrupt 77-97
 } interrupt_e;
+
+typedef enum interrupt_retcode_e {
+   // -- 1. select one of
+   interrupt_retcode_FPU   = 0,           // (default) Interrupt stackframe has 26 words {r0-r3,r12,lr,pc,xpsr(+bit 9),s0-s15,fpscr,fpu-align,+padding(if xpsr bit 9 == 1)
+   interrupt_retcode_NOFPU = (1 << 4),    // Interrupt stackframe has 8 words {r0-r3,r12,lr,pc,xpsr(+bit 9),+padding(if xpsr bit 9 == 1)
+   // -- 2. select one of
+   interrupt_retcode_HANDLERMODE    = 0,           // (default) Nested handler interrupted another handler (isret2threadmode_interrupt()==0).
+   interrupt_retcode_THREADMODE_MSP = (1u << 3),   // Handler interrupted cpu in thread mode which used main stack pointer (isret2threadmode_interrupt()==1).
+   interrupt_retcode_THREADMODE_PSP = (3u << 2),   // Handler interrupted cpu in thread mode which used process stack pointer (isret2threadmode_interrupt()==1).
+} interrupt_retcode_e;
 
 // == exported functions
 
-// == sleep mode/power save mode
-static inline void wait_for_interrupt(void);          // enter sleep mode (see WFI)
-static inline void wait_for_event_or_interrupt(void); // enter sleep mode (see WFE)
-// TODO: add change from sleep to deep sleep states
-
 // == priority management (interrupt masks set execution priority cpu in Thread mode)
-static inline void enable_all_interrupt(void);
-static inline void disable_all_interrupt(void); // masks interrupts with priority >= 0
-static inline uint32_t getmask_interrupt(void); // returns 1: disable_all_interrupt called last. 0: enable_all_interrupt called last.
-static inline void enable_fault_interrupt(void);
-static inline void disable_fault_interrupt(void);     // masks interrupts including fault interrupt with priority >= -1
-static inline uint32_t getfaultmask_interrupt(void);  // returns 1: disable_fault_interrupt called last. 0: enable_fault_interrupt called last.
-static inline void setprioritymask_interrupt(uint8_t priority/*0:no priority masking*/); // mask interrupts with priority <= priority
-static inline uint32_t getprioritymask_interrupt(void); // returns 0: No masking. M!=0: Interrups with priority <= M are masked.
-static inline void clearprioritymask_interrupt(void);
+//    Offers 3 mechanisms. They work independently from each other. If more than one mask is set the one with the highest priority wins.
+//    setfaultmask_interrupt sets mask with highest priority (-1)
+//    setprio0mask_interrupt sets mask with 2nd highest priority (0)
+//    setprioritymask_interrupt sets mask with 3rd highest priority (> 0)
+static inline void setprio0mask_interrupt(void);      // mask interrupts (sets PRIMASK) with priority >= 0)
+static inline void clearprio0mask_interrupt(void);    // allow interrupts (clears PRIMASK)
+static inline uint32_t getprio0mask_interrupt(void);  // returns 1: setprio0mask_interrupt called last. 0: clearprio0mask_interrupt called last.
+static inline void setfaultmask_interrupt(void);      // mask interrupts including fault interrupt with priority >= -1 (interrupt handlers clear that mask at return except NMI)
+static inline void clearfaultmask_interrupt(void);    // allow interrupts (clears FAULTMASK)
+static inline uint32_t getfaultmask_interrupt(void);  // returns 1: setfaultmask_interrupt called last. 0: clearfaultmask_interrupt called last.
+static inline void setprioritymask_interrupt(uint8_t priority/*0:no priority masking*/); // Only for priority > 0: Mask interrupts whose priority >= parameter-priority.
+static inline void clearprioritymask_interrupt(void);    // allow interrupts (set BASEPRI to 0).
+static inline uint32_t getprioritymask_interrupt(void);  // returns 0: No masking, clearprioritymask_interrupt called last. M!=0: Interrups with priority >= M are masked.
 
 // == interrupt_e
 static inline int setpriority_interrupt(interrupt_e intnr, interrupt_priority_e priority);
@@ -136,23 +146,41 @@ static inline int generate_coreinterrupt(coreinterrupt_e intnr);
 static inline int clear_coreinterrupt(coreinterrupt_e intnr);
 static inline int is_coreinterrupt(coreinterrupt_e intnr);
 static inline int isactive_coreinterrupt(coreinterrupt_e intnr);
+static inline int is_any_coreinterrupt(void); // returns 1: interruptcore_e is pending (interrupt_e are not considered). 0: No coreinterrupt_e is pending.
 static inline int enable_coreinterrupt(coreinterrupt_e intnr);
 static inline int disable_coreinterrupt(coreinterrupt_e intnr);
 static inline int isenabled_coreinterrupt(coreinterrupt_e intnr);
 
+// == sleep support
+static inline void wait_interrupt(void); // Enter sleep mode (see WFI) and wakes up with next interrupt (effects of PRIMASK (setprio0mask_interrupt) are ignored. pending interrupt which would execute if PRIMASK is cleared let the CPU wake-up).
+
 // == functions exclusively callable by exception/interrupt handlers
 static inline int isret2threadmode_interrupt(void);   // returns 1: Processor was interrupted in "Thread mode". 0: Another active handler was interrupted/Processor was interrupted in "Handler mode".
+
+// == functions to handle interrupt return/stackframe
+static inline uint32_t retcode_interrupt(interrupt_retcode_e rc); // returns special code for LR register used to indicate return from exception or interrupt handler
 
 // == interrupt vector table
 static inline uint32_t sizealign_interruptTable(void);   // ramaddr must be aligned to this byte size (512 bytes)
 static inline uint32_t len_interruptTable(void);         // number of entries in vector table (size_in_bytes=sizeof(uint32_t)*len_vectab_interrupt())
 static inline int  relocate_interruptTable(/*out*/uint32_t ramaddr[/*len_interruptTable()*/]);  // copies ROM table into RAM and stores new address into NVIC
-static inline void reset_interruptTable(void);           // let NVIC use the ROM table
+static inline void reset_interruptTable(void);           // switch back to ROM table
 
 // == interrupt configuration control
-static inline void disable_synchronous_busfault_interrupt(void);  // ignores synchronous/precise BUSFAULT in FAULT or NMI interrupt handler (if execution priority <= -1) which would lead to lockup
-static inline void enable_synchronous_busfault_interrupt(void);   // (default after reset) synchronous/precise BUSFAULT in FAULT or NMI interrupt handler leads to cpu lockup
-static inline int  isignored_synchronous_busfault_interrupt(void);// returns 1: disable_synchronous_busfault_interrupt called last. 0: enable_synchronous_busfault_interrupt called last.
+static inline void setevent_onpending_interrupt(bool isOn);       // isOn 1: Eventflag of core is set with every new arrived pending interrupt. 0: (default) Pending interrupt do not set eventflag, only active interrupts.
+static inline int  isevent_onpending_interrupt(void);             // Returns 1: setevent_onpending_interrupt(1) called last. 0: setevent_onpending_interrupt(0) called last.
+static inline void enable_ignoresyncbusfault_interrupt(void);     // ignores synchronous/precise BUSFAULT in FAULT or NMI interrupt handler (if execution priority <= -1) which would lead to lockup
+static inline void disable_ignoresyncbusfault_interrupt(void);    // (default after reset) synchronous/precise BUSFAULT in FAULT or NMI interrupt handler leads to cpu lockup
+static inline int  isenabled_ignoresyncbusfault_interrupt(void);  // returns 1: enable_ignoresyncbusfault_interrupt called last. 0: disable_ignoresyncbusfault_interrupt called last.
+static inline void enable_nested2threadmode_interrupt(void);      // Allows to jump from nested exception back to Thread mode and despite other active interrupts. Preempted interrupts keep their state active and execution priority of Thread mode is equal to highest of active interrupts.
+static inline void disable_nested2threadmode_interrupt(void);     // (default after reset) Jumping back to Thread mode from nested interrupt with other interrupts active causes a USAGEFAULT interrupt and a lockup if priority <= -1.
+static inline int  isenabled_nested2threadmode_interrupt(void);   // returns 1: enable_nested2threadmode_interrupt called last. 0: disable_nested2threadmode_interrupt called last.
+static inline void enable_unalignedaccess_interrupt(void);        // Unaligned word or halfword accesses generate USAGEFAULT exception (escalates to FAULT if disabled).
+static inline void disable_unalignedaccess_interrupt(void);       // (default) Unaligned word or halfword accesses allowed. Unaligned load-store multiples and word or halfword exclusive accesses always fault. Stack access must always be aligned.
+static inline int  isenabled_unalignedaccess_interrupt(void);     // returns 1: enable_unalignedaccess_interrupt called last. 0: disable_unalignedaccess_interrupt called last.
+static inline void enable_divby0_interrupt(void);                 // Division by 0 (udiv,sdiv) generate USAGEFAULT exception (escalates to FAULT if disabled).
+static inline void disable_divby0_interrupt(void);                // (default) Division by 0 will result in value 0 without generating an exception.
+static inline int  isenabled_divby0_interrupt(void);              // returns 1: enable_divby0_interrupt called last. 0: disable_divby0_interrupt called last.
 
 
 // == definitions
@@ -196,101 +224,102 @@ static inline int  isignored_synchronous_busfault_interrupt(void);// returns 1: 
 
 // section: inline implementation
 
-/* function: wait_for_interrupt
- * Versetzt den Prozessor in den Schlafmodus.
- * Daraust erwacht er mit dem nächsten Interrupt. */
-static inline void wait_for_interrupt(void)
-{
-   __asm( "WFI" );
-}
-
-/* function: wait_for_interrupt
- * Versetzt den Prozessor in den Schlafmodus, falls das interne Eventbit nicht gesetzt ist.
- * Daraust erwacht er mit dem nächsten Interrupt oder Event, siehe auch Instruktionen WFE und SEV. */
-static inline void wait_for_event_or_interrupt(void)
-{
-   __asm( "WFE" );
-}
-
-/* function: enable_all_interrupt
- * Schaltet alle Interrupts wieder ein, die mit disable_all_interrupt ausgeschaltet wurden.
+/* function: clearprio0mask_interrupt
+ * Schaltet alle Interrupts wieder ein, die mit setprio0mask_interrupt ausgeschaltet wurden.
  *
  * Ergebnis:
- * <getmask_interrupt> liefert 0 zurück (Default nach Reset). */
-static inline void enable_all_interrupt(void)
+ * <getprio0mask_interrupt> liefert 0 zurück (Default nach Reset). */
+static inline void clearprio0mask_interrupt(void)
 {
-   __asm( "cpsie I" );
+   __asm volatile( "cpsie I" );
 }
 
-/* function: disable_all_interrupt
- * Maskiert alle Interrupts (Pending Bits bleiben erhalten), bis auf NMI, Reset und Fault.
+/* function: setprio0mask_interrupt
+ * Setzt die Ausführungspriorität auf 0.
+ * Maskiert alle Interrupts bis auf NMI, RESET und FAULT.
+ * Diese Maske ist zusätzlich und unabhängig von setfaultmask_interrupt und setprioritymask_interrupt zu verstehen.
+ * Werden mehrere Prioritätsmasken gesetzt ist die Ausführungspriorität das Maximum aller (d.h. der numerisch kleinste Wert).
  *
  * Ergebnis:
- * <getmask_interrupt> liefert 1 zurück. */
-static inline void disable_all_interrupt(void)
+ * <getprio0mask_interrupt> liefert 1 zurück. */
+static inline void setprio0mask_interrupt(void)
 {
-   __asm( "cpsid I" );
+   __asm volatile( "cpsid I" );
 }
 
-/* function: getmask_interrupt
+/* function: getprio0mask_interrupt
  * Liefert 1 zurück, falls die Interrupts (ausser NMI,Reset,Fault) maskiert sind, sonst 0.
- * disable_all_interrupts schaltet die "normalen" Interrupts aus mit maximal Priorität 0. */
-static inline uint32_t getmask_interrupt(void)
+ * setprio0mask_interrupt schaltet die "normalen" Interrupts aus mit maximal Priorität 0. */
+static inline uint32_t getprio0mask_interrupt(void)
 {
    uint32_t mask;
-   __asm( "mrs %[result], PRIMASK" : [result] "=r" (mask) ::);
+   __asm volatile( "mrs %[result], PRIMASK" : [result] "=r" (mask) ::);
    return mask;
 }
 
-/* function: enable_fault_interrupt
+/* function: clearfaultmask_interrupt
  * Schaltet alle Interrupts wieder ein.
  *
  * Ergebnis:
  * <getfaultmask_interrupt> liefert 0 zurück (Default nach Reset). */
-static inline void enable_fault_interrupt(void)
+static inline void clearfaultmask_interrupt(void)
 {
-   __asm( "cpsie F" );
+   __asm volatile( "cpsie F" );
 }
 
-/* function: enable_fault_interrupt
- * Maskiert alle Interrupts (Pending Bits bleiben erhalten), bis auf NMI und Reset.
- * Diese Maske ist zusätzlich und unabhängig von <disable_all_interrupt> zu verstehen.
+/* function: setfaultmask_interrupt
+ * Setzt die Ausführungspriorität auf -1.
+ * Damit können nur noch Interrupts mit Priorität -2 und -3 ausgeführt werden.
+ * Maskiert daher alle Interrupts bis auf NMI und Reset.
+ * Diese Maske ist zusätzlich und unabhängig von setprio0mask_interrupt und setprioritymask_interrupt zu verstehen.
+ * Werden mehrere Prioritätsmasken gesetzt ist die Ausführungspriorität das Maximum aller (d.h. der numerisch kleinste Wert).
+ *
+ * Interruptbesonderheiten:
+ * Bei Verlassen eines anderen Interrupts als NMI wird automatisch clearfaultmask_interrupt aufgerufen. Bei NMI Interrupts
+ * wird diese Maske nicht angetastet.
+ * Diese Funktion wird ignoriert, sollte sie aus NMI und FAULT Interrupts heraus ausgerufen werden.
+ *
+ * Precondition:
+ * - Does only work if not called from NMI or FAULT interrupts else function ignored.
  *
  * Ergebnis:
  * <getfaultmask_interrupt> liefert 1 zurück. */
-static inline void disable_fault_interrupt(void)
+static inline void setfaultmask_interrupt(void)
 {
-   __asm( "cpsid F" );
+   __asm volatile( "cpsid F" );
 }
 
 static inline uint32_t getfaultmask_interrupt(void)
 {
    uint32_t mask;
-   __asm( "mrs %[result], FAULTMASK" : [result] "=r" (mask) ::);
+   __asm volatile( "mrs %[result], FAULTMASK" : [result] "=r" (mask) ::);
    return mask;
 }
 
 /* function: setprioritymask_interrupt
  * Erlaubt nur Interrupts mit höherer Priorität als priority.
  * Parameterwert 0 schaltet die Basispriortät aus.
- * Mit <disable_all_interrupt> können alle Interrupts einschliesslich der höchsten Priorität 0
- * temporär maskiert werden. */
+ * Mit setprio0mask_interrupt können alle Interrupts einschliesslich der höchsten Priorität 0 temporär maskiert werden.
+ * Diese Maske ist zusätzlich und unabhängig von setprio0mask_interrupt und setfaultmask_interrupt zu verstehen.
+ * Werden mehrere Prioritätsmasken gesetzt ist die Ausführungspriorität das Maximum aller (d.h. der numerisch kleinste Wert).
+ *
+ */
 static inline void setprioritymask_interrupt(uint8_t priority/*0:no priority masking*/)
 {
    priority <<= (8-HW_KONFIG_NVIC_INTERRUPT_PRIORITY_NROFBITS);
-   __asm( "msr BASEPRI, %[bp]" :: [bp] "r" (priority) :);
+   __asm volatile( "msr BASEPRI, %[bp]" :: [bp] "r" (priority) :);
 }
 
 static inline uint32_t getprioritymask_interrupt(void)
 {
    uint32_t priority;
-   __asm( "mrs %[result], BASEPRI" : [result] "=r" (priority) ::);
+   __asm volatile( "mrs %[result], BASEPRI" : [result] "=r" (priority) ::);
    return priority >> (8-HW_KONFIG_NVIC_INTERRUPT_PRIORITY_NROFBITS);
 }
 
 static inline void clearprioritymask_interrupt(void)
 {
-   __asm( "msr BASEPRI, %[bp]" :: [bp] "r" (0) :);
+   __asm volatile( "msr BASEPRI, %[bp]" :: [bp] "r" (0) :);
 }
 
 #define VALIDATE_ADAPT_INTNR_NVIC(intnr, return_code) \
@@ -398,7 +427,7 @@ static inline uint8_t highestpriority_interrupt(void)
 static inline uint8_t active_interrupt(void)
 {
     uint32_t active;
-   __asm( "mrs %[result], IPSR" : [result] "=r" (active) ::);
+   __asm volatile( "mrs %[result], IPSR" : [result] "=r" (active) ::);
    return (uint8_t) active;
 }
 
@@ -449,7 +478,7 @@ static inline int generate_coreinterrupt(coreinterrupt_e intnr)
       break;
    case coreinterrupt_DEBUGMONITOR:
       // TODO: atomic ?
-      HW_REGISTER(SCS, DEMCR) |= HW_REGISTER_BIT_SCS_DEMCR_MONPEND;
+      setbits_atomic(&hDBG->demcr, HW_REGISTER_BIT_SCS_DEMCR_MONPEND); // TODO: use HW_BIT from core !!!
       break;
    case coreinterrupt_PENDSV:
       hSCB->icsr = HW_BIT(SCB, ICSR, PENDSVSET);
@@ -481,7 +510,7 @@ static inline int clear_coreinterrupt(coreinterrupt_e intnr)
       break;
    case coreinterrupt_DEBUGMONITOR:
       // TODO: atomic ?
-      HW_REGISTER(SCS, DEMCR) &= ~HW_REGISTER_BIT_SCS_DEMCR_MONPEND;
+      clearbits_atomic(&hDBG->demcr, HW_REGISTER_BIT_SCS_DEMCR_MONPEND); // TODO: use HW_BIT from core !!!
       break;
    case coreinterrupt_PENDSV:
       hSCB->icsr = HW_BIT(SCB, ICSR, PENDSVCLR);
@@ -508,7 +537,7 @@ static inline int is_coreinterrupt(coreinterrupt_e intnr)
    case coreinterrupt_SVCALL:
       return (hSCB->shcsr >> HW_BIT(SCB, SHCSR, SVCALLPENDED_POS)) & 1;
    case coreinterrupt_DEBUGMONITOR:
-      return (HW_REGISTER(SCS, DEMCR) / HW_REGISTER_BIT_SCS_DEMCR_MONPEND) & 1;
+      return (hDBG->demcr / HW_REGISTER_BIT_SCS_DEMCR_MONPEND) & 1;
    case coreinterrupt_PENDSV:
       return (hSCB->icsr >> HW_BIT(SCB, ICSR, PENDSVSET_POS)) & 1;
    case coreinterrupt_SYSTICK:
@@ -542,6 +571,18 @@ static inline int isactive_coreinterrupt(coreinterrupt_e intnr)
    return 0;
 }
 
+static inline int is_any_coreinterrupt(void)
+{
+   return 0 != (  (hDBG->demcr & HW_REGISTER_BIT_SCS_DEMCR_MONPEND)
+               |  (hSCB->icsr & (HW_BIT(SCB, ICSR, PENDSVSET) | HW_BIT(SCB, ICSR, PENDSTSET)))
+               |  (hSCB->shcsr & (  HW_BIT(SCB, SHCSR, MEMFAULTPENDED)
+                                 |  HW_BIT(SCB, SHCSR, BUSFAULTPENDED)
+                                 |  HW_BIT(SCB, SHCSR, USGFAULTPENDED)
+                                 |  HW_BIT(SCB, SHCSR, SVCALLPENDED)))
+               );
+}
+
+
 static inline int enable_coreinterrupt(coreinterrupt_e intnr)
 {
    switch (intnr) {
@@ -558,7 +599,7 @@ static inline int enable_coreinterrupt(coreinterrupt_e intnr)
       break;
    case coreinterrupt_DEBUGMONITOR:
       // TODO: atomic ?
-      HW_REGISTER(SCS, DEMCR) |= HW_REGISTER_BIT_SCS_DEMCR_MONEN;
+      hDBG->demcr |= HW_REGISTER_BIT_SCS_DEMCR_MONEN;
       break;
    }
    return 0;
@@ -580,10 +621,23 @@ static inline int disable_coreinterrupt(coreinterrupt_e intnr)
       break;
    case coreinterrupt_DEBUGMONITOR:
       // TODO: atomic ?
-      HW_REGISTER(SCS, DEMCR) &= ~HW_REGISTER_BIT_SCS_DEMCR_MONEN;
+      hDBG->demcr &= ~HW_REGISTER_BIT_SCS_DEMCR_MONEN;
       break;
    }
    return 0;
+}
+
+/* Versetzt den Prozessor in den Schlafmodus.
+ * Daraust erwacht er mit dem nächsten Interrupt.
+ * Die Effekte von PRIMASK werden ignoriert, d.h. ein wartender Interrupt, der ausgeführt würde,
+ * wäre nur PRIMASK nicht gesetzt (PRIMASK wird gesetzt mit setprio0mask_interrupt), lässt WFI
+ * zurückkehren. So kann es vermieden werden, dass ein Interrupt kurz vor dem Aufruf von WFI auftritt,
+ * der dann die CPU aus WFI nicht mehr aufwecken kann. Es kann auch dazu dienen, dass nach dem Aufwachen
+ * erst Initialsiierungen durchgeführt werden müssen und es dem Interrupt erst danach erlaubt ist,
+ * ausgeführt zu werden. */
+static inline void wait_interrupt(void)
+{
+   __asm volatile( "WFI" );
 }
 
 static inline int isenabled_coreinterrupt(coreinterrupt_e intnr)
@@ -598,7 +652,7 @@ static inline int isenabled_coreinterrupt(coreinterrupt_e intnr)
    case coreinterrupt_USAGEFAULT:
       return (HW_REGISTER(SCB, SHCSR) / HW_REGISTER_BIT_SCB_SHCSR_USGFAULTENA) & 1;
    case coreinterrupt_DEBUGMONITOR:
-      return (HW_REGISTER(SCS, DEMCR) / HW_REGISTER_BIT_SCS_DEMCR_MONEN) & 1;
+      return (hDBG->demcr / HW_REGISTER_BIT_SCS_DEMCR_MONEN) & 1;
    }
    return 1/*default is enabled*/;
 }
@@ -626,8 +680,7 @@ static inline uint32_t len_interruptTable(void)
  * Zur Initialsierung werden len_interruptTable() Einträge aus dem ROM-Interruptvektor an die neue ramaddr kopiert.
  * Die Größe des Speicherblockes, auf den ramaddr zeigt, muss mindestens (len_interruptTable() * sizeof(uint32_t))
  * Bytes betragen.
- * Wenn ramaddr nicht korrekt auf sizealign_interruptTable() Bytes ausgerichtet wurde oder nicht innerhalb
- * der ersten 1GB zu liegen kommt, wird der Fehlercode EINVAL zurückgegeben. */
+ * Wenn ramaddr nicht korrekt auf sizealign_interruptTable() Bytes ausgerichtet wurde, wird der Fehlercode EINVAL zurückgegeben. */
 static inline int relocate_interruptTable(/*out*/uint32_t ramaddr[/*len_interruptTable()*/])
 {
    if (((uintptr_t)ramaddr & ~HW_BIT(SCB, VTOR, TBLOFF))) {
@@ -653,19 +706,79 @@ static inline void reset_interruptTable(void)
    __asm volatile("dsb");  // wait until change is written to vtor
 }
 
-static inline void disable_synchronous_busfault_interrupt(void)
+static inline void setevent_onpending_interrupt(bool isOn)
 {
-   setbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, BFHFNMIGN));
+   setclrbits_atomic(&hSCB->scr, (0u-isOn) & HW_BIT(SCB, SCR, SEVEONPEND), HW_BIT(SCB, SCR, SEVEONPEND));
 }
 
-static inline void enable_synchronous_busfault_interrupt(void)
+static inline int isevent_onpending_interrupt(void)
+{
+   return (hSCB->scr >> HW_BIT(SCB, SCR, SEVEONPEND_POS)) & 1;
+}
+
+static inline void disable_ignoresyncbusfault_interrupt(void)
 {
    clearbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, BFHFNMIGN));
 }
 
-static inline int isignored_synchronous_busfault_interrupt(void)
+static inline void enable_ignoresyncbusfault_interrupt(void)
+{
+   setbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, BFHFNMIGN));
+}
+
+static inline int isenabled_ignoresyncbusfault_interrupt(void)
 {
    return (hSCB->ccr >> HW_BIT(SCB, CCR, BFHFNMIGN_POS)) & 1;
+}
+
+static inline void enable_nested2threadmode_interrupt(void)
+{
+   setbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, NONBASETHRDENA));
+}
+
+static inline void disable_nested2threadmode_interrupt(void)
+{
+   clearbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, NONBASETHRDENA));
+}
+
+static inline int isenabled_nested2threadmode_interrupt(void)
+{
+   return (hSCB->ccr >> HW_BIT(SCB, CCR, NONBASETHRDENA_POS)) & 1;
+}
+
+static inline void enable_unalignedaccess_interrupt(void)
+{
+   setbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, UNALIGN_TRP));
+}
+
+static inline void disable_unalignedaccess_interrupt(void)
+{
+   clearbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, UNALIGN_TRP));
+}
+
+static inline int isenabled_unalignedaccess_interrupt(void)
+{
+   return (hSCB->ccr >> HW_BIT(SCB, CCR, UNALIGN_TRP_POS)) & 1;
+}
+
+static inline void enable_divby0_interrupt(void)
+{
+   setbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, DIV_0_TRP));
+}
+
+static inline void disable_divby0_interrupt(void)
+{
+   clearbits_atomic(&hSCB->ccr, HW_BIT(SCB, CCR, DIV_0_TRP));
+}
+
+static inline int isenabled_divby0_interrupt(void)
+{
+   return (hSCB->ccr >> HW_BIT(SCB, CCR, DIV_0_TRP_POS)) & 1;
+}
+
+static inline uint32_t retcode_interrupt(interrupt_retcode_e rc)
+{
+   return (0xffffffe1 | rc);
 }
 
 

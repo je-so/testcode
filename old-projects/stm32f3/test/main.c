@@ -14,9 +14,13 @@ volatile uint32_t    clockHZ; // System is running at this frequency
 /* set by assert_failed_exception */
 volatile const char *filename;
 volatile int         linenr;
+cpustate_t           cpustate;
+
+
+volatile uint32_t    s_pendsvcounter;
 volatile uint32_t    s_faultcounter;
+volatile uint32_t    s_nmicounter;
 volatile uint32_t    s_usagefault;
-volatile cpustate_t  cpustate;
 
 void assert_failed_exception(const char *_filename, int _linenr)
 {
@@ -51,25 +55,55 @@ void switch_led(void)
    }
 }
 
+#if 0
+static void switch_unprivileged(void)
+{
+   __asm volatile(
+         "mrs r0, CONTROL\n"
+         "orrs r0, #1\n"
+         "msr CONTROL, r0\n"
+         ::: "cc", "r0"
+      );
+}
+
+static void switch_privileged(void)
+{
+   __asm volatile(
+         "mrs r0, CONTROL\n"
+         "bics r0, #1\n"
+         "msr CONTROL, r0"
+         ::: "cc", "r0"
+      );
+}
+
+static uint32_t is_unprivileged(void)
+{
+   uint32_t ctrl;
+   __asm volatile(
+         "mrs %0, CONTROL\n"
+         "ands %0, #1\n"
+         : "=r" (ctrl) :: "cc"
+      );
+   return ctrl;
+}
+#endif
+
+cpustate_t           cpustate2;
+volatile uint32_t    s_mpufault;
+
+void mpufault_interrupt(void) // TODO: remove
+{
+   ++ s_mpufault;
+   assert( isactive_coreinterrupt(coreinterrupt_MPUFAULT));
+   if (isinit_cpustate(&cpustate2)) {
+      ret2threadmode_cpustate(&cpustate2);
+   }
+}
+
 void usagefault_interrupt(void)
 {
    ++ s_usagefault;
-
    assert( isactive_coreinterrupt(coreinterrupt_USAGEFAULT));
-
-   if (isinit_cpustate(&cpustate)) {
-      assert( 1 == isret2threadmode_interrupt());  // single nested interrupt
-      // generate fault interrupt
-      __asm volatile(
-         "mov r0, #0x10000000\n" // unknown SRAM address
-         "ldr r0, [r0, #-4]\n"   // precise busfault
-      );
-   }
-
-   // disable trapping on division by 0 (result of div by 0 is 0)
-   hSCB->ccr &= ~HW_BIT(SCB, CCR, DIV_0_TRP);
-   // disable trapping on unaligned access
-   hSCB->ccr &= ~HW_BIT(SCB, CCR, UNALIGN_TRP);
 }
 
 void busfault_interrupt(void)
@@ -87,10 +121,18 @@ void fault_interrupt(void)
 {
    ++ s_faultcounter;
 
-   if (isinit_cpustate(&cpustate)) {
-      assert( 0 == isret2threadmode_interrupt());  // (at least) two nested interrupts
-      ret2threadmode_cpustate(&cpustate);
+   setsysclock_clockcntrl(clock_INTERNAL);
+   while (1) {
+      write1_gpio(LED_PORT, LED_PINS&~(LED_MINPIN|LED_MAXPIN));
+      for (volatile int i = 0; i < 80000; ++i) ;
+      write0_gpio(LED_PORT, LED_PINS);
+      for (volatile int i = 0; i < 80000; ++i) ;
    }
+}
+
+void nmi_interrupt(void)
+{
+   ++ s_nmicounter;
 
    setsysclock_clockcntrl(clock_INTERNAL);
    while (1) {
@@ -99,6 +141,42 @@ void fault_interrupt(void)
       write0_gpio(LED_PORT, LED_PINS);
       for (volatile int i = 0; i < 80000; ++i) ;
    }
+}
+
+void pendsv_interrupt(void)
+{
+   ++s_pendsvcounter;
+}
+
+static uint32_t stack2[128];
+
+void called_function(void)
+{
+   switch_led();
+   for (volatile int i = 0; i < 125000; ++i) ;
+   switch_led();
+   for (volatile int i = 0; i < 125000; ++i) ;
+}
+
+void call_function(void (* fct) (void))
+{
+   fct();
+   jump_cpustate(&cpustate);
+}
+
+void test_before(void)
+{
+   int err = init_cpustate(&cpustate);
+   if (err == 0) {
+      init_cpustate(&cpustate2);
+      cpustate2.sp = (uintptr_t) &stack2[lengthof(stack2)];
+      cpustate2.iframe[0/*r0*/] = (uintptr_t) &called_function;
+      cpustate2.iframe[6/*pc*/] = (uintptr_t) &call_function;
+      jump_cpustate(&cpustate2);
+   }
+   assert(EINTR == err);
+   free_cpustate(&cpustate);
+   free_cpustate(&cpustate2);
 }
 
 /*
@@ -111,7 +189,6 @@ void fault_interrupt(void)
  */
 int main(void)
 {
-   int err;
    enable_gpio_clockcntrl(SWITCH_PORT_BIT|LED_PORT_BIT);
    enable_basictimer_clockcntrl(TIMER7_BIT);
    config_input_gpio(SWITCH_PORT, SWITCH_PIN, GPIO_PULL_OFF);
@@ -119,26 +196,24 @@ int main(void)
    enable_dwt_dbg();
    // enable_syscfg_clockcntrl();
 
-      // TEST atomic_setbit_interrupt
-      assert( !isenabled_coreinterrupt(coreinterrupt_MPUFAULT));
-      assert( !is_coreinterrupt(coreinterrupt_MPUFAULT));
-      enable_coreinterrupt(coreinterrupt_MPUFAULT);
-      assert( isenabled_coreinterrupt(coreinterrupt_MPUFAULT));
-      disable_coreinterrupt(coreinterrupt_MPUFAULT);
-      assert( !isenabled_coreinterrupt(coreinterrupt_MPUFAULT));
+   for (volatile int i = 0; i < 125000; ++i) ;
 
-      // TEST atomic_clearbit_interrupt
-      assert( !isenabled_coreinterrupt(coreinterrupt_MPUFAULT));
-      generate_coreinterrupt(coreinterrupt_MPUFAULT);
-      assert( is_coreinterrupt(coreinterrupt_MPUFAULT));
-      clear_coreinterrupt(coreinterrupt_MPUFAULT);
-      assert( ! is_coreinterrupt(coreinterrupt_MPUFAULT));
+   test_before();
 
+#if 0
+   // TODO: dwt remembers configuration ==> could use to trigger reset in watchdog and restart testprogram !!
+   enable_dwt_dbg();
+   uint8_t wp1;
+   assert(0 == addwatchpoint_dwtdbg(&wp1, dwtdbg_watchpoint_DATAADDR_RW, (uintptr_t)&wp1, 0));
 
-#define RUN(module) \
-         switch_led(); \
-         extern int unittest_##module(void); \
-         assert( 0 == unittest_##module())
+   if (3 == wp1) {
+      reset_core();
+      clearallwatchpoint_dwtdbg();
+      assert(0 == addwatchpoint_dwtdbg(&wp1, dwtdbg_watchpoint_DATAADDR_RW, (uintptr_t)&wp1, 0));
+      assert(3 == wp1);
+      clearwatchpoint_dwtdbg(wp1);
+   }
+#endif
 
 // TODO: move into exti test with buttons
       // TEST swier 0->1 generates exception only if enabled in imr1, enabling imr1 later does not work and swier must be reset to 0 to work.
@@ -148,10 +223,12 @@ int main(void)
       EXTI->imr1 |= 1;
       assert( 1 == (EXTI->imr1 & 1));
       EXTI->swier1 = 1; // does not work 1->1 !
+      __asm volatile ("dsb\n");
       for (volatile int i = 0; i < 1; ++i) ;
       assert( 0 == (EXTI->pr1 & 1));
       EXTI->swier1 = 0;
       EXTI->swier1 = 1; // does work 0->1 !
+      __asm volatile ("dsb\n");
       for (volatile int i = 0; i < 1; ++i) ;
       assert( 1 == (EXTI->pr1 & 1));
       assert( 1 == (EXTI->swier1 & 1));
@@ -164,65 +241,8 @@ int main(void)
 
 // ======= core
 
-      // TEST HW_BIT(SCB, CCR, DIV_0_TRP): make div by 0 a fault exception
-      s_usagefault = 0;
-      hSCB->ccr |= HW_BIT(SCB, CCR, DIV_0_TRP);
-      enable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      {
-         volatile uint32_t divisor = 0;
-         volatile uint32_t result = 10 / divisor;  // usagefault_interrupt clears DIV_0_TRP
-         assert( 0 == result);
-      }
-      disable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      assert( 1 == s_usagefault);
-
-      // TEST HW_BIT(SCB, CCR, UNALIGN_TRP): trap on unaligned access
-      s_usagefault = 0;
-      hSCB->ccr |= HW_BIT(SCB, CCR, UNALIGN_TRP);
-      enable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      {
-         volatile uint32_t data[2] = { 0, 0 };
-         assert( 0 == *(uint32_t*)(1+(uintptr_t)data));
-      }
-      disable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      assert( 1 == s_usagefault);
 // ======= end core
 
-      // TEST HW_BIT(SCB, CCR, USERSETMPEND): privilege of stir !!
-
-
-      // TEST nested fault_interrupt: set HW_BIT(SCB, CCR, NONBASETHRDENA) allows to jump from nested exception back to Thread mode and skip active interrupts
-      assert( 0 == (hSCB->ccr & HW_BIT(SCB, CCR, NONBASETHRDENA)));  // default after reset
-      hSCB->ccr |= HW_BIT(SCB, CCR, NONBASETHRDENA);
-      assert( 0 != (hSCB->ccr & HW_BIT(SCB, CCR, NONBASETHRDENA)));  // default after reset
-      s_faultcounter = 0;
-      s_usagefault   = 0;
-      enable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      err = init_cpustate(&cpustate);
-      if (err == 0) {
-         assert( 0 == s_faultcounter);
-         generate_coreinterrupt(coreinterrupt_USAGEFAULT);
-         assert( 0 /*never reached*/ );
-      }
-      assert( EINTR == err); // return from interrupt
-      free_cpustate(&cpustate);
-      assert( 1 == s_usagefault);
-      assert( 1 == s_faultcounter);
-      assert( 0 == is_coreinterrupt(coreinterrupt_USAGEFAULT));
-      assert( 1 == isactive_coreinterrupt(coreinterrupt_USAGEFAULT));   // Thread mode priority is currently at USAGEFAULT level
-      generate_coreinterrupt(coreinterrupt_USAGEFAULT);
-      assert( 1 == is_coreinterrupt(coreinterrupt_USAGEFAULT));
-      assert( 1 == isactive_coreinterrupt(coreinterrupt_USAGEFAULT));
-      assert( 1 == s_usagefault); // interrupt not called cause Thread mode priority is currently at USAGEFAULT level
-      assert( HW_REGISTER_BIT_SCB_SHCSR_USGFAULTACT == (HW_REGISTER(SCB, SHCSR) & 0xfff));
-      HW_REGISTER(SCB, SHCSR) &= ~HW_REGISTER_BIT_SCB_SHCSR_USGFAULTACT;
-      assert( 0 == (HW_REGISTER(SCB, SHCSR) & 0xfff));   // not any coreinterrupt_e active ==> Thread mode priority set to lowest level possible
-      assert( 2 == s_usagefault);   // interrupt now called cause Thread mode priority set to lowest level possible
-      disable_coreinterrupt(coreinterrupt_USAGEFAULT);
-      hSCB->ccr &= ~HW_BIT(SCB, CCR, NONBASETHRDENA);
-      assert( 0 == (hSCB->ccr & HW_BIT(SCB, CCR, NONBASETHRDENA)));
-
-      // TEST setpriority_coreinterrupt: setprioritymask_interrupt
 
    for (;;) {
 
@@ -236,17 +256,30 @@ int main(void)
 
       switch_led();
 
+#define RUN(module) \
+         switch_led(); \
+         extern int unittest_##module(void); \
+         assert( 0 == unittest_##module())
+
+      RUN(atomic);
+      RUN(coreinterrupt);
+      RUN(cpuid);
       RUN(systick);
       RUN(interruptTable);
       RUN(interrupt);
-      RUN(coreinterrupt);
+      RUN(mpu);
+      RUN(cpustate);
 
    }
 
 }
 
+#include "unittest_atomic.c"
+#include "unittest_cpuid.c"
 #include "unittest_systick.c"
 #include "unittest_interruptTable.c"
 #include "unittest_interrupt.c"
 #include "unittest_coreinterrupt.c"
+#include "unittest_mpu.c"
+#include "unittest_cpustate.c"
 

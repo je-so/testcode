@@ -11,7 +11,7 @@
    Wait-For-Event / asm("WFE"):
    Mit dem Assembler-Befehl "WFE" wartet der Prozessor auf ein Event.
    Die EXTI-HW-Unit kann so konfiguriert werden, dass ein externes/internes Event als Event-Signal
-   an den Prozessor weitergeleitet wird und ihn aus "WFE" (Funktion waitevent_core impl. "WFE").
+   an den Prozessor weitergeleitet wird und ihn aus "WFE" erweckt (Funktion waitevent_core impl. "WFE").
 
    Asynchrone Interne Interrupts:
    Einige HW-Units wie (UART, I2C) können Interrupts auch dann generierten, wenn das System
@@ -84,10 +84,10 @@
 #ifndef STM32F303xC_MC_EXTI_HEADER
 #define STM32F303xC_MC_EXTI_HEADER
 
-// == exported Peripherals/HW-Units
+// == Exported Peripherals/HW-Units
 #define EXTI   ((exti_t*)HW_REGISTER_BASEADDR_EXTI)
 
-// == exported types
+// == Exported Types
 struct exti_t;
 
 typedef enum exti_line_e {
@@ -97,7 +97,7 @@ typedef enum exti_line_e {
    exti_LINE27, exti_LINE28, exti_LINE29, exti_LINE30, exti_LINE31, exti_LINE32, exti_LINE33, exti_LINE34, exti_LINE35,
 } exti_line_e;
 
-// == exported functions
+// == Exported Functions
 static inline void enable_interrupt_exti(exti_line_e linenr);
 static inline void disable_interrupt_exti(exti_line_e linenr);
 static inline void enable_event_exti(exti_line_e linenr);
@@ -112,7 +112,8 @@ static inline void clear_interrupt_exti(exti_line_e linenr);
 static inline void generate_interrupt_exti(exti_line_e linenr);
 static inline void setedge_exti(exti_line_e linenr, bool isRising, bool isFalling);
 
-// == definitions
+// == Definitions
+
 typedef volatile struct exti_t {
    uint32_t       imr1;   /* Interrupt Mask Register, rw, Offset: 0x00, Reset: 0x1F800000
                            * Enables interrupts generated from external/internal line 0..31.
@@ -144,7 +145,7 @@ typedef volatile struct exti_t {
                            * Reads or clears pending state of interrupt on external line 0..22,28..31. Bits 28:23 reserved (internal lines).
                            * Bit[x] PEND reads 1: Selected trigger request occurred for Line x. 0: No trigger occurred. writes 1: Bit is cleared. 0: No effect.
                            */
-   uint32_t       _reserved0[2];
+   uint32_t       _res0[2];
    uint32_t       imr2;   /* Interrupt Mask Register, rw, Offset: 0x20, Reset: 0xFFFFFFFC
                            * Enables interrupts generated from external/internal line 32..35.
                            * The reset value for the internal lines 34..35 and reserved bits is set to ‘1’.
@@ -178,7 +179,7 @@ typedef volatile struct exti_t {
 } exti_t;
 
 
-// == Register Offsets and Bit-Fields
+// == Register Descriptions
 
 enum exti_register_e {
    /* IMR1: Interrupt Mask Register */
@@ -208,6 +209,7 @@ enum exti_register_e {
 };
 
 
+
 // section: inline implementation
 
 static inline void assert_offset_exti(void)
@@ -226,17 +228,18 @@ static inline void assert_offset_exti(void)
    static_assert(offsetof(exti_t, pr2)    == HW_OFF(EXTI, PR2));
 }
 
-// only external line number supported, internal line numbers are ignored
+// define helper macros for function implementations
+
 #define VALIDATE_EXTLINENR_EXTI(linenr) \
-         if (23 <= linenr && (linenr <= 28 || 34 <= linenr)) return
+         if (23 <= linenr && (linenr <= 28 || 34 <= linenr)) return        // check linenr is external line number, internal line numbers are ignored
 #define REG_EXTI(reg, linenr) \
-         ((volatile uint32_t*) ((uintptr_t)&EXTI->reg + (linenr & 0x20)))
+         ((volatile uint32_t*) ((uintptr_t)&EXTI->reg + (linenr & 0x20)))  // access EXTI register which holds the corresponding linenr bit
 #define DISABLE_BIT_EXTI(reg, linenr) \
          const uint32_t bit = 1u << (linenr&0x1f); \
-         *REG_EXTI(reg, linenr) &= ~ bit
+         *REG_EXTI(reg, linenr) &= ~ bit                                   // clear bit in register holding linenr
 #define ENABLE_BIT_EXTI(reg, linenr) \
          const uint32_t bit = 1u << (linenr&0x1f); \
-         *REG_EXTI(reg, linenr) |= bit
+         *REG_EXTI(reg, linenr) |= bit                                     // set bit in register holding linenr
 
 static inline void enable_interrupt_exti(exti_line_e linenr)
 {
@@ -316,6 +319,7 @@ static inline void setedge_exti(exti_line_e linenr, bool isRising, bool isFallin
    }
 }
 
+// undefine helper macros
 #undef VALIDATE_EXTLINENR_EXTI
 #undef REG_EXTI
 #undef DISABLE_BIT_EXTI

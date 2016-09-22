@@ -186,7 +186,7 @@ int main(void)
       assert( 0 == s_counter7); // not executed
       start_basictimer(TIMER7);
       assert( isstarted_basictimer(TIMER7));
-      wait_for_interrupt();
+      waitinterrupt_core();
       assert( 0 == is_interrupt(interrupt_TIMER7));
       assert( 1 == s_counter7); // executed
       assert( 0 == disable_interrupt(interrupt_TIMER7));

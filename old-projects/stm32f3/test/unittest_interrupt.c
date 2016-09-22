@@ -32,16 +32,35 @@ void dma2_channel4_interrupt(void)
    s_interrupt_isret2threadmode = 2;
 }
 
-/*
- * Dieses Programm ist ein reines Treiberprogramm für verschiedene Testmodule.
- *
- * Bei jedem erfolgreichen Ausführen eines Testmoduls werden zwei LED eine Position weiterbewegt.
- *
- * Im Fehlerfall beginnen alle LEDs zu blinken.
- *
- */
+static void fault_interrupt4(void)
+{
+   if (isinit_cpustate(&cpustate)) {
+      ret2threadmode_cpustate(&cpustate);
+   }
+   assert(0);
+}
+
+
 int unittest_interrupt(void)
 {
+   int err;
+   uint32_t * const CCMRAM = (uint32_t*) HW_MEMORYREGION_CCMRAM_START;
+   uint32_t   const CCMRAM_SIZE = HW_MEMORYREGION_CCMRAM_SIZE;
+
+   // prepare
+   assert( !isinit_cpustate(&cpustate));
+   assert( CCMRAM_SIZE/sizeof(uint32_t) > len_interruptTable())
+   assert( 0 == relocate_interruptTable(CCMRAM));
+   CCMRAM[coreinterrupt_FAULT] = (uintptr_t) &fault_interrupt4;
+   __asm volatile ("dsb");
+
+   // TEST retcode_interrupt
+   assert( 0xFFFFFFE1 == retcode_interrupt(interrupt_retcode_FPU|interrupt_retcode_HANDLERMODE));
+   assert( 0xFFFFFFE9 == retcode_interrupt(interrupt_retcode_FPU|interrupt_retcode_THREADMODE_MSP));
+   assert( 0xFFFFFFED == retcode_interrupt(interrupt_retcode_FPU|interrupt_retcode_THREADMODE_PSP));
+   assert( 0xFFFFFFF1 == retcode_interrupt(interrupt_retcode_NOFPU|interrupt_retcode_HANDLERMODE));
+   assert( 0xFFFFFFF9 == retcode_interrupt(interrupt_retcode_NOFPU|interrupt_retcode_THREADMODE_MSP));
+   assert( 0xFFFFFFFD == retcode_interrupt(interrupt_retcode_NOFPU|interrupt_retcode_THREADMODE_PSP));
 
    // TEST isenabled_interrupt_nvic EINVAL
    assert( 0 == isenabled_interrupt_nvic(0));
@@ -111,17 +130,51 @@ int unittest_interrupt(void)
       assert( ! is_interrupt(i));
    }
 
+   // TEST STIR: generate interrupt
+   for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
+      assert( ! is_interrupt(i));
+      hCORE->stir = i-16;
+      assert(   is_interrupt(i));
+      assert( 0 == clear_interrupt(i));
+   }
+
+   // TEST STIR: unprivileged access => BUS-FAULT
+   assert(0 == is_interrupt(interrupt_PVD));
+   err = init_cpustate(&cpustate);
+   if (err == 0) {
+      __asm volatile(
+         "strt %0, [%1]\n" // BUSFAULT -> escalates to FAULT
+         :: "r" (interrupt_PVD-16), "r" (&hCORE->stir)
+      );
+   }
+   assert(EINTR == err);
+   free_cpustate(&cpustate);
+
+   // TEST STIR: supports unprivileged access if enabled
+   assert(0 == is_interrupt(interrupt_PVD));
+   // TODO: implement functions enable_unprivgenerate_interrupt/disable_unprivgenerate_interrupt
+   hSCB->ccr |= HW_BIT(SCB, CCR, USERSETMPEND); // enable unprivileged access of STIR
+   __asm volatile(
+      "dsb\n"
+      "strt %0, [%1]\n"    // generates interrupt with unprivileged access
+      :: "r" (interrupt_PVD-16), "r" (&hCORE->stir)
+   );
+   assert(1 == is_interrupt(interrupt_PVD));
+   // reset
+   clear_interrupt(interrupt_PVD);
+   hSCB->ccr &= ~HW_BIT(SCB, CCR, USERSETMPEND); // disable unprivileged access of STIR
+
    // TEST interrupt_TIMER6_DAC execution
    assert( 0 == generate_interrupt(interrupt_TIMER6_DAC));
    assert( 1 == is_interrupt(interrupt_TIMER6_DAC));
    assert( 0 == s_interrupt_counter6);    // not executed
-   __asm( "sev\nwfe\n");                  // clear event flag
+   __asm volatile( "sev\nwfe\n");         // clear event flag
    assert( 0 == enable_interrupt(interrupt_TIMER6_DAC));
    for (volatile int i = 0; i < 1000; ++i) ;
    assert( 0 == is_interrupt(interrupt_TIMER6_DAC));
    assert( 1 == s_interrupt_counter6);    // executed
    assert( 0 == disable_interrupt(interrupt_TIMER6_DAC));
-   wait_for_event_or_interrupt();         // interrupt exit sets event flag ==> wfe returns immediately
+   waitevent_core();         // interrupt exit sets event flag ==> wfe returns immediately
    s_interrupt_counter6 = 0;
 
    // TEST interrupt_TIMER7 execution
@@ -131,11 +184,29 @@ int unittest_interrupt(void)
    assert( 0 == s_interrupt_counter7); // not executed
    start_basictimer(TIMER7);
    assert( isstarted_basictimer(TIMER7));
-   wait_for_interrupt();
+   wait_interrupt();
    assert( 0 == is_interrupt(interrupt_TIMER7));
    assert( 1 == s_interrupt_counter7); // executed
    assert( 0 == disable_interrupt(interrupt_TIMER7));
    s_interrupt_counter7 = 0;
+
+   // TEST wait_interrupt: Effekte von PRIMASK werden ignoriert
+   setprio0mask_interrupt();
+   assert(0 == is_any_coreinterrupt());
+   assert(0 == is_any_interrupt());
+   generate_coreinterrupt(coreinterrupt_PENDSV);
+   wait_interrupt();
+   clear_coreinterrupt(coreinterrupt_PENDSV);
+   assert(0 == is_any_coreinterrupt());
+   assert(0 == is_any_interrupt());
+   enable_interrupt(interrupt_PVD);
+   generate_interrupt(interrupt_PVD);
+   wait_interrupt();
+   clear_interrupt(interrupt_PVD);
+   disable_interrupt(interrupt_PVD);
+   clearprio0mask_interrupt();
+   assert(0 == is_any_coreinterrupt());
+   assert(0 == is_any_interrupt());
 
    // TEST setpriority_interrupt
    for (uint32_t i = 16; i <= HW_KONFIG_NVIC_INTERRUPT_MAXNR; ++i) {
@@ -174,14 +245,14 @@ int unittest_interrupt(void)
 
    // TEST is_any_interrupt: indicates only external interrupts
    assert( 0 == (hCORE->scb.icsr & HW_BIT(SCB, ICSR, ISRPENDING)));
-   disable_all_interrupt();
+   setprio0mask_interrupt();
    generate_coreinterrupt(coreinterrupt_SYSTICK);
    assert( 0 == is_any_interrupt());
    clear_coreinterrupt(coreinterrupt_SYSTICK);
    generate_interrupt(interrupt_GPIOPIN0);
    assert( 1 == is_any_interrupt());
    clear_interrupt(interrupt_GPIOPIN0);
-   enable_all_interrupt();
+   clearprio0mask_interrupt();
 
    // TEST isret2threadmode_interrupt
    s_interrupt_isret2threadmode = 0;
@@ -253,8 +324,8 @@ int unittest_interrupt(void)
          for (uint32_t disableType = 0; disableType <= 2; ++disableType) {
             // prepare
             switch (disableType) {
-            case 0: disable_fault_interrupt(); break; // All exceptions with priority >= -1 prevented
-            case 1: disable_all_interrupt(); break;   // All exceptions with priority >= 0 prevented
+            case 0: setfaultmask_interrupt(); break; // All exceptions with priority >= -1 prevented
+            case 1: setprio0mask_interrupt(); break;   // All exceptions with priority >= 0 prevented
             case 2: setprioritymask_interrupt(2); break; // All exceptions with priority >= 2 prevented
             }
             if (coreInt) {
@@ -272,8 +343,8 @@ int unittest_interrupt(void)
             clear_coreinterrupt(coreinterrupt_PENDSV);
             clear_interrupt(interrupt_GPIOPIN0);
             setprioritymask_interrupt(0);
-            enable_fault_interrupt();
-            enable_all_interrupt();
+            clearfaultmask_interrupt();
+            clearprio0mask_interrupt();
             assert( 0 == highestpriority_interrupt());
          }
       }
@@ -281,6 +352,9 @@ int unittest_interrupt(void)
    setpriority_coreinterrupt(coreinterrupt_PENDSV, 0);
    setpriority_interrupt(interrupt_GPIOPIN0, 0);
    disable_interrupt(interrupt_GPIOPIN0);
+
+   // reset
+   reset_interruptTable();
 
    return 0;
 }

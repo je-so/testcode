@@ -20,16 +20,20 @@
 #ifndef CORTEXM4_MC_ATOMIC_HEADER
 #define CORTEXM4_MC_ATOMIC_HEADER
 
+static void clearbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t bits);   // Does following atomic op: *reg &= ~bits;
+static void setbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t bits);     // Does following atomic op: *reg |= bits;
+static void setclrbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t setbits, uint32_t clearbits); // Does following atomic op: *reg = (*reg & ~clearbits) | setbits;
+
 __attribute__((naked))
 static void clearbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t bits)
 {
    __asm volatile(
-      "retry_clearbits_atomic:\n"
+      "1:\n"
       "ldrex   r2, [r0]\n"
       "bics    r2, r1\n"
       "strex   r3, r2, [r0]\n"
-      "cmp     r3, #0\n"
-      "bne     retry_clearbits_atomic\n"
+      "tst     r3, r3\n"
+      "bne     1b\n"
       "bx      lr\n"
       ::: "r2", "r3"
    );
@@ -39,14 +43,30 @@ __attribute__((naked))
 static void setbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t bits)
 {
    __asm volatile(
-      "retry_setbits_atomic:\n"
+      "1:\n"
       "ldrex   r2, [r0]\n"
       "orrs    r2, r1\n"
       "strex   r3, r2, [r0]\n"
-      "cmp     r3, #0\n"
-      "bne     retry_setbits_atomic\n"
+      "tst     r3, r3\n"
+      "bne     1b\n"
       "bx      lr\n"
       ::: "r2", "r3"
+   );
+}
+
+__attribute__((naked))
+static void setclrbits_atomic(/*atomic rw*/volatile uint32_t *reg, uint32_t setbits, uint32_t clearbits)
+{
+   __asm volatile(
+      "1:\n"
+      "ldrex   r12, [r0]\n"
+      "bics    r12, r2\n"
+      "orrs    r12, r1\n"
+      "strex   r3, r12, [r0]\n"
+      "tst     r3, r3\n"
+      "bne     1b\n"
+      "bx      lr\n"
+      ::: "r2", "r3", "r12"
    );
 }
 

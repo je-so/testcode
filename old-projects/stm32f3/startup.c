@@ -85,7 +85,7 @@ void debugmonitor_interrupt(void) __attribute__((weak, alias("default_interrupt"
 void pendsv_interrupt(void) __attribute__((weak, alias("default_interrupt")));
 void systick_interrupt(void) __attribute__((weak, alias("default_interrupt")));
 void WWDG_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
-void PVD_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
+void pvd_interrupt(void) __attribute__((weak, alias("default_interrupt")));
 void TAMP_STAMP_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
 void RTC_WKUP_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
 void FLASH_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
@@ -168,7 +168,7 @@ uint32_t g_NVIC_vectortable[HW_KONFIG_NVIC_INTERRUPT_MAXNR + 1] __attribute__ ((
    [14] = (uintptr_t)&pendsv_interrupt,
    [15] = (uintptr_t)&systick_interrupt,
    [16] = (uintptr_t)&WWDG_IRQHandler,
-   [17] = (uintptr_t)&PVD_IRQHandler,
+   [17] = (uintptr_t)&pvd_interrupt,
    [18] = (uintptr_t)&TAMP_STAMP_IRQHandler,
    [19] = (uintptr_t)&RTC_WKUP_IRQHandler,
    [20] = (uintptr_t)&FLASH_IRQHandler,

@@ -76,9 +76,9 @@ static inline int config_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/, sy
 static inline int setperiod_systick(uint32_t nrticks_per_period/*[2..(1<<24)]*/);
 static inline uint32_t period_systick(void);
 static inline uint32_t value_systick(void);
-static inline int isexpired_systick(void);
-static inline int isstarted_systick(void);
-static inline int isenabled_interrupt_systick(void);
+static inline int isexpired_systick(void);   // returns 1: Timer expired at least once and flag is reset to 0. 0: Timer is not expired.
+static inline int isstarted_systick(void);   // returns 1: Systick timer is started 0: Systick rimer is stopped. BUT: Resets also the expired flag returned by isexpired_systick.
+static inline int isenabled_interrupt_systick(void);  // returns 1: Systick interrupt enabled. 0: Systick interrupt disabled. BUT: Resets also the expired flag returned by isexpired_systick.
 static inline void enable_interrupt_systick(void);
 static inline void disable_interrupt_systick(void);
 static inline void stop_systick(void);
@@ -136,9 +136,9 @@ static inline uint32_t value_systick(void)
 }
 
 /* function: isexpired_systick
- * Zeigt an, ob eine Timerperiode abgelaufen ist.
- * Diese Flag wird mit dem Dekrementieren des Zählerstandes von 1 auf 0 gesetzt.
- * Der Interrupt wird unabhängig gleichzeitig mit dem Setzen dieses Flags ausgelöst,
+ * Zeigt an, ob eine Timerperiode abgelaufen ist und setzt das Flag zurück.
+ * Dieses Flag wird gesetzt mit dem Dekrementieren des Zählerstandes von 1 auf 0.
+ * Der Interrupt wird gleichzeitig mit dem Setzen dieses Flags ausgelöst,
  * er ist aber von diesem Unabhängig. D.h. wird dieses Flag nicht durch Lesen desselben
  * zurückgesetzt, wird der Interrupt trotzdem nicht mehrfach ausgeführt, sondern immer nur
  * beim nächsten Übergang des Zählers von 1 bis 0.
@@ -151,11 +151,15 @@ static inline int isexpired_systick(void)
    return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, COUNTFLAG_POS)) & 1;
 }
 
+/* function: isstarted_systick
+ * Zeigt an, ob der Timer gestartet wurde. Setzt aber gleichzeitig das expired-Flag zurück! */
 static inline int isstarted_systick(void)
 {
    return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, ENABLE_POS)) & 1;
 }
 
+/* function: isenabled_interrupt_systick
+ * Zeigt an, ob der Timerinterrupt angeschaltet ist. Setzt aber gleichzeitig das expired-Flag zurück! */
 static inline int isenabled_interrupt_systick(void)
 {
    return (hSYSTICK->csr >> HW_BIT(SYSTICK, CSR, TICKINT_POS)) & 1;

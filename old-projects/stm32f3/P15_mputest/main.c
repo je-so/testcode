@@ -2,6 +2,21 @@
 
 volatile uint32_t faultcount = 0;
 volatile uint32_t cpustate[10];
+volatile const char *filename;
+volatile int         linenr;
+
+void assert_failed_exception(const char *_filename, int _linenr)
+{
+   filename = _filename;
+   linenr   = _linenr;
+   setsysclock_clockcntrl(clock_INTERNAL);
+   while (1) {
+      write_gpio(GPIOE, GPIO_PIN9|GPIO_PIN13, GPIO_PINS(15,8)-GPIO_PIN9-GPIO_PIN13);
+      for (volatile int i = 0; i < 80000; ++i) ;
+      write1_gpio(GPIOE, GPIO_PINS(15,8));
+      for (volatile int i = 0; i < 80000; ++i) ;
+   }
+}
 
 static void switch_unprivileged(void)
 {
@@ -153,25 +168,8 @@ int main(void)
    config_output_gpio(GPIOE, GPIO_PINS(15,8));
 
    // teste Funktionswerte
-   if (isavailable_mpu() != 1)   goto ONERR;
-   if (nrregions_mpu() != 8)     goto ONERR;
-   for (unsigned size = 0; size < 32; ++size) {
-      if (HW_REGISTER_BIT_MPU_RASR_SIZE_VALUE(size) != mpu_memsize_32 << HW_REGISTER_BIT_MPU_RASR_SIZE_POS) goto ONERR;
-   }
-   for (unsigned size = 32, esize = mpu_memsize_32; size; size *= 2, ++esize) {
-      if (HW_REGISTER_BIT_MPU_RASR_SIZE_VALUE(size) != esize << HW_REGISTER_BIT_MPU_RASR_SIZE_POS) goto ONERR;
-      if (HW_REGISTER_BIT_MPU_RASR_SIZE_VALUE(size+1) != (esize+1) << HW_REGISTER_BIT_MPU_RASR_SIZE_POS) goto ONERR;
-   }
-   if (HW_REGISTER_BIT_MPU_RASR_SIZE_VALUE(0xFFFFFFFF) != mpu_memsize_4GB << HW_REGISTER_BIT_MPU_RASR_SIZE_POS) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_NONE, mpu_access_NONE) != 0) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_READ, mpu_access_NONE) != 5 << 24) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_READ, mpu_access_READ) != 6 << 24) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_RW, mpu_access_NONE) != 1 << 24) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_RW, mpu_access_READ) != 2 << 24) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_RW, mpu_access_RW) != 3 << 24) goto ONERR;
-   // unprivilegiert > privilegiert
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_NONE, mpu_access_RW) != 0) goto ONERR;
-   if (HW_REGISTER_BIT_MPU_RASR_AP_VALUE(mpu_access_READ, mpu_access_RW) != 6 << 24) goto ONERR;
+   assert( 1 == isavailable_mpu());
+   assert( 8 == nrregions_mpu());
 
    // blaue/blue LED
    turn_on_led(0);
@@ -180,51 +178,44 @@ int main(void)
    switch_unprivileged();
 
    turn_on_led(0); // Peripherie erlaubt unprivilegierten Zugriff per Default
-   if (faultcount != 0)          goto ONERR;
-   // Der Zugriff aber ist privilegiert ==> generiert fault_interrupt (da busfault_interrupt nicht eingeschaltet!)
-   if (isavailable_mpu() != 1)   goto ONERR;
+   assert( 0 ==  faultcount);
+   // Der Zugriff auf PPB aber ist privilegiert ==> generiert fault_interrupt (da busfault_interrupt nicht eingeschaltet!)
+   assert( 1 == isavailable_mpu());
    // fault_interrupt schaltet zurück in privilegierten Modus
-   if (faultcount != 1)          goto ONERR;
+   assert( 1 == faultcount);
 
    turn_on_led(0);
    for (volatile int i = 0; i < 100000; ++i) ;
 
    // aktiviere MPU
-   HW_SREGISTER(MPU, CTRL) = 0; // aus
-   // alle Regionen aus (default nach Reset)
-   for (uint32_t rnr = 0; rnr < nrregions_mpu(); ++rnr) {
-      HW_SREGISTER(MPU, RNR) = rnr;
-      HW_SREGISTER(MPU, RBAR) = 0;
-      HW_SREGISTER(MPU, RASR) = 0;
-   }
-   mpu_region_t conf[2] = {
+   mpu_region_t regs[2] = {
       // Erlaube Zugriff auf Flash Memory
-      MPU_REGION_ROM(mpu_memsize_256K, mpu_access_READ),
+      mpu_region_INITROM(0, mpu_size_256K, 0, mpu_access_READ),
       // Erlaube Zugriff auf SRAM Memory
-      MPU_REGION_SRAM(mpu_memsize_64K, mpu_access_RW),
+      mpu_region_INITSRAM(mpu_size_64K, mpu_access_RW),
    };
-   if (config_mpu(2, conf))   goto ONERR;
+   assert( 0 == config_mpu(2, regs, mpucfg_NONE));
+   assert( 0 == isenabled_mpu());
    // Schalte MPU ein und erlaube privilegierten Zugriff auf alle nicht definierten Regionen
-   if (isenabled_mpu() != 0)  goto ONERR;
-   enable_mpu();
-   if (isenabled_mpu() != 1)  goto ONERR;
+   enable_mpu(mpucfg_ALLOWPRIVACCESS);
+   assert( 1 == isenabled_mpu());
 
    switch_unprivileged();
    // kein Fehler nach Umschalten auf unprivilegierten Modus
-   if (faultcount != 1)    goto ONERR;
+   assert( 1 == faultcount);
    // generiert MPU fault da Peripherie nicht als MPU-Region definiert
    // ==> fault_interrupt bei Zugriff auf GPIO (da mpufault_interrupt nicht eingeschaltet!)
    turn_on_led(0); // aber fault_interrupt schaltet zurück in privilegierten Modus, darum geht es weiter
    for (volatile int i = 0; i < 100000; ++i) ;
-   if (faultcount != 2)    goto ONERR;
+   assert( 2 == faultcount);
 
    // Verbiete unprivilegierten Zugriff auf STACK
-   if (nextfreeregion_mpu(0) != 2)   goto ONERR;
-   if (nextfreeregion_mpu(1) != 2)   goto ONERR;
-   if (nextfreeregion_mpu(2) != 2)   goto ONERR;
-   mpu_region_t conf2 = MPU_REGION_SRAM(mpu_memsize_512, mpu_access_NONE);
+   assert( 2 == nextfreeregion_mpu(0));
+   assert( 2 == nextfreeregion_mpu(1));
+   assert( 2 == nextfreeregion_mpu(2));
+   mpu_region_t conf2 = mpu_region_INITSRAM(mpu_size_512, mpu_access_NONE);
    update_mpu(nextfreeregion_mpu(0), 1, &conf2);
-   if (nextfreeregion_mpu(0) != 3)   goto ONERR;
+   assert( 3 == nextfreeregion_mpu(0));
 
    // Sichere aktuellen Zustand der CPU in cpustate (Interrupt-kompatibel).
    // Warum? Da der Stack nicht beschreibbar oder lesbar ist (MPU-Schutz)
@@ -232,7 +223,7 @@ int main(void)
    // Stack retten kann. Also nutzt in diesem Fall der fault_interrupt die
    // in cpustate geretteten Werte, um die Ausführung an der Stelle "next_pc: "
    // fortzuführen.
-   if (faultcount != 2)    goto ONERR;
+   assert( 2 == faultcount);
    __asm(   "ldr r0, =cpustate\n"
             "str sp, [r0], #4\n"
             "str r7, [r0], #4\n" // wird von gcc benutzt
@@ -253,50 +244,45 @@ int main(void)
       // never reached
       while (1);
    }
-   if (faultcount != 3)    goto ONERR;
+   assert( 3 == faultcount);
 
    turn_on_led(0);
    for (volatile int i = 0; i < 100000; ++i) ;
 
    // Erlaube unprivilegierten Zugriff auf PPB (geht nicht, da MPU nur Rechte wegnehmen und keine hinzufügen kann!)
-   conf2 = (mpu_region_t) mpu_region_INIT(0xE0000000, mpu_memsize_1MB, mpu_memtype_ORDERED_SHARED|mpu_memtype_DATAONLY, mpu_access_RW, mpu_access_RW);
+   conf2 = (mpu_region_t) mpu_region_INIT(0xE0000000, mpu_size_1MB, 0, mpu_mem_ORDERED, mpu_access_RW, mpu_access_RW);
    update_mpu(2, 1, &conf2);
    switch_unprivileged();
    // Der Zugriff ist privilegiert und bleibt es auch ==> busfault !
-   if (faultcount != 3)          goto ONERR;
-   if (isavailable_mpu() != 1)   goto ONERR;
-   if (faultcount != 4)          goto ONERR;
+   assert( 3 == faultcount);
+   assert( 1 == isavailable_mpu());
+   assert( 4 == faultcount);
 
    turn_on_led(0);
    for (volatile int i = 0; i < 100000; ++i) ;
 
    // Verbiete unprivilegierten Schreibzugriff auf SRAM
-   if (! (0x20000000+512 <= (uint32_t)cpustate && (uint32_t)cpustate < 0x20000000+1024)) goto ONERR;
-   conf2 = (mpu_region_t) mpu_region_INIT(0x20000000+512, mpu_memsize_512, mpu_memtype_NORMAL_WT, mpu_access_RW, mpu_access_READ);
+   assert( 0x20000000+512 <= (uint32_t)cpustate && (uint32_t)cpustate < 0x20000000+1024);
+   conf2 = (mpu_region_t) mpu_region_INIT(0x20000000+512, mpu_size_512, 0, mpu_mem_NORMAL(mpu_cache_WB), mpu_access_RW, mpu_access_READ);
    update_mpu(2, 1, &conf2);
    cpustate[0] = 0;  // OK
    switch_unprivileged();
-   if (faultcount != 4)    goto ONERR;
+   assert( 4 == faultcount);
    cpustate[0] = 1; // MPU Fault
-   if (faultcount != 5)    goto ONERR;
+   assert( 5 == faultcount);
 
    turn_on_led(0);
    for (volatile int i = 0; i < 100000; ++i) ;
 
    // Verbiete privilegierten Schreibzugriff auf SRAM
-   if (! (0x20000000+512 <= (uint32_t)cpustate && (uint32_t)cpustate < 0x20000000+1024)) goto ONERR;
-   conf2 = (mpu_region_t) mpu_region_INIT(0x20000000+512, mpu_memsize_512, mpu_memtype_NORMAL_WT, mpu_access_READ, mpu_access_READ);
+   assert(0x20000000+512 <= (uint32_t)cpustate && (uint32_t)cpustate < 0x20000000+1024);
+   conf2 = (mpu_region_t) mpu_region_INIT(0x20000000+512, mpu_size_512, 0, mpu_mem_NORMAL(mpu_cache_WB), mpu_access_READ, mpu_access_READ);
    update_mpu(3, 1, &conf2);
-   if (faultcount != 5)    goto ONERR;
+   assert( 5 == faultcount);
    cpustate[0] = 1; // MPU Fault
-   if (faultcount != 6)    goto ONERR;
+   assert( 6 == faultcount);
 
    // OK: 2 grüne/green LEDs
    write_gpio(GPIOE, GPIO_PIN11|GPIO_PIN15, GPIO_PINS(14,8)-GPIO_PIN11);
-   while (1) ;
-
-ONERR:
-   // ERROR: 2 rote/red LEDs
-   write_gpio(GPIOE, GPIO_PIN9|GPIO_PIN13, GPIO_PINS(15,8)-GPIO_PIN9-GPIO_PIN13);
    while (1) ;
 }

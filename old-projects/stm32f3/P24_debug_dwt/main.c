@@ -242,7 +242,7 @@ int main(void)
       start = sleepcount_dwtdbg();
       assert( 0 == start);
       start_basictimer(TIMER6);
-      wait_for_interrupt();   // sleep
+      waitinterrupt_core();   // sleep
       stop_dwtdbg(dwtdbg_SLEEPCOUNT);
       end = sleepcount_dwtdbg();
       if (isenabled) {

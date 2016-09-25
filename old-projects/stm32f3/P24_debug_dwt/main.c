@@ -90,7 +90,7 @@ int main(void)
 
    // Wait, until debugger detached and device could use debugmonitor to catch debug events
    while (isdebugger_dbg()) {
-      write_gpio(LED_PORT, GPIO_PIN(HW_KONFIG_USER_LED_MAXPIN-2), LED_PINS);
+      write_gpio(LED_PORT, GPIO_PIN(HW_KONFIG_USER_LED_MAXNR-2), LED_PINS);
    }
    write0_gpio(LED_PORT, LED_PINS);
 

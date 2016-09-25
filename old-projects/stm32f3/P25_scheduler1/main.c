@@ -7,8 +7,8 @@
 #define LED_PORT        HW_KONFIG_USER_LED_PORT
 #define LED_PORT_BIT    HW_KONFIG_USER_LED_PORT_BIT
 #define LED_PINS        HW_KONFIG_USER_LED_PINS
-#define LED_MAXPIN      GPIO_PIN(HW_KONFIG_USER_LED_MAXPIN)
-#define LED_MINPIN      GPIO_PIN(HW_KONFIG_USER_LED_MINPIN)
+#define LED_MAXPIN      GPIO_PIN(HW_KONFIG_USER_LED_MAXNR)
+#define LED_MINPIN      GPIO_PIN(HW_KONFIG_USER_LED_MINNR)
 
 /* set by assert_failed_exception */
 volatile const char *filename;
@@ -117,7 +117,7 @@ void systick_interrupt(void)
 
 static void task_main(uint32_t id/*0..2*/)
 {
-   uint32_t const P = HW_KONFIG_USER_LED_MINPIN;
+   uint32_t const P = HW_KONFIG_USER_LED_MINNR;
    while (1) {
       s_task_nr[id] = (s_task_nr[id] + 1) % 8;
       write_gpio(LED_PORT, GPIO_PIN(P+s_task_nr[0])|GPIO_PIN(P+s_task_nr[1])|GPIO_PIN(P+s_task_nr[2]), LED_PINS);

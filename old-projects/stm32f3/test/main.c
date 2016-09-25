@@ -7,8 +7,8 @@
 #define LED_PORT        HW_KONFIG_USER_LED_PORT
 #define LED_PORT_BIT    HW_KONFIG_USER_LED_PORT_BIT
 #define LED_PINS        HW_KONFIG_USER_LED_PINS
-#define LED_MAXPIN      GPIO_PIN(HW_KONFIG_USER_LED_MAXPIN)
-#define LED_MINPIN      GPIO_PIN(HW_KONFIG_USER_LED_MINPIN)
+#define LED_MAXPIN      GPIO_PIN(HW_KONFIG_USER_LED_MAXNR)
+#define LED_MINPIN      GPIO_PIN(HW_KONFIG_USER_LED_MINNR)
 
 volatile uint32_t    clockHZ; // System is running at this frequency
 /* set by assert_failed_exception */

@@ -1,12 +1,15 @@
 #ifndef KONFIG_HEADER
 #define KONFIG_HEADER
 
-#define static_assert(C) ((void)(sizeof(char[(C)?1:-1])))
-#define lengthof(Array)  (sizeof(Array)/sizeof(Array[0]))
+#define static_assert(C)   ((void)(sizeof(char[(C)?1:-1])))
+#define lengthof(Array)    (sizeof(Array)/sizeof(Array[0]))
+#define TOSTRING_(str)     #str
+#define TOSTRING(str)      TOSTRING_(str)
+
 
 #ifdef KONFIG_ASSERT
 void assert_failed_exception(const char *filename, int linenr); // implemented by user
-#define assert(C) if (!(C)) assert_failed_exception(__FILE__, __LINE__);
+#define assert(C) if (!(C)) assert_failed_exception(__FILE__, __LINE__)
 #else
 #define assert(C) /* ignored */
 #endif

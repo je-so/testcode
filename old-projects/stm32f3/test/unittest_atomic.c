@@ -78,6 +78,16 @@ int unittest_atomic(void)
       }
    }
 
+   // TEST increment_atomic
+   for (uint32_t i = 0; i < 100; ++i) {
+      value = i;
+      increment_atomic(&value);
+      assert(value == i+1);
+      value = ~i;
+      increment_atomic(&value);
+      assert(value == (~i+1));
+   }
+
    // reset
    reset_interruptTable();
 

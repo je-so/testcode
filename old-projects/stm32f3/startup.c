@@ -12,52 +12,69 @@
 #include "startup.h"
 
 /*
- * Define global stack memory for reset_interrupt and main program.
- * It is located at start of SRAM ==> Overflow causes Fault exception.
+ * Define global stack memory for interrupts and reset and for main program.
+ * The main program could run on msp stack the same used by interrupts or it
+ * could use the psp stack which is separate from the msp stack.
+ * The msp stack is located at start of SRAM ==> Overflow causes Fault exception.
+ * If psp stack is used for main program it should be protected by use of MPU.
  */
-uint32_t g_main_stack[KONFIG_STACKSIZE/sizeof(uint32_t)] __attribute__ ((section(".sram_address_start")));
+__attribute__ ((section(".sram_address_start")))
+uint32_t g_stack_msp[KONFIG_STACKSIZE/sizeof(uint32_t)];
 
 /*
- * Kopiert Initialisierungswerte vom Rom in das Ram.
+ * 1. Kopiert Initialisierungswerte vom Rom in das Ram.
+ *
+ * 2. Setzt den nicht initialisierten Datenbereich auf 0,
+ *    wie es im C Standard vorgesehen ist.
  */
-static inline void init_datasegment_from_rom(void)
+void startup_init_datasegment(void)
 {
-    uint32_t *src  = &_romdata;
-    uint32_t *dest = &_data;
+   uint32_t *src  = &_romdata;
+   uint32_t *dest = &_data;
 
-    while (dest < &_edata) {
-        *dest++ = *src++;
-    }
+   // copy init values of data segment from rom into ram
+   while (dest < &_edata) {
+      *dest++ = *src++;
+   }
+
+   // clear bss segment
+   dest = &_bss;
+   while (dest < &_ebss) {
+      *dest++ = 0;
+   }
 }
 
-/*
- * Setzt den nicht initialisierten Datenbereich auf 0,
- * wie es im C Standard vorgesehen ist.
- */
-static inline void clear_bss_datasegment(void)
+static inline void startup_assert(void)
 {
-    uint32_t *dest = &_bss;
-
-    while (dest < &_ebss) {
-        *dest++ = 0;
-    }
+   static_assert(KONFIG_STACKSIZE % sizeof(uint32_t) == 0);
+#ifdef KONFIG_STACKSIZE_PSP
+   static_assert(KONFIG_STACKSIZE_PSP % sizeof(uint32_t) == 0);
+#endif
 }
 
 /*
  * Einsprungspunkt, der nach Einschalten der Spannungsversorgung oder
  * Reset ausgeführt wird. Der MSP (Main-Stack-Pointer) wurde von der
- * CPU auf das Ende von g_main_stack gesetzt, bevor diese Funktion
+ * CPU auf das Ende von g_stack.msp gesetzt, bevor diese Funktion
  * ausgeführt wird.
+ *
+ * Falls g_stack.psp konfiguriert wurde, wird vor Aufruf von main dieser aktiv gesetzt.
  */
+__attribute__((naked))
 void reset_interrupt(void)
 {
-   init_datasegment_from_rom();
-   clear_bss_datasegment();
-   main();
-
-   while(1) {
-      // do nothing / preserve state
-   }
+   __asm volatile(
+      "bl   startup_init_datasegment\n"
+#ifdef KONFIG_USE_PSP
+      "bl   startup_get_psp\n"
+      "msr  psp, r0\n"        // psp = startup_get_psp()
+      "mrs  r0, control\n"    // r0 = control
+      "orrs r0, #(1<<1)\n"    // set bit 1 in r0
+      "msr  control, r0\n"    // switch cpu to using psp as stack pointer
+#endif
+      "bl   main\n"
+      "1:   b 1b;\n"  // do nothing / preserve state
+   );
 }
 
 /*
@@ -156,11 +173,11 @@ void FPU_IRQHandler(void) __attribute__((weak, alias("default_interrupt")));
  */
 
 uint32_t g_NVIC_vectortable[HW_KONFIG_NVIC_INTERRUPT_MAXNR + 1] __attribute__ ((section(".rom_address_0x0"))) = {
-   [0] = (uintptr_t)&g_main_stack + sizeof(g_main_stack), // main stack set after reset
-   [1] = (uintptr_t)&reset_interrupt, // reset_interrupt called after microcontroller wakes up after reset
-   [2] = (uintptr_t)&nmi_interrupt, // Non Maskable Interrupt
+   [0] = (uintptr_t)&g_stack_msp[0] + sizeof(g_stack_msp), // main stack set after reset
+   [1] = (uintptr_t)&reset_interrupt,     // reset_interrupt called after microcontroller wakes up after reset
+   [2] = (uintptr_t)&nmi_interrupt,       // Non Maskable Interrupt
    [3] = (uintptr_t)&fault_interrupt,
-   [4] = (uintptr_t)&mpufault_interrupt, // Memory Protection Unit (MPU)
+   [4] = (uintptr_t)&mpufault_interrupt,  // Memory Protection Unit (MPU)
    [5] = (uintptr_t)&busfault_interrupt,
    [6] = (uintptr_t)&usagefault_interrupt,
    [11] = (uintptr_t)&svcall_interrupt,

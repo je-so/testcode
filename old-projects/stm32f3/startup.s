@@ -10,7 +10,8 @@
 	.cpu cortex-m4
 	.fpu fpv4-sp-d16
 
-	.global	g_main_stack
+	.global	startup_get_psp
+	.global	g_stack_msp
 	.global	g_NVIC_vectortable
 
 	.text
@@ -19,20 +20,25 @@
 
 	.thumb_func
 reset_interrupt:
-	bl	startup_init_datasegment
-	bl	main
-.endless1:
-	b	.endless1 /* in case main returns */
+	bl	   startup_init_datasegment
+.ifdef KONFIG_USE_PSP
+   bl    startup_get_psp
+   msr   psp, r0           /* psp = start_get_psp() */
+   mrs   r0, control       /* r0 = control */
+   orrs  r0, #(1<<1)       /* set bit 1 in r0 */
+   msr   control, r0       /* switch cpu using psp as stack pointer */
+.endif
+	bl	   main
+1:	b	   1b                /* endless loop in case main returns */
 
 	.thumb_func
 default_interrupt:
-.endless2:
-	b	.endless2
+1:	b	   1b                /* endless loop to preserve state */
 
 	.thumb_func
 startup_init_datasegment:
 	movw	r1, #:lower16:_romdata
-	movt	r1, #:upper16:_romdata
+	movt  r1, #:upper16:_romdata
 	movw	r2, #:lower16:_data
 	movt	r2, #:upper16:_data
 	movw	r3, #:lower16:_edata
@@ -61,13 +67,16 @@ startup_init_datasegment:
 .clear_end:
 	bx	lr
 
+.if (KONFIG_STACKSIZE&0x03) != 0
+.error "KONFIG_STACKSIZE not aligned"
+.endif
 	.section	.sram_address_start,"aw",%nobits
-g_main_stack:
+g_stack_msp:
 	.space	KONFIG_STACKSIZE
 
 	.section	.rom_address_0x0,"aw",%progbits
 g_NVIC_vectortable:
-	.word	g_main_stack + KONFIG_STACKSIZE
+	.word	g_stack_msp + KONFIG_STACKSIZE
 	.word	reset_interrupt
 	.word	nmi_interrupt
 	.word	fault_interrupt

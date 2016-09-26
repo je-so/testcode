@@ -1,6 +1,6 @@
 /* title: Test-Mailbox
 
-   Implements simple data structure for communicating 
+   Implements simple data structure for communicating
    a single value of type uint32_t between two threads.
 
    Copyright:

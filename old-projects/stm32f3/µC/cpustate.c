@@ -17,8 +17,6 @@
 #include "konfig.h"
 #include "µC/cpustate.h"
 
-#define TOSTRING_(str)  # str
-#define TOSTRING(str)   TOSTRING_(str)
 #define THUMB           (1<<24)
 
 // struct: cpustate_t

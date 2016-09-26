@@ -314,10 +314,10 @@ int main(void)
       assert( 0 == config_copy_dma(dma, CH2, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA|dmacfg_PRIORITY_HIGH));
       assert( 0 == config_copy_dma(dma, CH3, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA|dmacfg_PRIORITY_LOW));
       assert( 0 == config_copy_dma(dma, channel, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA|dmacfg_PRIORITY_MIN));
-      assert( 3<<12 == (dma->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 2<<12 == (dma->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 1<<12 == (dma->channel[CH3].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (dma->channel[channel].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
+      assert( 3<<12 == (dma->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 2<<12 == (dma->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 1<<12 == (dma->channel[CH3].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (dma->channel[channel].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
       assert( 0 == enable_dma(dma, channel));
       assert( 0 == enable_dma(dma, CH3));
       assert( 0 == enable_dma(dma, CH2));
@@ -344,10 +344,10 @@ int main(void)
       assert( 0 == config_copy_dma(dma, CH2, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA));
       assert( 0 == config_copy_dma(dma, CH3, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA));
       assert( 0 == config_copy_dma(dma, channel, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA));
-      assert( 0<<12 == (dma->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (dma->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (dma->channel[CH3].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (dma->channel[channel].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
+      assert( 0<<12 == (dma->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (dma->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (dma->channel[CH3].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (dma->channel[channel].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
       assert( 0 == enable_dma(dma, CH3));
       assert( 0 == enable_dma(dma, CH2));
       assert( 0 == enable_dma(dma, CH1));
@@ -381,10 +381,10 @@ int main(void)
       assert( 0 == config_copy_dma(DMA1, CH2, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA|dmacfg_PRIORITY_MAX));
       assert( 0 == config_copy_dma(DMA2, CH1, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA));
       assert( 0 == config_copy_dma(DMA2, CH2, ramdata1, ramdata2, lengthof(ramdata2), dmacfg_HW_32BITDATA|dmacfg_MEM_32BITDATA));
-      assert( 3<<12 == (DMA1->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 3<<12 == (DMA1->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (DMA2->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
-      assert( 0<<12 == (DMA2->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK))
+      assert( 3<<12 == (DMA1->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 3<<12 == (DMA1->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (DMA2->channel[CH1].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
+      assert( 0<<12 == (DMA2->channel[CH2].ccr & HW_REGISTER_BIT_DMA_CCR_PL_MASK));
       assert( 0 == enable_dma(DMA1, CH1));
       assert( 0 == enable_dma(DMA1, CH2));
       assert( 0 == enable_dma(DMA2, CH1));

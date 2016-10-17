@@ -40,6 +40,9 @@ attach: all
 	xterm -e "openocd -f ../stm32f303vc.cfg" &
 	arm-none-eabi-gdb --eval-command="target remote localhost:3333" --eval-command="mon halt" ${PROGRAM}
 
+jattach: all
+	xterm -e "openocd -f ../stm32f303vc.cfg" &
+	arm-none-eabi-gdb --eval-command="target remote localhost:3333" --eval-command="mon halt" --eval-command="print s_10ms" --eval-command="print s_cycles1" ${PROGRAM}
 
 clean:
 	rm -f ${PROGRAM} ${CLEAN_FILES} flash.rom

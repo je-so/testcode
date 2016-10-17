@@ -447,7 +447,7 @@ enum core_register_e {
    HW_DEF_BIT(SCB, CCR, STKALIGN, 9, 9),        // 1: On exception entry stack is 8-byte aligned and the processor uses bit 9 of the stacked PSR to indicate if additional alignment was necessary. 0: Default alignment is 4-Byte.
    HW_DEF_BIT(SCB, CCR, BFHFNMIGN, 8, 8),       // 1: Precise bus fault is ignored if running priority is -1 (FAULT handler or "Thread mode" + setfaultmask_interrupt()) or -2 (NMI Handler). 0: Not ignored ("ldr r0, [r0]") causes a lockup if running priority is <= -1.
    HW_DEF_BIT(SCB, CCR, DIV_0_TRP, 4, 4),       // 1: Dividing by 0 (SDIV/UDIV) causes FAULT (USAGEFAULT if enabled) exception. 0: A divide by zero returns a quotient of 0 (no fault).
-   HW_DEF_BIT(SCB, CCR, UNALIGN_TRP, 3, 3),     // 1: Unaligned word or halfword accesses FAULT (USAGEFAULT if enabled) exception. 0: Unaligned access allowed. (Unaligned load-store multiples (push,pop,stm,ldm) and word or halfword exclusive accesses (strex,ldrex) always fault).
+   HW_DEF_BIT(SCB, CCR, UNALIGN_TRP, 3, 3),     // 1: Unaligned word or halfword accesses generate FAULT (USAGEFAULT if enabled) exception. 0: Unaligned access allowed. (Unaligned load-store multiples (push,pop,stm,ldm) and word or halfword exclusive accesses (strex,ldrex) always fault).
    HW_DEF_BIT(SCB, CCR, USERSETMPEND, 1, 1),    // 1: Enables unprivileged software access to register STIR. 0: Unprivileged software cannot access STIR.
    HW_DEF_BIT(SCB, CCR, NONBASETHRDENA, 0, 0),  // 1: Allows return from Handler mode to Thread mode with nested exceptions active. 0: Trying to do so results in INVPC USAGEFAULT (LR = 0xF0000000 + EXC_RETURN).
    HW_DEF_OFF(SCB, SHPR, 0x18),                 // SHPR: System Handlers Priority Registers

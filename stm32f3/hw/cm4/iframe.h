@@ -62,10 +62,10 @@ typedef enum iframe_e {
 
 } iframe_e;
 
-typedef enum cpuflag_e {
-   cpuflag_PSR_THUMB          = (1 << 24),
-   cpuflag_PSR_IFRAME_PADDING = (1 << 9),
-} cpuflag_e;
+typedef enum iframe_flag_e {
+   iframe_flag_PSR_THUMB   = (1 << 24),
+   iframe_flag_PSR_PADDING = (1 << 9),
+} iframe_flag_e;
 
 
 typedef enum iframe_len_e {

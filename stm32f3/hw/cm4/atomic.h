@@ -50,7 +50,7 @@ static inline void setbits_atomic(/*atomic rw*/volatile uint32_t *val, uint32_t 
             // Does following atomic op: *val |= bits;
 static inline void setclrbits_atomic(/*atomic rw*/volatile uint32_t *val, uint32_t setbits, uint32_t clearbits);
             // Does following atomic op: *val = (*val & ~clearbits) | setbits;
-static inline int swap_atomic(volatile void** val, void* oldval, void* newval);
+static inline int swap_atomic(void* volatile * val, void* oldval, void* newval);
             // Does following atomic op: if (*val == oldval) { *val = newval; return 0/*OK*/; } else { return (oldval-*val)/*ERROR*/; }
 static inline uint16_t increment16_atomic(/*atomic rw*/volatile uint16_t *val);
             // Does following atomic op: return ++ *val;
@@ -72,7 +72,7 @@ static inline int trylock_atomic(volatile uint32_t *lock)
 {
    int err;
    __asm volatile(
-      "movs    r3, #1\n"         // r3 = 1
+      "movs    r3, #1\n"         // r3 = 1si
       "1: ldrex %0, [%1]\n"      // 1: err = *lock
       "tst     %0, %0\n"
       "bne     2f\n"             // if (err != 0) goto label 2:
@@ -201,7 +201,7 @@ static inline void setclrbits_atomic(/*atomic rw*/volatile uint32_t *val, uint32
    );
 }
 
-static inline int swap_atomic(volatile void** val, void* oldval, void* newval)
+static inline int swap_atomic(void* volatile * val, void* oldval, void* newval)
 {
    int err;
    __asm volatile(

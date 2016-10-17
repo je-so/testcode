@@ -2,7 +2,7 @@
 #include "task.h"
 #include "scheduler.h"
 #include "semaphore.h"
-// TODO: #include "fifo.h"
+#include "fifo.h"
 
 #define SWITCH_PORT     HW_KONFIG_USER_SWITCH_PORT
 #define SWITCH_PORT_BIT HW_KONFIG_USER_SWITCH_PORT_BIT
@@ -15,16 +15,40 @@
 
 /* used by scheduler */
 
-task_t _Alignas(256)         g_task[3];
+task_t _Alignas(sizeof(task_t))  g_task[3];
 
 /* used in tasks */
 semaphore_t    sem1;
-// TODO: fifo_t         fifo1;
+fifo_t         fifo1;
 // TODO: uintptr_t      fifo1_buffer[5];
 
 /* set by assert_failed_exception */
 volatile const char *filename;
 volatile int         linenr;
+
+__attribute__ ((naked))
+void *memset(void *s/*r0*/, int c/*r1*/, size_t n/*r2*/)
+{
+   __asm volatile(
+      "adds    r3, r0, r2\n"  // r3 = (uint8_t*)s + n
+      "lsrs    r2, #2\n"
+      "beq     4f\n"
+      "lsls    r1, #24\n"
+      "orrs    r1, r1, r1, lsr #8\n"
+      "orrs    r1, r1, r1, lsr #16\n"
+      "1: subs r2, #1\n"
+      "str     r1, [r0, r2, lsl #2]\n"
+      "bne     1b\n"
+      "4: and  r2, r3, #3\n"
+      "adr     r12, 5f+1\n"   // +1 to set Thumb-bit
+      "subs    r2, r12, r2, lsl #2\n"
+      "bx      r2\n"
+      "strb    r1, [r3, #-1]!\n"
+      "strb    r1, [r3, #-1]!\n"
+      "strb    r1, [r3, #-1]!\n"
+      "5: bx   lr\n"
+   );
+}
 
 void assert_failed_exception(const char *_filename, int _linenr)
 {
@@ -83,7 +107,6 @@ void nmi_interrupt(void)
 
 volatile uint32_t s_timems;
 volatile uint32_t s_10ms;
-volatile uint32_t s_ints;  // TODO: remove
 volatile uint32_t s_cycles1; // TODO: remove
 volatile uint32_t s_cycles2; // TODO: remove
 volatile uint32_t s_end;   // TODO: remove
@@ -116,25 +139,85 @@ static void task_main(uintptr_t id/*0..3*/)
    // g_task[0]._protection[0] = 0;
    // g_task[1]._protection[0] = 0;
 
+#if 0
+   // use cooperative scheduling
    if (id == 0) {
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
-         // trigger_scheduler();
+         trigger_scheduler();
+      }
+      return;
+   } else {
+      while (0 == s_timems) {
+         ++ s_cycles2;
+         trigger_scheduler();
+      }
+      end_task();
+   }
+#endif
+
+#if 0
+   // use cooperative fifo
+   if (id == 0) {
+      while (g_task[1].state != task_state_END) {
+         ++ s_cycles1;
+         put_fifo(&fifo1, (void*)s_cycles1);
+         trigger_scheduler();
+      }
+      return;
+   } else {
+      while (0 == s_timems) {
+         ++ s_cycles2;
+         void *dummy = 0;
+         get_fifo(&fifo1, &dummy);
+         assert(dummy == (void*)s_cycles2);
+         trigger_scheduler();
+      }
+      end_task();
+   }
+#endif
+
+#if 0
+   // use semaphore 1
+   if (id == 0) {
+      while (g_task[1].state != task_state_END) {
+         ++ s_cycles1;
          wait_semaphore(&sem1);
          signal_semaphore(&sem1);
       }
+      return ;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
          signal_semaphore(&sem1);
          wait_semaphore(&sem1);
-         // trigger_scheduler();
       }
       signal_semaphore(&sem1);
       end_task();
    }
+#endif
 
-   return ;
+   // use suspend/resume
+   if (id == 0) {
+      while (g_task[1].state != task_state_END) {
+         ++ s_cycles1;
+         // signal_semaphore(&sem1);
+         // wait_semaphore(&sem1);
+         suspend_task();
+         resume_task(&g_task[1]);
+      }
+      return ;
+   } else {
+      while (0 == s_timems) {
+         ++ s_cycles2;
+         // signal_semaphore(&sem1);
+         // wait_semaphore(&sem1);
+         resume_task(&g_task[0]);
+         suspend_task();
+      }
+      resume_task(&g_task[0]);
+      end_task();
+   }
 
    if (id == 0) {
       assert(s_count == 0);
@@ -173,7 +256,7 @@ static void task_main(uintptr_t id/*0..3*/)
       if (id == 0/*main thread*/ && s_count >= 30) {
          uint32_t starttime = s_timems;
          for (uint32_t i = 1; i < lengthof(g_task); ++i) {
-            reqendtask_scheduler(&g_task[i]);
+            assert (0 == reqendtask_scheduler(&g_task[i], &g_task[0].queue));
          }
          uint32_t i;
          do {
@@ -199,7 +282,7 @@ void* getmainpsp_startup(void)
  */
 int main(void)
 {
-   int err;
+   uint32_t data1[10];
    enable_gpio_clockcntrl(SWITCH_PORT_BIT|LED_PORT_BIT);
    config_input_gpio(SWITCH_PORT, SWITCH_PIN, GPIO_PULL_OFF);
    config_output_gpio(LED_PORT, LED_PINS);
@@ -207,29 +290,51 @@ int main(void)
    setsysclock_clockcntrl(clock_PLL/*72MHZ*/);
    assert(getHZ_clockcntrl() == 72000000);
 
-   // TEST main is running on psp and not msp
-   __asm volatile(
-      "mrs  %0, psp\n"     // err = psp
-      "mov  r1, sp\n"      // r1 = sp
-      "subs %0, r1\n"      // err = psp - sp ;  (err == 0) in case psp == sp
-      : "=r" (err) :: "r1"
-   );
-   assert(err == 0);
+   for (volatile int i = 0; i < 10; ++i) {
+      data1[i] = 0;
+   }
+
+   assert(data1 == memset(data1, 0xff, 1));
+   assert(data1[0] == 0xff);
+   assert(data1 == memset(data1, 0x33, 2));
+   assert(data1[0] == 0x3333);
+   assert(data1 == memset(data1, 0x55, 3));
+   assert(data1[0] == 0x555555);
+   assert(data1 == memset(data1, 0x66, 4));
+   assert(data1[0] == 0x66666666);
+   assert(data1[1] == 0);
+   assert(data1 == memset(data1, 0x61, 5));
+   assert(data1[0] == 0x61616161);
+   assert(data1[1] == 0x61);
+   assert(data1[2] == 0);
+   assert(data1 == memset(data1, 0x61, 6));
+   assert(data1[0] == 0x61616161);
+   assert(data1[1] == 0x6161);
+   assert(data1[2] == 0);
+   assert(data1 == memset(data1, 0x61, 7));
+   assert(data1[0] == 0x61616161);
+   assert(data1[1] == 0x616161);
+   assert(data1[2] == 0);
+   assert(data1 == memset(data1, 0x88, 8));
+   assert(data1[0] == 0x88888888);
+   assert(data1[1] == 0x88888888);
+   assert(data1[2] == 0);
+   assert(data1 == memset(data1, 0x88, 9));
+   assert(data1[0] == 0x88888888);
+   assert(data1[1] == 0x88888888);
+   assert(data1[2] == 0x88);
 
    for (volatile int i = 0; i < 125000; ++i) ;
 
-
-#if 0
    sem1  = (semaphore_t) semaphore_INIT(0);
-   fifo1 = (fifo_t) fifo_INIT(lengthof(fifo1_buffer), fifo1_buffer);
-#endif // TODO:
+   fifo1 = (fifo_t) fifo_INIT;
 
 #define RUN(module) \
          switch_led(); \
          extern int unittest_##module(void); \
          assert( 0 == unittest_##module())
 
-#if 1
+#if 0
    for (unsigned i = 0; i < 10; ++i) {
       switch_led();
       RUN(hw_cortexm4_atomic);
@@ -242,21 +347,16 @@ int main(void)
 
 
 #if 1
-   init_main_task(&g_task[0], 0);
+   init_task(&g_task[0], 0, 0, 0);
    for (uint32_t i = 1; i < lengthof(g_task); ++i) {
-      init_task(&g_task[i], 0, &task_main, i);
+      init_task(&g_task[i], (uint8_t) i, &task_main, i);
    }
-   init_scheduler(2/*lengthof(g_task)*/, g_task);
+   assert(0 == init_scheduler(2/*lengthof(g_task)*/, g_task));
 
    enable_trace_dbg();
    setpriority_coreinterrupt(coreinterrupt_SYSTICK, interrupt_priority_MIN-1);   // could preempt scheduler
    config_systick(getHZ_clockcntrl()/10/*10ms*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
    start_dwtdbg(dwtdbg_CYCLECOUNT);
-   // assert(s_10ms == 0);
-   // wait_semaphore(&sem1);
-   // suspend_task();
-    // s_cycles = cyclecount_dwtdbg();
-   // assert(s_10ms != 0);
 
    // g_task[0]._protection[0] = 0;
    // g_task[1]._protection[0] = 0;

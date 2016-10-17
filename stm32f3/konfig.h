@@ -20,6 +20,7 @@ void assert_failed_exception(const char *filename, int linenr);
 
 #include "hw/cm4/atomic.h"   // helper
 #include "hw/cm4/cpustate.h" // helper
+#include "hw/cm4/iframe.h"   // helper
 #include "µC/board.h"
 #include "µC/core.h"
 #include "µC/hwmap.h"

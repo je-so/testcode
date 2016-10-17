@@ -34,7 +34,7 @@ int unittest_hw_cortexm4_atomic()
    volatile uint32_t value;
    volatile uint16_t value16;
    volatile int32_t  svalue;
-   volatile void    *ptrval;
+   void   * volatile ptrval;
    uint32_t * const CCMRAM = (uint32_t*) HW_MEMORYREGION_CCMRAM_START;
    uint32_t   const CCMRAM_SIZE = HW_MEMORYREGION_CCMRAM_SIZE;
 

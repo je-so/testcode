@@ -51,25 +51,27 @@ int init_scheduler(uint32_t nrtask, struct task_t *task/*[nrtask]*/);
 // scheduler_t: task-management
 
 int addtask_scheduler(struct task_t *task);
+            // TODO: Replace implementation with version which could not block higher priority tasks.
 
-void reqendtask_scheduler(struct task_t *task);
+int reqendtask_scheduler(struct task_t *task, task_queue_t *queue);
+            // TODO: Replace implementation with version which could not block higher priority tasks.
 
-void reqresumetask_scheduler(struct task_t *task);
+int resumetask_scheduler(struct task_t *task, task_queue_t *queue);
+            // TODO: Replace implementation with version which could not block higher priority tasks.
+
+int unblocktask_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
+            // TODO: Describe signaltask_scheduler
 
 // scheduler_t: internal
 
 void pendsv_interrupt(void);
             // Interrupt used for task switching.
 
-struct task_t* task_scheduler(/*out*/struct task_t** current, struct task_t* stopped);
-            // Called from pendsv_interrupt to determine next current thread.
-            // Sets *current to next current task and returns *current.
+struct task_t* task_scheduler(struct task_t* task/*stopped task*/);
+            // Called from pendsv_interrupt to switch to next task.
+            // Returns next current task.
 
 // scheduler_t: called-from-task-or-interrupt
-
-void preparewakeup_scheduler(task_wait_t *wait_for);
-            // Remembers list of tasks in wait_for to be woken up. One for each signaled wake-up event.
-            // The imlementation stores wait_for->last in an internal linked list of tasks to be woken up during the next run of the scheduler.
 
 static inline void trigger_scheduler();
             // Called from timer-interrupt to trigger task switching interrupt after leaving timer interrupt.

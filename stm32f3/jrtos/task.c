@@ -21,36 +21,43 @@
 
 /* == Globals == */
 
-task_t     *g_task_current;
-
 /* == Locals == */
 
 /* == task_t impl == */
 
-void init_task(task_t *task, uint8_t priority, task_main_f task_main, uintptr_t task_arg)
+void init_main_task(task_t *task, uint8_t priority/*0..7*/)
 {
-   task->sp = &task->stack[lengthof(task->stack)- iframe_LEN(iframe_len_NOFPU|iframe_len_NOPADDING)];
+   priority = (uint8_t) (0x1f & priority);
+   task->sp = &task->topstack - iframe_LEN(iframe_len_NOFPU|iframe_len_NOPADDING);
    task->lr = retcode_interrupt(interrupt_retcode_NOFPU|interrupt_retcode_THREADMODE_PSP);
    task->state = task_state_SUSPEND;
    task->req = 0;
    task->id  = 0;
-   task->priority = 0x7&priority;
+   task->priority = priority;
+   task->priobit  = 0x80000000 >> priority;
    task->sleepms = 0;
    task->wait_for = 0;
    task->next = 0;
-   task->prev = 0;
-   task->wakeup_next = 0;
+   init_taskwakeup(&task->wakeup);
+   init_taskqueue(&task->queue);
+}
+
+void init_task(task_t *task, uint8_t priority/*0..7*/, task_main_f task_main, uintptr_t task_arg)
+{
+   init_main_task(task, priority);
    task->sp[iframe_R0]  = task_arg;
    task->sp[iframe_LR]  = 0xffffffff;   // invalid LR value
    task->sp[iframe_PC]  = (uintptr_t) task_main;
-   task->sp[iframe_PSR] = cpuflag_PSR_THUMB;
+   task->sp[iframe_PSR] = iframe_flag_PSR_THUMB;
 }
 
 void sleepms_task(uint32_t millisec)
 {
-   task_t *task = current_task();
-   task->sleepms = millisec;
-   task->state = task_state_SLEEP;
+   if (millisec) {
+      task_t *task = current_task();
+      task->sleepms = millisec;
+      task->state = task_state_SLEEP;
+   }
    yield_task();
 }
 
@@ -71,21 +78,12 @@ void end_task(void)
 
 /* == task_wait_t impl == */
 
-void wait_task(task_wait_t *wait_for)
+void wait_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
-   task->wait_for = wait_for;
+   task->wait_for = waitfor;
    task->state = task_state_WAITFOR;
    yield_task();
-}
-
-void signal_task(task_wait_t *wait_for)
-{
-   increment_atomic(&wait_for->nrevent);
-
-   if (istask_taskwait(wait_for)) {
-      preparewakeup_scheduler(wait_for);
-   }
 }
 
 
@@ -116,7 +114,6 @@ int unittest_jrtos_task()
    static_assert(512 >= sizeof(uint32_t)*len_interruptTable());
    static_assert(3   <= (CCMRAM_SIZE - 512) / sizeof(task_t));
    size_t     const nrtask = (CCMRAM_SIZE - 512) / sizeof(task_t);
-   task_t   * const old_current = g_task_current;
    uint32_t * const itable = (uint32_t*) &task[nrtask];
 
    // prepare
@@ -125,56 +122,31 @@ int unittest_jrtos_task()
    itable[coreinterrupt_PENDSV] = (uintptr_t) &local_pendsv_interrupt;
 
    // TEST current_task
-   for (uintptr_t i = 1; i; i <<= 1) {
-      g_task_current = (void*)i;
-      TEST( (task_t*)i == current_task());
-   }
-
-   // TEST set_current_task
-   for (uintptr_t i = 1; i; i <<= 1) {
-      set_current_task((void*)i);
-      TEST( (task_t*)i == g_task_current);
-   }
-
-   // TEST init_main_task
-   clear_ram(CCMRAM, nrtask*sizeof(task_t));
-   for (uint32_t i = 0; i < nrtask; ++i) {
-      for (uint8_t p = 0; p < 16; ++p) {
-         init_main_task(&task[i], p);
-         TEST( &task[i] == current_task());
-         TEST( task[i].regs[0] == 0x12345678);  // unchanged
-         TEST( task[i].regs[7] == 0x12345678);  // unchanged
-         TEST( task[i].sp      == (uint32_t*)&task[i+1] - 8);
-         TEST( task[i].lr      == 0xfffffffd);
-         TEST( task[i].state   == task_state_SUSPEND);
-         TEST( task[i].req     == 0);
-         TEST( task[i].sleepms == 0);
-         TEST( task[i].wait_for == 0);
-         TEST( task[i].next    == 0);
-         TEST( task[i].prev    == 0);
-         TEST( task[i].wakeup_next == 0);
-         TEST( task[i].priority == (p&~8));
-         TEST( task[i]._protection[0] == 0x12345678); // unchanged
-         TEST( task[i].stack[0] == 0x12345678); // unchanged
-         TEST( task[i].sp[0]   == 0);           // R0 set to parameter
-         TEST( task[i].sp[1]   == 0x12345678);  // R1 unchanged
-         TEST( task[i].sp[4]   == 0x12345678);  // R12 unchanged
-         TEST( task[i].sp[5]   == 0xFFFFFFFF);  // LR invalid
-         TEST( task[i].sp[6]   == 0);           // PC invalid
-         TEST( task[i].sp[7]   == (1<<24));     // Thumb bit set
-      }
+   for (size_t i = 0; i < nrtask; ++i) {
+      uint32_t old_psp;
+      __asm volatile (
+         "mrs %0, psp\n"
+         : "=r" (old_psp) ::
+      );
+      __asm volatile (
+         "msr psp, %0\n"
+         :: "r" (&task[i].stack[lengthof(task[i].stack)]) :
+      );
+      TEST( &task[i] == current_task());
+      __asm volatile (
+         "msr psp, %0\n"
+         :: "r" (old_psp) :
+      );
    }
 
    // TEST init_task
    clear_ram(CCMRAM, nrtask*sizeof(task_t));
-   set_current_task(old_current);
    for (uintptr_t i = 0; i < nrtask; ++i) {
       for (uint8_t p = 0; p < 16; ++p) {
          init_task(&task[i], p, (task_main_f)(i+1), (i+2));
-         TEST( old_current == current_task());
          TEST( task[i].regs[0] == 0x12345678);  // unchanged
          TEST( task[i].regs[7] == 0x12345678);  // unchanged
-         TEST( task[i].sp      == (uint32_t*)&task[i+1] - 8);
+         TEST( task[i].sp      == (uint32_t*)&task[i+1] - (8+1));
          TEST( task[i].lr      == 0xfffffffd);
          TEST( task[i].state   == task_state_SUSPEND);
          TEST( task[i].req     == 0);
@@ -183,8 +155,6 @@ int unittest_jrtos_task()
          TEST( task[i].sleepms == 0);
          TEST( task[i].wait_for == 0);
          TEST( task[i].next    == 0);
-         TEST( task[i].prev    == 0);
-         TEST( task[i].wakeup_next == 0);
          TEST( task[i]._protection[0] == 0x12345678); // unchanged
          TEST( task[i].stack[0] == 0x12345678); // unchanged
          TEST( task[i].sp[0]   == i+2);         // R0 set to parameter
@@ -230,7 +200,6 @@ int unittest_jrtos_task()
    // TODO:
 
    // reset
-   TEST( old_current == current_task());
    TEST( 0 == is_any_interrupt());
    TEST( 0 == is_any_coreinterrupt());
    reset_interruptTable();

@@ -23,7 +23,7 @@ void signal_semaphore(semaphore_t *sem)
 {
    int32_t newval = (int32_t) increment_atomic((volatile uint32_t*)&sem->value);
    if (newval <= 0) {
-      signal_task(&sem->taskwait);
+      wakeup_task(&sem->taskwait);
    }
 }
 

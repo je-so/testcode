@@ -39,13 +39,18 @@ typedef enum task_state_e {
    task_state_WAITFOR,     // task is waiting on task_wait_t pointed to by task->wait_for
    task_state_END,         // task removed from scheduler
 
-#define task_state_BOUNDARY_COULD_BE_WOKENUP    task_state_SUSPEND
+#define task_state_RESUMABLE    task_state_SUSPEND
 } task_state_e;
 
 
 typedef enum task_req_e {
    task_req_NONE,
-   task_req_END
+   task_req_END,
+   task_req_SUSPEND,
+   task_req_RESUME,
+   task_req_SLEEP,
+   task_req_WAITFOR,
+   task_req_WAKEUP,
 } task_req_e;
 
 /* == Globals == */
@@ -60,12 +65,15 @@ struct task_t {
    uint8_t        id;      // 0: id of main thread. I!=0: id of other thread
    uint8_t        priority;// 0: highest. ... 31: lowest.
    uint32_t       priobit; // 0x80000000 >> priority
+   union {
+   task_wait_t   *wait_for;// (state == task_state_WAITFOR) ==> task waits for event on this object
+   task_t        *req_task;
    uint32_t       sleepms; // Number of milliseconds to sleep.
-   task_wait_t   *wait_for;// if != 0 then task waits for event on this object
+   };
    task_t        *next;    // next task in a list of tasks (task_wait_t)
    task_wakeup_t  wakeup;           // TODO: Describe, remove or rename into wqueue ?
    task_queue_t   queue;            // TODO: Describe, rename into queue ?
-   uint32_t       _align1[1];
+   uint32_t       _align1[2];
    uint32_t       _protection[8];   // mpu uses this to detect stack overflow
    uint32_t       stack[256-32-1];  // memory used as stack for this task
    uint32_t       topstack;         // not used for stack
@@ -121,12 +129,19 @@ void wait_task(task_wait_t *waitfor);
 // task_t: update-other-task
 
 void resume_task(task_t *task);
-            // The task is remembered to be added to the list of active tasks the next time the schduler is run.
+            // The current task yields the cpu and task is resumed if in a sleeping or suspended state.
 
-void signal_task(task_wait_t *waitfor);
-            // Wakes up a waiting task on waitfor or else increments the wake-up event counter of waitfor.
+void queueresume_task(task_t *task);
+            // The task is remembered to be resumed the next time the schduler is run.
+
+void wakeup_task(task_wait_t *waitfor);
+            // The current task yields the cpu and task is woken-up if in a blocking (waitfor) state.
+
+void queuewakeup_task(task_wait_t *waitfor);
+            // The blocking condition waitfor is remembered to be signaled the next time the schduler is run.
+            // The scheduler wakes up a waiting task on waitfor or else increments the wake-up event counter of waitfor.
             // Internally a queue is used to store waitfor into.
-            // This queue is added to an internal queue-update-list which is handled by the scheduler.
+            // This queue is added to an internal update-list of the scheduler.
 
 
 /* == Inline == */
@@ -138,9 +153,9 @@ static inline void assert_values_task(void)
 
 #define yield_task()          trigger_scheduler()
 
-#define resume_task(task)     resumetask_scheduler(task, &current_task()->queue)
+#define queueresume_task(task) queueresume_scheduler(task, &current_task()->queue)
 
-#define signal_task(waitfor)  unblocktask_scheduler(waitfor, &current_task()->wakeup)
+#define queuewakeup_task(waitfor)  queuewakeup_scheduler(waitfor, &current_task()->wakeup)
 
 
 static inline task_t* current_task(void)

@@ -53,13 +53,13 @@ int init_scheduler(uint32_t nrtask, struct task_t *task/*[nrtask]*/);
 int addtask_scheduler(struct task_t *task);
             // TODO: Replace implementation with version which could not block higher priority tasks.
 
-int reqendtask_scheduler(struct task_t *task, task_queue_t *queue);
+int queueend_scheduler(struct task_t *task, task_queue_t *queue);
             // TODO: Replace implementation with version which could not block higher priority tasks.
 
-int resumetask_scheduler(struct task_t *task, task_queue_t *queue);
+int queueresume_scheduler(struct task_t *task, task_queue_t *queue);
             // TODO: Replace implementation with version which could not block higher priority tasks.
 
-int unblocktask_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
+int queuewakeup_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
             // TODO: Describe signaltask_scheduler
 
 // scheduler_t: internal
@@ -70,6 +70,11 @@ void pendsv_interrupt(void);
 struct task_t* task_scheduler(struct task_t* task/*stopped task*/);
             // Called from pendsv_interrupt to switch to next task.
             // Returns next current task.
+
+// TODO: remove, only used during test
+void clearbit_scheduler(uint32_t bitmask);
+void setbit_scheduler(uint32_t bitmask);
+
 
 // scheduler_t: called-from-task-or-interrupt
 

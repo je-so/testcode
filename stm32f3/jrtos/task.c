@@ -55,8 +55,8 @@ void sleepms_task(uint32_t millisec)
 {
    if (millisec) {
       task_t *task = current_task();
+      task->req = task_req_SLEEP;
       task->sleepms = millisec;
-      task->state = task_state_SLEEP;
    }
    yield_task();
 }
@@ -64,25 +64,41 @@ void sleepms_task(uint32_t millisec)
 void suspend_task(void)
 {
    task_t *task = current_task();
-   task->state = task_state_SUSPEND;
+   task->req = task_req_SUSPEND;
    yield_task();
 }
 
 void end_task(void)
 {
    task_t *task = current_task();
-   task->state = task_state_SUSPEND;
    task->req = task_req_END;
    yield_task();
 }
 
+void resume_task(task_t *task)
+{
+   task_t *caller = current_task();
+   caller->req = task_req_RESUME;
+   caller->req_task = task;
+   yield_task();
+}
+
+
 /* == task_wait_t impl == */
+
+void wakeup_task(task_wait_t *waitfor)
+{
+   task_t *task = current_task();
+   task->req = task_req_WAKEUP;
+   task->wait_for = waitfor;
+   yield_task();
+}
 
 void wait_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
+   task->req = task_req_WAITFOR;
    task->wait_for = waitfor;
-   task->state = task_state_WAITFOR;
    yield_task();
 }
 

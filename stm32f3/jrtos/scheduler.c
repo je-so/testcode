@@ -44,6 +44,16 @@ static scheduler_t   s_sched;
 
 /* == scheduler_t Impl == */
 
+void clearbit_scheduler(uint32_t bitmask) // TODO: remove
+{
+   s_sched.priomask &= ~bitmask;
+}
+
+void setbit_scheduler(uint32_t bitmask) // TODO: remove
+{
+   s_sched.priomask |= bitmask;
+}
+
 static inline int sys_reset_scheduler(void)
 {
    setpriority_coreinterrupt(coreinterrupt_PENDSV, 0);
@@ -199,7 +209,7 @@ static void process_wakeupmask(void)
       uint32_t priobit = PRIOMASK_BIT(pri);
       wakeupmask &= ~ priobit;
       task_t *task = s_sched.priotask[pri];
-      if (task && task->state <= task_state_BOUNDARY_COULD_BE_WOKENUP) {
+      if (task && task->state <= task_state_RESUMABLE) {
          task->state = task_state_ACTIVE;
          s_sched.priomask |= priobit;
          s_sched.sleepmask &= ~priobit;
@@ -214,7 +224,7 @@ static inline bool process_taskqueue(task_queue_t *queue)
    do {   // process whole queue
       task_t *task = read_taskqueue(queue);
       uint32_t priobit = task->priobit;
-      if (task->state <= task_state_BOUNDARY_COULD_BE_WOKENUP) {
+      if (task->state <= task_state_RESUMABLE) {
          task->state = task_state_ACTIVE;
          s_sched.priomask |= priobit;
          s_sched.sleepmask &= ~priobit;
@@ -236,7 +246,7 @@ static void process_queuelist(void)
    while (queue) {
 
       task_queue_t *next = queue->next;
-
+      sw_msync();
       if (queue->keep > 1) {           // decrement keep
          -- queue->keep;
          prev = queue;
@@ -273,7 +283,7 @@ static inline void wakeup_taskwait(task_wait_t *waitfor)
    }
 }
 
-static inline bool process_wakeupqueue(task_wakeup_t *queue)
+static inline bool process_taskwakeup(task_wakeup_t *queue)
 {
    if (!isdata_taskwakeup(queue)) return false;
 
@@ -288,7 +298,7 @@ static void process_wakeuplist(void)
 {
    task_wakeup_t *queue = s_wakeup_last;
 
-   (void) process_wakeupqueue(queue);
+   (void) process_taskwakeup(queue);
 
    task_wakeup_t *prev = queue;
    queue = queue->next;
@@ -296,7 +306,7 @@ static void process_wakeuplist(void)
    while (queue) {
 
       task_wakeup_t *next = queue->next;
-
+      sw_msync();
       if (queue->keep > 1) {           // decrement keep
          -- queue->keep;
          prev = queue;
@@ -306,7 +316,7 @@ static void process_wakeuplist(void)
          rw_msync();
       }
 
-      if (process_wakeupqueue(queue) && queue->keep) {
+      if (process_taskwakeup(queue) && queue->keep) {
          queue->keep = 3;
       }
 
@@ -323,39 +333,57 @@ static inline void process_wakeup(void)
 
 task_t* task_scheduler(task_t* task)
 {
-   if (task->state != task_state_ACTIVE) {
-
+   if (task->req != task_req_NONE) {
 RESCHEDULE: ;
-      uint32_t bit = task->priobit;
-      s_sched.priomask &= ~ bit;
-
-      if (task->state == task_state_SUSPEND) {  // only remove task from list of active tasks
-         if (task->req == task_req_END) {
-            uint8_t pri = __builtin_clz(bit);
-            task->state = task_state_END;       // prev-state: task_state_SUSPEND || task_state_ACTIVE
-            s_sched.priotask[pri] = 0;
-            s_sched.idmap[task->id] = 0;
-         }
-
-      } else if (task->state == task_state_WAITFOR) {
-         assert(task->wait_for);
-         if (task->wait_for->nrevent) {      // already woken-up ?
-            -- task->wait_for->nrevent;
-            add_ready_list(task, bit);
-         } else {                            // append task to list of waiting tasks as last
-            task_t *last = task->wait_for->last;
-            if (last == 0) {
-               task->next = task;
-            } else {
-               task->next = last->next;
-               last->next = task;
-            }
-            task->wait_for->last = task;
-         }
-
-      } else {
-         assert(task->state == task_state_SLEEP);
-         s_sched.sleepmask |= bit;
+      task_req_e req = task->req;
+      task->req = 0;
+      switch (req) {
+      default:                break;
+      case task_req_END:      {
+                                 s_sched.priomask &= ~ task->priobit;
+                                 task->state = task_state_END;
+                                 s_sched.priotask[task->priority] = 0;
+                                 s_sched.idmap[task->id] = 0;
+                              }
+                              break;
+      case task_req_SUSPEND:  {
+                                 s_sched.priomask &= ~ task->priobit;
+                                 task->state = task_state_SUSPEND;
+                              }
+                              break;
+      case task_req_RESUME:   if (task->req_task->state <= task_state_RESUMABLE) {
+                                 task->req_task->state = task_state_ACTIVE;
+                                 s_sched.priomask  |= task->req_task->priobit;
+                                 s_sched.sleepmask &= ~ task->req_task->priobit;
+                              }
+                              break;
+      case task_req_SLEEP:    {
+                                 s_sched.priomask  &= ~ task->priobit;
+                                 s_sched.sleepmask |= task->priobit;
+                                 task->state = task_state_SLEEP;
+                              }
+                              break;
+      case task_req_WAITFOR:  {
+                                 if (task->wait_for->nrevent) {      // already woken-up ?
+                                    -- task->wait_for->nrevent;
+                                 } else {                            // append task to list of waiting tasks as last
+                                    s_sched.priomask &= ~ task->priobit;
+                                    task->state = task_state_WAITFOR;
+                                    task_t *last = task->wait_for->last;
+                                    if (last == 0) {
+                                       task->next = task;
+                                    } else {
+                                       task->next = last->next;
+                                       last->next = task;
+                                    }
+                                    task->wait_for->last = task;
+                                 }
+                              }
+                              break;
+      case task_req_WAKEUP:   {
+                                 wakeup_taskwait(task->wait_for);
+                              }
+                              break;
       }
    }
 
@@ -440,13 +468,13 @@ int addtask_scheduler(task_t *task)
    return ENOMEM; // no more free id value
 }
 
-int reqendtask_scheduler(task_t *task, task_queue_t *queue)
+int queueend_scheduler(task_t *task, task_queue_t *queue)
 {
    task->req = task_req_END;
-   return resumetask_scheduler(task, queue);
+   return queueresume_scheduler(task, queue);
 }
 
-int resumetask_scheduler(struct task_t *task, task_queue_t *queue)
+int queueresume_scheduler(struct task_t *task, task_queue_t *queue)
 {
    // Design decision: Every task must own its own task_queue_t queue
    // therefore no protection is necessary and blocking another task is also not possible
@@ -467,7 +495,7 @@ int resumetask_scheduler(struct task_t *task, task_queue_t *queue)
    return 0;
 }
 
-int unblocktask_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup)
+int queuewakeup_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup)
 {
    // Design decision: Every task must own its own task_wakeup_t queue
    // therefore no protection is necessary and blocking another task is also not possible

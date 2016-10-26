@@ -117,7 +117,6 @@ void systick_interrupt(void)
    stop_systick();
 #if 0
    start_dwtdbg(dwtdbg_CYCLECOUNT);
-   // resume_task(&g_task[0]);
    signal_semaphore(&sem1);
    trigger_scheduler();
    s_end = cyclecount_dwtdbg();
@@ -139,19 +138,22 @@ static void task_main(uintptr_t id/*0..3*/)
    // g_task[0]._protection[0] = 0;
    // g_task[1]._protection[0] = 0;
 
-#if 0
+#if 1
    // use cooperative scheduling
    if (id == 0) {
-      while (g_task[1].state != task_state_END) {
+      while (0 == s_timems) {
          ++ s_cycles1;
+         // clearbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
       return;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
+         setbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
+      setbit_scheduler(g_task[0].priobit);
       end_task();
    }
 #endif
@@ -162,35 +164,37 @@ static void task_main(uintptr_t id/*0..3*/)
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
          put_fifo(&fifo1, (void*)s_cycles1);
+         clearbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
+         rw_msync();
       }
       return;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         void *dummy = 0;
+         void *dummy;
          get_fifo(&fifo1, &dummy);
          assert(dummy == (void*)s_cycles2);
+         setbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
+      setbit_scheduler(g_task[0].priobit);
       end_task();
    }
 #endif
 
-#if 0
+#if 1
    // use semaphore 1
    if (id == 0) {
-      while (g_task[1].state != task_state_END) {
+      while (0 == s_timems) {
          ++ s_cycles1;
          wait_semaphore(&sem1);
-         signal_semaphore(&sem1);
       }
       return ;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
          signal_semaphore(&sem1);
-         wait_semaphore(&sem1);
       }
       signal_semaphore(&sem1);
       end_task();
@@ -201,21 +205,17 @@ static void task_main(uintptr_t id/*0..3*/)
    if (id == 0) {
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
-         // signal_semaphore(&sem1);
-         // wait_semaphore(&sem1);
          suspend_task();
-         resume_task(&g_task[1]);
+         // resume_task(&g_task[1]);
       }
       return ;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         // signal_semaphore(&sem1);
-         // wait_semaphore(&sem1);
          resume_task(&g_task[0]);
-         suspend_task();
+         // suspend_task();
       }
-      resume_task(&g_task[0]);
+      queueresume_task(&g_task[0]);
       end_task();
    }
 
@@ -256,7 +256,7 @@ static void task_main(uintptr_t id/*0..3*/)
       if (id == 0/*main thread*/ && s_count >= 30) {
          uint32_t starttime = s_timems;
          for (uint32_t i = 1; i < lengthof(g_task); ++i) {
-            assert (0 == reqendtask_scheduler(&g_task[i], &g_task[0].queue));
+            assert (0 == queueend_scheduler(&g_task[i], &g_task[0].queue));
          }
          uint32_t i;
          do {

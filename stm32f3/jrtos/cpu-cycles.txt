@@ -5,3 +5,8 @@ while (0 == s_timems) {
 34 cycles pendsv_interrupt + no call to scheduler
 38 cycles pendsv_interrupt + calling task_scheduler() { return task }
 80 cycles pendsv_interrupt + default task_scheduler
+
+== optimized
+44 cycles pendsv_interrupt + default scheduler (call skipped)
+46 cycles pendsv_interrupt + default scheduler (call skipped)
+   + req_int handling requests from interrupts

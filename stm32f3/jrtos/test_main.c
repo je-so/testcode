@@ -143,14 +143,14 @@ static void task_main(uintptr_t id/*0..3*/)
    if (id == 0) {
       while (0 == s_timems) {
          ++ s_cycles1;
-         // clearbit_scheduler(g_task[0].priobit);
+         //clearbit_scheduler(g_task[0].priobit); // if removed ==> 44/46 cycles
          trigger_scheduler();
       }
       return;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         setbit_scheduler(g_task[0].priobit);
+         setbit_scheduler(g_task[0].priobit);   // 112 cycles
          trigger_scheduler();
       }
       setbit_scheduler(g_task[0].priobit);
@@ -186,6 +186,7 @@ static void task_main(uintptr_t id/*0..3*/)
 #if 1
    // use semaphore 1
    if (id == 0) {
+#define V1
       while (0 == s_timems) {
          ++ s_cycles1;
          wait_semaphore(&sem1);
@@ -194,28 +195,43 @@ static void task_main(uintptr_t id/*0..3*/)
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         signal_semaphore(&sem1);
+#ifdef V1
+         signal_semaphore(&sem1);   // 209 cycles
+#else
+         signalqd_semaphore(&sem1); // 232 cycles
+         yield_task();
+#endif
       }
       signal_semaphore(&sem1);
       end_task();
    }
 #endif
 
+
    // use suspend/resume
+ #define V1
    if (id == 0) {
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
-         suspend_task();
-         // resume_task(&g_task[1]);
+#ifdef V1
+         suspend_task();   // 163 cycles
+#else
+         suspend_task();   // 277 cycles (fifo) / 244 (cycles) mask
+         resumeqd_task(&g_task[1]);
+#endif
       }
       return ;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
+#ifdef V1
          resume_task(&g_task[0]);
-         // suspend_task();
+#else
+         resumeqd_task(&g_task[0]);
+         suspend_task();
+#endif
       }
-      queueresume_task(&g_task[0]);
+      resumeqd_task(&g_task[0]);
       end_task();
    }
 
@@ -256,7 +272,7 @@ static void task_main(uintptr_t id/*0..3*/)
       if (id == 0/*main thread*/ && s_count >= 30) {
          uint32_t starttime = s_timems;
          for (uint32_t i = 1; i < lengthof(g_task); ++i) {
-            assert (0 == queueend_scheduler(&g_task[i], &g_task[0].queue));
+            stop_task(&g_task[i]);
          }
          uint32_t i;
          do {

@@ -33,7 +33,25 @@ typedef struct scheduler_t scheduler_t;
 /* == Globals == */
 
 /* == Objekte == */
-struct scheduler_t;
+
+struct scheduler_t {
+
+   union { struct {  // little endian layout PORTING: add support for big endian
+   uint8_t        req;  // [(uint8_t) (req32)] 0: No change requested. != 0: Request scheduler to change state of current task
+   uint8_t        req_qd_task;   // [(uint8_t) (req32 >> 8)] 0: task->qd_task is empty. != 0: task->qd_task contains data.
+   uint8_t        req_qd_wakeup; // [(uint8_t) (req32 >> 16)] 0: task->qd_wakeup is empty. != 0: task->qd_wakeup contains data.
+   uint8_t        req_int;       // [(uint8_t) (req32 >> 24)] 0: sched->resumemask == 0. 1: sched->resumemask != 0.
+   };
+   uint32_t       req32;
+   };
+   uint32_t             sleepmask;     // TODO:
+   uint32_t   volatile  resumemask;    // TODO:
+   uint32_t             priomask;      // TODO:
+   task_t              *priotask[33];  // 32 priorities + energy saving task
+   uint32_t             freeid;
+   task_t              *idmap[32];
+};
+
 
 // scheduler_t: test
 
@@ -48,28 +66,19 @@ int init_scheduler(uint32_t nrtask, struct task_t *task/*[nrtask]*/);
             // The scheduling is done with coreinterrupt_PENDSV.
             // Its priority is set to lowest so that it does not preempt any other running interrupt handler.
 
-// scheduler_t: task-management
+// scheduler_t: callable-from-task-and-interrupt-context
 
 int addtask_scheduler(struct task_t *task);
             // TODO: Replace implementation with version which could not block higher priority tasks.
 
-int queueend_scheduler(struct task_t *task, task_queue_t *queue);
-            // TODO: Replace implementation with version which could not block higher priority tasks.
-
-int queueresume_scheduler(struct task_t *task, task_queue_t *queue);
-            // TODO: Replace implementation with version which could not block higher priority tasks.
-
-int queuewakeup_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
-            // TODO: Describe signaltask_scheduler
+int wakeupqd_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
+            // TODO: remove !!
 
 // scheduler_t: internal
 
 void pendsv_interrupt(void);
             // Interrupt used for task switching.
 
-struct task_t* task_scheduler(struct task_t* task/*stopped task*/);
-            // Called from pendsv_interrupt to switch to next task.
-            // Returns next current task.
 
 // TODO: remove, only used during test
 void clearbit_scheduler(uint32_t bitmask);

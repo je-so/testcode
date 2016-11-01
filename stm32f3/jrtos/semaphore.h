@@ -52,7 +52,9 @@ static inline int32_t value_semaphore(const semaphore_t *sem);
 // semaphore_t: signal-or-wait
 
 void signal_semaphore(semaphore_t *sem);
-            // Increments the value of sem atomically.
+            // Increments the value of sem atomically and wakes-up waiting tasks.
+void signalqd_semaphore(semaphore_t *sem);
+            // Increments the value of sem atomically ane queues wake-up of waiting tasks.
 void wait_semaphore(semaphore_t *sem);
             // Waits until value of sem > 0 and then decrements it atomically.
 int trywait_semaphore(semaphore_t *sem);

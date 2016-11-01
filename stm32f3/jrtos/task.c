@@ -30,16 +30,16 @@ void init_main_task(task_t *task, uint8_t priority/*0..7*/)
    priority = (uint8_t) (0x1f & priority);
    task->sp = &task->topstack - iframe_LEN(iframe_len_NOFPU|iframe_len_NOPADDING);
    task->lr = retcode_interrupt(interrupt_retcode_NOFPU|interrupt_retcode_THREADMODE_PSP);
+   task->priobit = 0x80000000 >> priority;
+   task->sched = 0;
    task->state = task_state_SUSPEND;
-   task->req = 0;
-   task->id  = 0;
+   task->id = 0;
    task->priority = priority;
-   task->priobit  = 0x80000000 >> priority;
-   task->sleepms = 0;
+   task->req_after_wakeup = 0;
    task->wait_for = 0;
+   task->qd_task = 0;
+   init_taskwakeup(&task->qd_wakeup);
    task->next = 0;
-   init_taskwakeup(&task->wakeup);
-   init_taskqueue(&task->queue);
 }
 
 void init_task(task_t *task, uint8_t priority/*0..7*/, task_main_f task_main, uintptr_t task_arg)
@@ -55,8 +55,9 @@ void sleepms_task(uint32_t millisec)
 {
    if (millisec) {
       task_t *task = current_task();
-      task->req = task_req_SLEEP;
       task->sleepms = millisec;
+      sw_msync();
+      task->sched->req = task_req_SLEEP;
    }
    yield_task();
 }
@@ -64,43 +65,74 @@ void sleepms_task(uint32_t millisec)
 void suspend_task(void)
 {
    task_t *task = current_task();
-   task->req = task_req_SUSPEND;
+   // task->req = task_req_SUSPEND;
+   task->sched->req = task_req_SUSPEND;
    yield_task();
 }
 
 void end_task(void)
 {
    task_t *task = current_task();
-   task->req = task_req_END;
+   task->sched->req = task_req_END;
    yield_task();
 }
 
 void resume_task(task_t *task)
 {
    task_t *caller = current_task();
-   caller->req = task_req_RESUME;
    caller->req_task = task;
+   sw_msync();
+   caller->sched->req = task_req_RESUME;
    yield_task();
 }
 
+void resumeqd_task(task_t *task)
+{
+   task_t *caller = current_task();
+   caller->qd_task |= task->priobit;
+   sw_msync();
+   caller->sched->req_qd_task = 1;
+}
+
+void stop_task(task_t *task)
+{
+   task_t *caller = current_task();
+   caller->req_task = task;
+   sw_msync();
+   caller->sched->req = task_req_STOP;
+   yield_task();
+}
 
 /* == task_wait_t impl == */
 
 void wakeup_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
-   task->req = task_req_WAKEUP;
    task->wait_for = waitfor;
+   sw_msync();
+   task->sched->req = task_req_WAKEUP;
    yield_task();
 }
 
 void wait_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
-   task->req = task_req_WAITFOR;
    task->wait_for = waitfor;
+   sw_msync();
+   task->sched->req = task_req_WAITFOR;
    yield_task();
 }
+
+void wakeupqd_task(task_wait_t *waitfor)
+{
+   task_t *task = current_task();
+   while (0 != write_taskwakeup(&task->qd_wakeup, waitfor)) {
+      task->sched->req_qd_wakeup = 1;
+      yield_task();
+   }
+   task->sched->req_qd_wakeup = 1;
+}
+
 
 
 #ifdef KONFIG_UNITTEST
@@ -165,7 +197,7 @@ int unittest_jrtos_task()
          TEST( task[i].sp      == (uint32_t*)&task[i+1] - (8+1));
          TEST( task[i].lr      == 0xfffffffd);
          TEST( task[i].state   == task_state_SUSPEND);
-         TEST( task[i].req     == 0);
+         TEST( task[i].req_after_wakeup == 0);
          TEST( task[i].id      == 0);
          TEST( task[i].priority == (p&~8));
          TEST( task[i].sleepms == 0);

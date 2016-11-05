@@ -18,7 +18,6 @@
 #define JRTOS_TASKWAIT_HEADER
 
 /* == Import == */
-typedef uint8_t task_id_t;
 typedef struct task_t task_t;
 
 /* == Typen == */
@@ -33,10 +32,6 @@ typedef struct task_wakeup_t task_wakeup_t;
             // Handles signalling of task_wait_t.
             // TODO: Rename task_wakeup_t into task_wqueue_t or remove task_wakeup_t
 
-typedef struct task_queue_t task_queue_t;
-            // Handles wakeup of task_t.
-            // TODO: Combine with task_wakeup_t and remove task_wakeup_t
-
 /* == Globals == */
 
 /* == Objekte == */
@@ -44,15 +39,18 @@ typedef struct task_queue_t task_queue_t;
 // task_wait_t
 
 struct task_wait_t {
-   uint16_t       nrevent;    // Stores number of times wake-up is called. This prevents race condition. Tasks trying to block could be preempted before they are added themselves to list of waiting task.
+   uint16_t       nrevent;    // Stores number of times wake-up is called. This prevents race condition.
+                              // Tasks trying to block could be preempted before they are added themselves to list of waiting task.
    uint8_t        priority;   // not used
    uint8_t        ceilprio;   // not used
    task_t        *last;       // Points to last entry in a list of waiting task_t.
+   uint32_t       nreventiq;  // Stores number of times wake-up is called from interrupt context.
+   task_wait_t   *nextiq;     // Valid if (nrventiq != 0).
 };
 
 // task_wait_t: lifetime
 
-#define task_wait_INIT  { 0, 0, 0, 0 }
+#define task_wait_INIT  { 0, 0, 0, 0, 0, 0 }
             // Initializes task_wait_t with no waiting tasks and no events occurred.
 
 // task_wait_t: query
@@ -63,14 +61,9 @@ static inline int istask_taskwait(const task_wait_t *wait_for);
 // task_wakeup_t
 
 struct task_wakeup_t {
+   uint8_t        qsize;
+   uint8_t        size;
    task_wait_t   *queue[4];
-   task_wakeup_t *next; // list of updated task_wakeup_t
-   uint8_t        keep; // number of rounds object will be kept in update list.
-                        // ==0: Not stored in list, next not in use.
-                        // !=0: Stored in listm next in use, even if value is 0.
-   uint8_t        szm1;
-   uint8_t        rpos;
-   uint8_t        wpos;
 };
 
 // task_wakeup_t: lifetime
@@ -80,44 +73,22 @@ static inline void init_taskwakeup(task_wakeup_t *fifo);
 // task_wakeup_t: query
 
 static inline bool isdata_taskwakeup(const task_wakeup_t *fifo);
+            // Returns true: size() > 0. false: size() == 0.
+
+static inline uint32_t size_taskwakeup(const task_wakeup_t *fifo);
+            // Returns nr of items written to queue.
 
 // task_wakeup_t: update
+
+static inline void clear_taskwakeup(task_wakeup_t *fifo);
 
 static inline int write_taskwakeup(task_wakeup_t *fifo, task_wait_t *waitfor);
             // Stores waitfor in task_wakeup_t in fifo order.
             // Returns ENOMEM: Queue is full. 0: waitfor stored successfully.
 
-static inline task_wait_t* read_taskwakeup(task_wakeup_t *fifo);
+static inline task_wait_t* read_taskwakeup(task_wakeup_t *fifo, uint32_t i/*0..size()-1*/);
             // Unchecked Precondition: isdata_taskwakeup() == true
             // Reads waitfor from task_wakeup_t queue in fifo order.
-
-
-// task_queue_t
-
-struct task_queue_t {
-   uint8_t     szm1;
-   uint8_t     rpos;
-   uint8_t     wpos;
-   task_t     *queue[2];
-};
-
-// task_queue_t: lifetime
-
-static inline void init_taskqueue(task_queue_t *fifo);
-
-// task_queue_t: query
-
-static inline bool isdata_taskqueue(const task_queue_t *fifo);
-
-// task_queue_t: update
-
-static inline int write_taskqueue(task_queue_t *fifo, task_t* task);
-            // Stores task in task_queue_t in fifo order.
-            // Returns ENOMEM: Queue is full. 0: task stored successfully.
-
-static inline task_t* read_taskqueue(task_queue_t *fifo);
-            // Unchecked Precondition: isdata_taskqueue() == true
-            // Reads task from task_queue_t in fifo order.
 
 
 /* == Inline == */
@@ -129,81 +100,40 @@ static inline int istask_taskwait(const task_wait_t *wait_for)
 
 static inline void init_taskwakeup(task_wakeup_t *fifo)
 {
-   static_assert( 0 == (lengthof(fifo->queue)&(lengthof(fifo->queue)-1)));
-   // assert( 0 == (fifo->szm1&(fifo->szm1+1)));
-   fifo->keep = 0;
-   fifo->szm1 = lengthof(fifo->queue)-1;
-   fifo->rpos = 0;
-   fifo->wpos = 0;
-   fifo->next = 0;
+   fifo->qsize = lengthof(fifo->queue);
+   fifo->size = 0;
 }
 
 static inline bool isdata_taskwakeup(const task_wakeup_t *fifo)
 {
-   uint8_t rpos = fifo->rpos;
-   uint8_t wpos = fifo->wpos;
-   return (rpos != wpos);
+   return (0 != fifo->size);
+}
+
+static inline uint32_t size_taskwakeup(const task_wakeup_t *fifo)
+{
+   return fifo->size;
+}
+
+static inline void clear_taskwakeup(task_wakeup_t *fifo)
+{           // external mechanism must ensure that clear not interrupted by writeiq
+   fifo->size = 0;
 }
 
 static inline int write_taskwakeup(task_wakeup_t *fifo, task_wait_t *waitfor)
-{
-   uint8_t rpos = fifo->rpos;
-   uint8_t wpos = fifo->wpos;
-   if ((uint8_t)(wpos - rpos) > fifo->szm1) { // TODO: test
+{           // called from task, could be interrupted by scheduler interrupt calling read/clear.
+   if (fifo->size >= fifo->qsize) {
       return ENOMEM;
    }
-   fifo->queue[wpos & fifo->szm1] = waitfor;
-   sw_msync();
-   fifo->wpos = (uint8_t) (wpos+1);
+   do {
+      fifo->queue[fifo->size] = waitfor;
+      // TODO: test if interrupted here !!
+   } while (0 != swap8_atomic(&fifo->size, fifo->size, fifo->size+1));
    return 0;
 }
 
-static inline task_wait_t* read_taskwakeup(task_wakeup_t *fifo)
+static inline task_wait_t* read_taskwakeup(task_wakeup_t *fifo, uint32_t i/*0..size()-1*/)
 {
-   uint8_t rpos = fifo->rpos;
-   task_wait_t *waitfor = fifo->queue[rpos & fifo->szm1];
-   sw_msync();
-   fifo->rpos = (uint8_t) (rpos+1);
-   return waitfor;
+   return fifo->queue[i];
 }
-
-static inline void init_taskqueue(task_queue_t *fifo)
-{
-   static_assert( 0 == (lengthof(fifo->queue)&(lengthof(fifo->queue)-1)));
-   // assert( 0 == (fifo->szm1&(fifo->szm1+1)));
-   fifo->szm1 = lengthof(fifo->queue)-1;
-   fifo->rpos = 0;
-   fifo->wpos = 0;
-}
-
-static inline bool isdata_taskqueue(const task_queue_t *fifo)
-{
-   uint8_t rpos = fifo->rpos;
-   uint8_t wpos = fifo->wpos;
-   return (rpos != wpos);
-}
-
-static inline int write_taskqueue(task_queue_t *fifo, task_t *task)
-{
-   uint8_t rpos = fifo->rpos;
-   uint8_t wpos = fifo->wpos;
-   if ((uint8_t)(wpos - rpos) > fifo->szm1) {	// TODO: test
-      return ENOMEM;
-   }
-   fifo->queue[wpos & fifo->szm1] = task;
-   sw_msync();
-   fifo->wpos = (uint8_t) (wpos+1);
-   return 0;
-}
-
-static inline task_t* read_taskqueue(task_queue_t *fifo)
-{
-   uint8_t rpos = fifo->rpos;
-   task_t *task = fifo->queue[rpos & fifo->szm1];
-   sw_msync();
-   fifo->rpos = (uint8_t) (rpos+1);
-   return task;
-}
-
 
 #endif

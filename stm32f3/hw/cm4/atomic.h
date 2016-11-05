@@ -52,6 +52,8 @@ static inline void setclrbits_atomic(/*atomic rw*/volatile uint32_t *val, uint32
             // Does following atomic op: *val = (*val & ~clearbits) | setbits;
 static inline int swap_atomic(void* volatile * val, void* oldval, void* newval);
             // Does following atomic op: if (*val == oldval) { *val = newval; return 0/*OK*/; } else { return (oldval-*val)/*ERROR*/; }
+static inline int swap8_atomic(uint8_t volatile * val, uint32_t oldval/*should be <= 255*/, uint32_t newval);
+            // Does following atomic op: if (*val == oldval) { *val = (uint8_t)newval; return 0/*OK*/; } else { return (oldval-*val)/*ERROR*/; }
 static inline uint16_t increment16_atomic(/*atomic rw*/volatile uint16_t *val);
             // Does following atomic op: return ++ *val;
 static inline uint32_t increment32_atomic(/*atomic rw*/volatile uint32_t *val);
@@ -60,6 +62,8 @@ static inline uint16_t decrement16_atomic(/*atomic rw*/volatile uint16_t *val);
             // Does following atomic op: return -- *val;
 static inline uint32_t decrement32_atomic(/*atomic rw*/volatile uint32_t *val);
             // Does following atomic op: return -- *val;
+static inline uint32_t incrementmax8_atomic(/*atomic rw*/volatile uint8_t *val, uint32_t maxval/*should be <=255*/);
+            // Does following atomic op: uint32_t old = *val; if (old < maxval) { *val = old+1} return old;
 
 
 /* == Inline == */
@@ -163,6 +167,24 @@ static inline int32_t decrementpositive_atomic(/*atomic rw*/volatile int32_t *va
    return oldval;
 }
 
+static inline uint32_t incrementmax8_atomic(/*atomic rw*/volatile uint8_t *val, uint32_t maxval)
+{
+   uint32_t oldval;
+   __asm volatile(
+      "1: ldrexb  %0, [%1]\n"       // 1: oldval = *val
+      "cmp     %0, %2\n"            // ? oldval - maxval
+      "bhs     2f\n"                // if (oldval >= maxval) goto label 2
+      "adds    %0, #1\n"            // oldval += 1;
+      "strexb  r12, %0, [%1]\n"     // try { *val = oldval; }
+      "tst     r12, r12\n"          // if (not atomic)
+      "bne     1b\n"                //    goto back to label 1:
+      "subs    %0, #1\n"            // oldval -= 1;
+      "2:\n"                        // 2:
+      : "=&r" (oldval) : "r" (val), "r" (maxval) : "r12", "cc", "memory"
+   );
+   return oldval;
+}
+
 
 static inline void clearbits_atomic(/*atomic rw*/volatile uint32_t *val, uint32_t bits)
 {
@@ -209,6 +231,22 @@ static inline int swap_atomic(void* volatile * val, void* oldval, void* newval)
       "subs    %0, %2\n"
       "bne     2f\n"
       "strex   %0, %3, [%1]\n"
+      "tst     %0, %0\n"
+      "bne     1b\n"
+      "2:\n"
+      : "=&r" (err) : "r" (val), "r" (oldval), "r" (newval) : "cc", "memory"
+   );
+   return err;
+}
+
+static inline int swap8_atomic(uint8_t volatile * val, uint32_t oldval, uint32_t newval)
+{
+   int err;
+   __asm volatile(
+      "1: ldrexb   %0, [%1]\n"
+      "subs    %0, %2\n"
+      "bne     2f\n"
+      "strexb  %0, %3, [%1]\n"
       "tst     %0, %0\n"
       "bne     1b\n"
       "2:\n"

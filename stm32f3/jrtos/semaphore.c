@@ -35,6 +35,13 @@ void signalqd_semaphore(semaphore_t *sem)
    }
 }
 
+void signaliq_semaphore(semaphore_t *sem)
+{
+   int32_t newval = (int32_t) increment_atomic((volatile uint32_t*)&sem->value);
+   if (newval <= 0) {
+      wakeupiq_scheduler(&sem->taskwait);
+   }
+}
 
 void wait_semaphore(semaphore_t *sem)
 {

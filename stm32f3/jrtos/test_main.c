@@ -20,7 +20,7 @@ task_t _Alignas(sizeof(task_t))  g_task[3];
 /* used in tasks */
 semaphore_t    sem1;
 fifo_t         fifo1;
-// TODO: uintptr_t      fifo1_buffer[5];
+
 
 /* set by assert_failed_exception */
 volatile const char *filename;
@@ -115,6 +115,7 @@ void systick_interrupt(void)
 {
    ++ s_timems;
    stop_systick();
+   signaliq_semaphore(&sem1);
 #if 0
    start_dwtdbg(dwtdbg_CYCLECOUNT);
    signal_semaphore(&sem1);
@@ -138,12 +139,12 @@ static void task_main(uintptr_t id/*0..3*/)
    // g_task[0]._protection[0] = 0;
    // g_task[1]._protection[0] = 0;
 
-#if 1
+#if 0
    // use cooperative scheduling
    if (id == 0) {
       while (0 == s_timems) {
          ++ s_cycles1;
-         //clearbit_scheduler(g_task[0].priobit); // if removed ==> 44/46 cycles
+         clearbit_scheduler(g_task[0].priobit); // if removed ==> 44/46 cycles
          trigger_scheduler();
       }
       return;
@@ -159,22 +160,36 @@ static void task_main(uintptr_t id/*0..3*/)
 #endif
 
 #if 0
+   static task_wakeup_t s_wakequeue;
+
    // use cooperative fifo
    if (id == 0) {
-      while (g_task[1].state != task_state_END) {
+      init_taskwakeup(&s_wakequeue);
+      while (0 == s_timems) {
          ++ s_cycles1;
-         put_fifo(&fifo1, (void*)s_cycles1);
+         // put_fifo(&fifo1, (void*)s_cycles1);
+         assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
+         assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
+         assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
+         assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
          clearbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
-         rw_msync();
       }
       return;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         void *dummy;
-         get_fifo(&fifo1, &dummy);
-         assert(dummy == (void*)s_cycles2);
+         // void *dummy;
+         // get_fifo(&fifo1, &dummy);
+         // assert(dummy == (void*)s_cycles2);
+         assert(0 != isdata_taskwakeup(&s_wakequeue));
+         assert(0 == read_taskwakeup(&s_wakequeue));
+         assert(0 != isdata_taskwakeup(&s_wakequeue));
+         assert(0 == read_taskwakeup(&s_wakequeue));
+         assert(0 != isdata_taskwakeup(&s_wakequeue));
+         assert(0 == read_taskwakeup(&s_wakequeue));
+         assert(0 != isdata_taskwakeup(&s_wakequeue));
+         assert(0 == read_taskwakeup(&s_wakequeue));
          setbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
@@ -183,10 +198,16 @@ static void task_main(uintptr_t id/*0..3*/)
    }
 #endif
 
+   while (0 == s_timems) {
+      yield_task();
+   }
+   resumeqd_task(&g_task[0]);
+   end_task();
+
 #if 1
    // use semaphore 1
    if (id == 0) {
-#define V1
+//#define V1
       while (0 == s_timems) {
          ++ s_cycles1;
          wait_semaphore(&sem1);
@@ -209,14 +230,14 @@ static void task_main(uintptr_t id/*0..3*/)
 
 
    // use suspend/resume
- #define V1
+#define V1
    if (id == 0) {
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
 #ifdef V1
-         suspend_task();   // 163 cycles
+         suspend_task();   // 166 cycles
 #else
-         suspend_task();   // 277 cycles (fifo) / 244 (cycles) mask
+         suspend_task();   // 277 cycles (fifo) / 247 (cycles) mask
          resumeqd_task(&g_task[1]);
 #endif
       }
@@ -350,17 +371,16 @@ int main(void)
          extern int unittest_##module(void); \
          assert( 0 == unittest_##module())
 
-#if 0
-   for (unsigned i = 0; i < 10; ++i) {
+   for (unsigned i = 0; i < 3; ++i) {
       switch_led();
       RUN(hw_cortexm4_atomic);
       RUN(hw_cortexm4_core);
+#if 0
       RUN(jrtos_task);
       RUN(jrtos_semaphore);
       RUN(jrtos_scheduler);
-   }
 #endif
-
+   }
 
 #if 1
    init_task(&g_task[0], 0, 0, 0);
@@ -368,16 +388,19 @@ int main(void)
       init_task(&g_task[i], (uint8_t) i, &task_main, i);
    }
    assert(0 == init_scheduler(2/*lengthof(g_task)*/, g_task));
+   // assert(0 == init_scheduler(1/*lengthof(g_task)*/, g_task));
 
    enable_trace_dbg();
    setpriority_coreinterrupt(coreinterrupt_SYSTICK, interrupt_priority_MIN-1);   // could preempt scheduler
-   config_systick(getHZ_clockcntrl()/10/*10ms*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
+   config_systick(getHZ_clockcntrl()/10/*100ms*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
    start_dwtdbg(dwtdbg_CYCLECOUNT);
 
    // g_task[0]._protection[0] = 0;
    // g_task[1]._protection[0] = 0;
 
-   task_main(0);
+   // task_main(0);
+   wait_semaphore(&sem1);
+   suspend_task();
    s_10ms = cyclecount_dwtdbg();
    // sleepms_task(990);
 #endif

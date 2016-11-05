@@ -66,16 +66,16 @@ struct task_t {
    uint8_t        state;   // 0: active. 1: waiting (wait_for is valid). 2: sleeping
    uint8_t        id;      // 0: id of main thread. I!=0: id of other thread
    uint8_t        priority;// 0: highest. ... 31: lowest.
-   uint8_t        req_after_wakeup; // 0: No change requested. != 0: Request from other task after this task is woken-up.
+   uint8_t        req_stop; // 0: No change requested. != 0: Request from other task after this task is woken-up.
    union {
    task_wait_t   *wait_for;// (state == task_state_WAITFOR) ==> task waits for event on this object
    task_t        *req_task;
    uint32_t       sleepms; // Number of milliseconds to sleep.
    };
    uint32_t       qd_task; // bits of tasks
-   task_wakeup_t  qd_wakeup;        // TODO: Describe, remove or rename into wqueue ?
+   task_wakeup_t  qd_wakeup;  // Queue of task_wait_t. Every entry is a signal to wake-up a single task.
    task_t        *next;    // next task in a list of tasks (task_wait_t)
-   uint32_t       _align2[2];
+   uint32_t       _align2[3];
    uint32_t       _protection[8];   // mpu uses this to detect stack overflow
    uint32_t       stack[256-32-1];  // memory used as stack for this task
    uint32_t       topstack;         // not used for stack

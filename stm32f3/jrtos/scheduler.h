@@ -48,6 +48,7 @@ struct scheduler_t {
    uint32_t   volatile  resumemask;    // TODO:
    uint32_t             priomask;      // TODO:
    task_t              *priotask[33];  // 32 priorities + energy saving task
+   task_wait_t         *wakeupiq;      // TODO:
    uint32_t             freeid;
    task_t              *idmap[32];
 };
@@ -69,34 +70,32 @@ int init_scheduler(uint32_t nrtask, struct task_t *task/*[nrtask]*/);
 // scheduler_t: callable-from-task-and-interrupt-context
 
 int addtask_scheduler(struct task_t *task);
-            // TODO: Replace implementation with version which could not block higher priority tasks.
-
-int wakeupqd_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup);
-            // TODO: remove !!
-
-// scheduler_t: internal
-
-void pendsv_interrupt(void);
-            // Interrupt used for task switching.
-
-
-// TODO: remove, only used during test
-void clearbit_scheduler(uint32_t bitmask);
-void setbit_scheduler(uint32_t bitmask);
-
-
-// scheduler_t: called-from-task-or-interrupt
+            // TODO: describe
 
 static inline void trigger_scheduler();
             // Called from timer-interrupt to trigger task switching interrupt after leaving timer interrupt.
 
-// scheduler_t: called-from-timer
+// scheduler_t: callable-from-interrupt-context-only
+
+void wakeupiq_scheduler(task_wait_t *waitfor);
+            // TODO: describe
+
+// scheduler_t: callable-from-timer-interrupt
 
 uint32_t periodic_scheduler(uint32_t millisec);
             // Called from timer-interrupt to allow scheduler handle sleeping tasks.
             // Parameter millisec should hold the time passed since the last call, typically value 1 is passed.
             // Must be called with priority higher than scheduler interrupt.
             // returns 0: No task woken up. N>0: N is number of tasks woken up.
+
+// scheduler_t: internal
+
+void pendsv_interrupt(void);
+            // Interrupt used for task switching.
+
+// TODO: remove, only used during test
+void clearbit_scheduler(uint32_t bitmask);
+void setbit_scheduler(uint32_t bitmask);
 
 
 /* == Inline == */

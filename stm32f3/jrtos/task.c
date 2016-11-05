@@ -35,7 +35,7 @@ void init_main_task(task_t *task, uint8_t priority/*0..7*/)
    task->state = task_state_SUSPEND;
    task->id = 0;
    task->priority = priority;
-   task->req_after_wakeup = 0;
+   task->req_stop = 0;
    task->wait_for = 0;
    task->qd_task = 0;
    init_taskwakeup(&task->qd_wakeup);
@@ -197,7 +197,7 @@ int unittest_jrtos_task()
          TEST( task[i].sp      == (uint32_t*)&task[i+1] - (8+1));
          TEST( task[i].lr      == 0xfffffffd);
          TEST( task[i].state   == task_state_SUSPEND);
-         TEST( task[i].req_after_wakeup == 0);
+         TEST( task[i].req_stop == 0);
          TEST( task[i].id      == 0);
          TEST( task[i].priority == (p&~8));
          TEST( task[i].sleepms == 0);

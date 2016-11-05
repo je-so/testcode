@@ -32,7 +32,6 @@ int unittest_hw_cortexm4_atomic()
 {
    int err;
    volatile uint32_t value;
-   volatile uint16_t value16;
    volatile int32_t  svalue;
    void   * volatile ptrval;
    uint32_t * const CCMRAM = (uint32_t*) HW_MEMORYREGION_CCMRAM_START;
@@ -99,16 +98,6 @@ int unittest_hw_cortexm4_atomic()
       }
    }
 
-   // TEST increment_atomic
-   for (uint32_t i = 0; i < 100; ++i) {
-      value = i;
-      increment_atomic(&value);
-      TEST( value == i+1);
-      value = ~i;
-      increment_atomic(&value);
-      TEST( value == (~i+1));
-   }
-
    // TEST trylock_atomic
    for (uint32_t i = 0; i < 100; ++i) {
       value = 0;
@@ -152,23 +141,31 @@ int unittest_hw_cortexm4_atomic()
    }
 
    // TEST increment16_atomic
-   for (uint32_t i = 0; i < 100; ++i) {
-      value16 = (uint16_t) i;
-      TEST( i+1 == increment_atomic(&value16));
-      TEST( i+1 == value16);
-      value16 = (uint16_t) ~i;
-      TEST( (uint16_t) -i == increment_atomic(&value16));
-      TEST( (uint16_t) -i == value16);
+   for (uint32_t off = 0; off < 2; ++off) {
+      uint16_t volatile * ptr16 = off + (uint16_t volatile*)&value;
+      value = 0;
+      for (uint32_t i = 0; i < 100; ++i) {
+         *ptr16 = (uint16_t) i;
+         TEST( i+1 == increment_atomic(ptr16));
+         TEST( ((i+1)<<(16*off)) == value);
+         *ptr16 = (uint16_t) ~i;
+         TEST( (uint16_t) -i == increment_atomic(ptr16));
+         TEST( ((uint16_t)(-i)<<(16*off)) == value);
+      }
    }
 
    // TEST decrement16_atomic
-   for (uint32_t i = 0; i < 100; ++i) {
-      value16 = (uint16_t) i;
-      TEST( (uint16_t) (i-1) == decrement_atomic(&value16));
-      TEST( (uint16_t) (i-1) == value16);
-      value16 = (uint16_t) -i;
-      TEST( (uint16_t) ~i == decrement_atomic(&value16));
-      TEST( (uint16_t) ~i == value16);
+   for (uint32_t off = 0; off < 2; ++off) {
+      uint16_t volatile * ptr16 = off + (uint16_t volatile*)&value;
+      value = 0;
+      for (uint32_t i = 0; i < 100; ++i) {
+         *ptr16 = (uint16_t) i;
+         TEST( (uint16_t) (i-1) == decrement_atomic(ptr16));
+         TEST( ((uint16_t)(i-1)<<(16*off)) == value);
+         *ptr16 = (uint16_t) -i;
+         TEST( (uint16_t) ~i == decrement_atomic(ptr16));
+         TEST( ((uint16_t)(~i)<<(16*off)) == value);
+      }
    }
 
    // TEST decrementpositive_atomic: value == INT32_MIN
@@ -196,6 +193,27 @@ int unittest_hw_cortexm4_atomic()
       TEST( -i == svalue);    // not changed
    }
 
+   // TEST incrementmax8_atomic
+   for (uint32_t off = 0; off < 4; ++off) {
+      volatile uint8_t *ptr8 = off + (volatile uint8_t*) &value;
+      value = 0;
+      for (uint32_t i = 0; i < 256; ++i) {
+         *ptr8 = (uint8_t) i;
+         TEST( i == incrementmax8_atomic(ptr8, i+1));
+         TEST( ((uint8_t)(i+1)<<(8*off)) == value);
+         *ptr8 = (uint8_t) i;
+         TEST( i == incrementmax8_atomic(ptr8, (uint32_t)-1));
+         TEST( ((uint8_t)(i+1)<<(8*off)) == value);
+         *ptr8 = (uint8_t) i;
+         TEST( i == incrementmax8_atomic(ptr8, i));
+         TEST( (i<<(8*off)) == value);
+         TEST( i == incrementmax8_atomic(ptr8, 0));
+         TEST( (i<<(8*off)) == value);
+         TEST( i == incrementmax8_atomic(ptr8, i?i-1:0));
+         TEST( (i<<(8*off)) == value);
+      }
+   }
+
    // TEST swap_atomic
    ptrval = 0;
    TEST( 0 == swap_atomic(&ptrval, 0, 0));
@@ -213,6 +231,47 @@ int unittest_hw_cortexm4_atomic()
       TEST( 0 == ptrval);
       TEST( 0 != swap_atomic(&ptrval, (void*)1, (void*)i));
       TEST( 0 == ptrval);
+   }
+
+   // TEST swap_atomic
+   ptrval = 0;
+   TEST( 0 == swap_atomic(&ptrval, 0, 0));
+   TEST( 0 == ptrval);
+   for (uintptr_t i = 1; i < 100; ++i) {
+      TEST( 0 == swap_atomic(&ptrval, 0, (void*)i));
+      TEST( i == (uintptr_t) ptrval);
+      TEST( 0 != swap_atomic(&ptrval, (void*)0, (void*)~i));
+      TEST( i == (uintptr_t) ptrval);
+      TEST( 0 == swap_atomic(&ptrval, (void*) i, (void*)~i));
+      TEST( ~i == (uintptr_t) ptrval);
+      TEST( 0 != swap_atomic(&ptrval, (void*) i, (void*) (i+1)));
+      TEST( ~i == (uintptr_t) ptrval);
+      TEST( 0 == swap_atomic(&ptrval, (void*)~i, 0));
+      TEST( 0 == ptrval);
+      TEST( 0 != swap_atomic(&ptrval, (void*)1, (void*)i));
+      TEST( 0 == ptrval);
+   }
+
+   // TEST swap8_atomic
+   for (uintptr_t off = 0; off < 4; ++off) {
+      volatile uint8_t *ptr8 = off + (volatile uint8_t*) &value;
+      value = 0;
+      for (uint32_t i = 0; i < 256; ++i) {
+         TEST( 0 != swap8_atomic(ptr8, (i?i:1), i));
+         TEST( 0 == value);
+         TEST( 0 == swap8_atomic(ptr8, 0, i));
+         TEST( (i<<(8*off)) == value);
+         TEST( 0 != swap8_atomic(ptr8, i+256/*> 255*/, i));
+         TEST( (i<<(8*off)) == value);
+         TEST( 0 != swap8_atomic(ptr8, i+1, i));
+         TEST( (i<<(8*off)) == value);
+         TEST( 0 != swap8_atomic(ptr8, i-1, i));
+         TEST( (i<<(8*off)) == value);
+         TEST( 0 == swap8_atomic(ptr8, i, ~i));
+         TEST( (((uint8_t)~i)<<(8*off)) == value);
+         TEST( 0 == swap8_atomic(ptr8, (uint8_t)~i, 0));
+         TEST( 0 == value);
+      }
    }
 
    // reset

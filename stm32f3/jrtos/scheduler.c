@@ -29,7 +29,6 @@
 /* == Locals == */
 
 static scheduler_t      s_sched;
-static task_wakeup_t   *s_wakeup_last;       // list of updated task_wakeup_t
 
 /* == Forward == */
 
@@ -139,7 +138,6 @@ int init_scheduler(uint32_t nrtask, task_t task[nrtask])
    err = sys_reset_scheduler();
    if (err) return err;
 
-   s_wakeup_last = 0;
    s_sched.req32 = 0;
    s_sched.sleepmask = 0;
    s_sched.resumemask = 0;
@@ -147,6 +145,7 @@ int init_scheduler(uint32_t nrtask, task_t task[nrtask])
    for (size_t i = 0; i < lengthof(s_sched.priotask); ++i) {
       s_sched.priotask[i] = 0;
    }
+   s_sched.wakeupiq = 0;
    init_idmap(&s_sched, (uint8_t) nrtask);
 
    for (uint32_t i = 0; i < nrtask; ++i) {
@@ -173,6 +172,8 @@ int init_scheduler(uint32_t nrtask, task_t task[nrtask])
 __attribute__ ((naked))
 void pendsv_interrupt(void)
 {
+   static_assert(&((task_t*)0)->sched == (scheduler_t**)&((task_t*)0)->sched);
+   static_assert(sizeof(((task_t*)0)->sched) == sizeof(uint32_t));
    static_assert(sizeof(s_sched.req32)  == sizeof(uint32_t));
    static_assert(sizeof(s_sched.priomask)  == sizeof(uint32_t));
    static_assert(sizeof(s_sched.priotask[0]) == sizeof(uint32_t));
@@ -184,6 +185,8 @@ void pendsv_interrupt(void)
       "movt r0, #:upper16:s_sched\n"// sched = &s_sched
       "lsrs r1, r3, %[log2TA]\n"    // /*r1*/task_t *task = psp >> scheduler_TASKALIGN;
       "lsls r1, r1, %[log2TA]\n"    // task <<= scheduler_TASKALIGN; /* task == current_task() */
+      // TODO: could be used to support more than one scheduler instead of constant assignment!
+      // "ldr  r0, [r1, %[sched]]\n"   // scheduler_t *sched = task->sched;
       "ldr  r2, [r0, %[req32]]\n"   // /*r2*/uint32_t req = sched->req32;
       "stm  r1, {r3-r11,r14}\n"     // task->sp = psp, task->regs[0..7] = r4..r11, task->lr = lr
       "cbz  r2, 7f\n"               // if (req != 0) {
@@ -201,7 +204,7 @@ void pendsv_interrupt(void)
       "ands r4, r11, 0xff00\n"      //    /*r4/uint32_t req_qd_wakeup = req24 & 0xff00;
       "beq  1f\n"                   //    if (req_qd_wakeup != 0) {
       "4:\n"                        //       CALL_PROCESS_TASKWAKEUP: ;
-      "adds r1, r10, %[qd_wakeup]\n"//       r1 = &task->qd_wakeup
+      "adds r1, r10, %[qd_wakeup]\n"//       r1 = &task_save->qd_wakeup
       "bl  process_taskwakeup\n"    //       r0 = process_taskwakeup(/*r0*/sched, /*r1*/&task->qd_wakeup);
       "1:\n"                        //    }
       "ands r4, r11, 0xff\n"        //    /*r4/uint32_t req_qd_task = req24 & 0xff;
@@ -235,12 +238,13 @@ void pendsv_interrupt(void)
 #endif
       "ldm  r1, {r3-r11,r14}\n"     // r3 = task->sp, r4..r11 = task->regs[0..7], lr = task->lr;
       "msr  psp, r3\n"              // set_psp(task->sp);  ==> (current_task() == task)
-      "bx   lr\n"                   // return from interrupt
+      "bx   lr\n"                   // return; /*from interrupt*/
       :: [log2TA] "i" (31 - __builtin_clz(scheduler_TASKALIGN)),
+         [sched] "i" (offsetof(task_t, sched)),
          [qd_task] "i" (offsetof(task_t, qd_task)), [qd_wakeup] "i" (offsetof(task_t, qd_wakeup)),
          [priomask] "i" (offsetof(scheduler_t, priomask)), [priotask] "i" (offsetof(scheduler_t, priotask)),
-         [req_int] "i" (offsetof(scheduler_t, req_int)), [req32] "i" (offsetof(scheduler_t, req32)),
-         "i" (&save_energy), "i" (&remove_task), "i" (&handle_reqint), "i" (&handle_req), "i" (&resume_tasks), "i" (&process_taskwakeup)
+         [req32] "i" (offsetof(scheduler_t, req32)),
+         "i" (&save_energy), "i" (&handle_reqint), "i" (&handle_req), "i" (&resume_tasks), "i" (&process_taskwakeup)
 
        : "memory", "cc"
    );
@@ -285,7 +289,7 @@ static inline scheduler_t* resume_tasks(scheduler_t *sched, uint32_t resumemask)
    return sched;
 }
 
-static void process_resumemask(scheduler_t *sched)
+static void process_resumemaskiq(scheduler_t *sched)
 {
    uint32_t resumemask = sched->resumemask;
    clearbits_atomic(&sched->resumemask, resumemask);
@@ -303,7 +307,7 @@ static inline void wakeup_taskwait(scheduler_t *sched, task_wait_t *waitfor)
          last->next = first->next;
       }
       first->wait_for = 0;
-      if (first->req_after_wakeup == task_req_STOP) {
+      if (first->req_stop) {
          remove_task(sched, first);
       } else {
          activate_task(sched, first);  // add removed task to ready list
@@ -315,47 +319,45 @@ static inline void wakeup_taskwait(scheduler_t *sched, task_wait_t *waitfor)
 
 static inline scheduler_t* process_taskwakeup(scheduler_t *sched, task_wakeup_t *queue)
 {
-   while (isdata_taskwakeup(queue)) {  // process whole queue
-      wakeup_taskwait(sched, read_taskwakeup(queue));
-   };
+   uint32_t size = size_taskwakeup(queue);
+   clear_taskwakeup(queue);
+   for (uint32_t i = 0; i < size; ++i) {
+      wakeup_taskwait(sched, read_taskwakeup(queue, i));
+   }
 
    return sched;
 }
 
-static void process_wakeuplist(scheduler_t *sched)
+static inline scheduler_t* process_wakeupiq(scheduler_t *sched)
 {
-   task_wakeup_t *queue = s_wakeup_last;
+   task_wait_t *wait;
+   task_wait_t *next;
+   uint32_t nrevent;
 
-   (void) process_taskwakeup(sched, queue);
+   if (sched->wakeupiq) {
+      do {                          // read list start and clear it
+         wait = sched->wakeupiq;
+      } while (0 != swap_atomic((void**)&s_sched.wakeupiq, wait, 0));
 
-   task_wakeup_t *prev = queue;
-   queue = queue->next;
-
-   while (queue) {
-
-      task_wakeup_t *next = queue->next;
-      sw_msync();
-      if (isdata_taskwakeup(queue)) {
-         queue->keep = 3;
-      } else if (queue->keep > 1) {    // decrement keep
-         -- queue->keep;
-         prev = queue;
-      } else {                         // remove queue from update list if keep expires
-         prev->next = next;
-         queue->keep = 0;
-         rw_msync();
+      for (; wait; wait = next) {   // process whole list
+         next = wait->nextiq;       // get next in list
+         sw_msync();
+         static_assert(sizeof(wait->nreventiq) == sizeof(void*));
+         do {                       // read number of wakeup events
+            nrevent = wait->nreventiq;
+         } while (0 != swap_atomic((void**)&wait->nreventiq, (void*)nrevent, 0));
+         for (; nrevent; --nrevent) {
+            wakeup_taskwait(sched, wait);
+         }
       }
-
-      process_taskwakeup(sched, queue);
-
-      queue = next;
    }
+   return sched;
 }
 
 static scheduler_t* handle_reqint(scheduler_t *sched)
 {
-   if (sched->resumemask) process_resumemask(sched);
-   if (s_wakeup_last) process_wakeuplist(sched);
+   if (sched->resumemask) process_resumemaskiq(sched);
+   process_wakeupiq(sched);
    return sched;
 }
 
@@ -408,7 +410,7 @@ static scheduler_t* handle_req(scheduler_t *sched, task_t* task, uint32_t req)
    case task_req_STOP:     if (task->req_task->state <= task_state_RESUMABLE) {
                               remove_task(sched, task->req_task);
                            } else if (task->req_task->state == task_state_WAITFOR) {
-                              task->req_task->req_after_wakeup = task_req_STOP;
+                              task->req_task->req_stop = task_req_STOP;
                            }
                            break;
    }
@@ -416,8 +418,8 @@ static scheduler_t* handle_req(scheduler_t *sched, task_t* task, uint32_t req)
    return sched;
 }
 
-static inline void rqi_resumetasks(uint32_t taskmask)
-{
+static inline void resumeiq_tasks(uint32_t taskmask)
+{           // iq: callable also from interrupt context
    setbits_atomic(&s_sched.resumemask, taskmask);
    s_sched.req_int = 1;
 }
@@ -454,7 +456,7 @@ uint32_t periodic_scheduler(uint32_t millisec)
       s_sched.sleepmask &= ~clearmask;   // if pendsv_interrupt was interrupted then this could result in a no-op
    }
    if (resumemask) {
-      rqi_resumetasks(resumemask);
+      resumeiq_tasks(resumemask);
    }
    // setpriority_core(oldprio);
    return wokenup_count;
@@ -478,7 +480,7 @@ int addtask_scheduler(task_t *task)
             }
             s_sched.freeid = id + 1;
             register_with_scheduler(&s_sched, task, id);
-            rqi_resumetasks(task->priobit);
+            resumeiq_tasks(task->priobit);
             return 0;
          }
       }
@@ -488,30 +490,17 @@ int addtask_scheduler(task_t *task)
    return ENOMEM; // no more free id value
 }
 
-int wakeupqd_scheduler(task_wait_t *waitfor, task_wakeup_t *wakeup)
+void wakeupiq_scheduler(task_wait_t *waitfor)
 {
-   // Design decision: Every task/interrupt must own its own task_wakeup_t queue
-   // therefore no protection is necessary and blocking another task is also not possible
-
-   int err = write_taskwakeup(wakeup, waitfor);
-   if (err) return err;
-
-   sw_msync();
-
-   if (wakeup->keep == 0) {
-      wakeup->keep = 3;
-      task_wakeup_t *old;
+   if (1 == increment_atomic(&waitfor->nreventiq)) {
+      static_assert(sizeof(s_sched.wakeupiq) == sizeof(void*));
       do {
-         old = s_wakeup_last;
-         wakeup->next = old;
-      } while (0 != swap_atomic((void **)&s_wakeup_last, old, wakeup));
+         waitfor->nextiq = s_sched.wakeupiq;
+      } while (0 != swap_atomic((void**)&s_sched.wakeupiq, waitfor->nextiq, waitfor));
+   } else {
+      // already stored in list s_sched.wakeupiq
    }
-
-   sw_msync();
-
    s_sched.req_int = 1;
-
-   return 0;
 }
 
 

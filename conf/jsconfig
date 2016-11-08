@@ -1,0 +1,119 @@
+# Verzeichnis:
+#  1. alias
+#  2. IP/URL (shorturl,myip)
+#  3. Text functions (translate)
+#  4. git (git_home_on,git_home_off)
+#  5. Shell Window (jshell)
+#  6. File functions (replace)
+
+HISTSIZE=4000
+HISTFILESIZE=4000
+# Konfiguriere XTerm
+if [ "$DISPLAY" != "" ]; then
+   xrdb -merge ~/.Xresources
+fi
+# Tasten 8/9 der Maus aussschalten (<Alt>-Left/<Alt>-Right)
+# damit nicht immer versehentlich im Browser die Seiten gewechselt werden.
+xmodmap -e "pointer = 1 2 3 4 5 6 7 0 0 10 11 12 13"
+#PATH="${PATH}:XXX"
+# black caviar schlafen legen (geht nicht, da sie immer wieder aufwacht !!)
+# sudo hdparm -Y /dev/sdb
+
+prompt="$PS1"
+# remove last '\$ '
+prompt="${prompt%\\\$ }"
+# make last '\$' red if command returned error
+prompt+='$( [ "$?" != "0" ] && echo "\[\e[0;31m\]")\$\[\e[0m\] '
+PS1="$prompt"
+
+##########
+##1. alias
+alias ll='ls -l'
+alias rm="rm -i"
+alias mv="mv -i"
+
+#######################
+##2. IP + URL functions
+function shorturl() {
+   curl -s -4 -d URL="$1" http://is.gd/create.php | sed '/Your new shortened/!d;s/.*value="\([^"]*\)".*/\1/'
+}
+
+function myip() {
+   wget -q -4 -O - checkip.dyndns.org | grep -o '\([0-9]\{1,3\}\.\)\{3\}[0-9]\{1,3\}'
+}
+
+######################
+##3. Text Functions
+
+# translate <from language> <to language> word1 word2 ...
+function translate() {
+   if [ $# -lt 3 ]; then
+      echo "usage: translate <fromlang> <tolang> words ..."
+      return
+   fi
+   local from=$1; shift
+   local to=$1; shift
+
+   wget -q -4 -O - "http://ajax.googleapis.com/ajax/services/language/translate?v=1.0&q=$(echo "$@" | sed 's/ /%20/g')&langpair=${from}%7C${to}" | sed 's/{"responseData": {"translatedText":"\([^"]*\)"}, .*}/\1\n/';
+
+}
+
+
+######################
+##4. Git
+function git_home_on() {
+   pushd ~
+   export GIT_DIR=/jsprojekt/Backup/home.git/
+   export GIT_WORK_TREE=/home/joerg
+}
+
+function git_home_off() {
+   popd
+   unset GIT_DIR
+   unset GIT_WORK_TREE
+}
+
+######################
+##5. Shell Window
+function jshell() {
+   gnome-terminal --geometry=80x24+70+550 --tab --tab --working-directory=/jsprojekt/JS/
+   exit 1
+}
+
+######################
+##6. File Functions
+function replace() {
+   if [ "$#" != "3" ]; then
+      echo "Usage: replace <reg-expr> <STRING> <file-dir>"
+      return
+   fi
+   if grep -rlZ -E "$1" "$3" >/dev/null; then
+      echo "- Found files -"
+      grep -rl -E "$1" "$3"
+      echo -n "Do replace for found files ? [N/y]"
+      read
+      if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+          arg1="${1//\//\\\/}"
+          arg2="${2//\//\\\/}"
+          grep -rlZ -E "$1" "$3" | xargs -0 -n 1 sed -i -r -e "s/${arg1}/${arg2}/g"
+      fi
+   else
+      echo "Found no files in '$3' matching expression '$1'";
+   fi
+}
+
+# Kopiert geänderte und für den nächsten Commit von git aufgenommene Dateien
+# an einen Remote-Host mittels secure copy (scp).
+function gcopy()
+{
+   if [ $# != "1" ]; then
+      echo "Usage: gcopy user@192.168.2.104:/home/user/GIT-DIR"
+      echo
+      echo "Copes staged modified files to remote host with scp"
+      exit 2
+   fi
+   changed_files=$(git status -s | sed -e "/^[^M]/d" | sed -e "s/^M[^ ]* //" )
+   for f in $changed_files; do
+      scp $f $1/$f
+   done
+}

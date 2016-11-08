@@ -1,0 +1,6 @@
+xterm*faceName: Monospace
+xterm*faceSize: 12
+xterm*foreground: rgb:ff/ff/ff
+xterm*background: rgb:10/00/50
+xterm*rightScrollBar: true
+! xterm*ScrollBar: true

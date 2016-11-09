@@ -66,12 +66,12 @@ struct task_t {
    uint8_t        state;   // 0: active. 1: waiting (wait_for is valid). 2: sleeping
    uint8_t        id;      // 0: id of main thread. I!=0: id of other thread
    uint8_t        priority;// 0: highest. ... 31: lowest.
-   uint8_t        req_stop; // 0: No change requested. != 0: Request from other task after this task is woken-up.
+   uint8_t        req_stop;// 0: No change requested. != 0: Request from other task after this task is woken-up.
    union {
-   task_wait_t   *wait_for;// (state == task_state_WAITFOR) ==> task waits for event on this object
-   task_t        *req_task;
+   task_wait_t   *waitfor; // (state == task_state_WAITFOR) ==> task waits for event on this object
+   task_t        *task;
    uint32_t       sleepms; // Number of milliseconds to sleep.
-   };
+   }              req;
    uint32_t       qd_task; // bits of tasks
    task_wakeup_t  qd_wakeup;  // Queue of task_wait_t. Every entry is a signal to wake-up a single task.
    task_t        *next;    // next task in a list of tasks (task_wait_t)
@@ -89,11 +89,11 @@ int unittest_jrtos_task(void);
 
 // task_t: lifetime
 
-void init_task(task_t *task, uint8_t priority/*0..7*/, task_main_f task_main, uintptr_t task_arg);
+void init_task(task_t *task, uint8_t priority/*0..31*/, task_main_f task_main, uintptr_t task_arg);
             // Initializes task so that task_main is called with task_arg as first argument in register R0.
             // The function task_main is not allowed to return else an exception occurs.
 
-void init_main_task(task_t *task, uint8_t priority/*0..7*/);
+void init_main_task(task_t *task, uint8_t priority/*0..31*/);
             // Initializes calling task which is also the main task.
 
 // task_t: query
@@ -153,7 +153,8 @@ static inline void assert_values_task(void)
          static_assert(0 == (sizeof(task_t)&(sizeof(task_t)-1)) && "sizeof of structure is power of 2");
 }
 
-#define yield_task()          trigger_scheduler()
+#define yield_task() \
+         trigger_scheduler()
 
 
 static inline task_t* current_task(void)

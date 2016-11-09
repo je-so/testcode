@@ -60,7 +60,7 @@ int trywait_semaphore(semaphore_t *sem)
 #ifdef KONFIG_UNITTEST
 
 // TODO:
-volatile uint32_t s_pendsvcounter;
+static volatile uint32_t s_pendsvcounter;
 
 // TODO:
 static void local_pendsv_interrupt(void)

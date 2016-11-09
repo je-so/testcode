@@ -25,7 +25,7 @@
 
 /* == task_t impl == */
 
-void init_main_task(task_t *task, uint8_t priority/*0..7*/)
+void init_main_task(task_t *task, uint8_t priority/*0..31*/)
 {
    priority = (uint8_t) (0x1f & priority);
    task->sp = &task->topstack - iframe_LEN(iframe_len_NOFPU|iframe_len_NOPADDING);
@@ -36,13 +36,13 @@ void init_main_task(task_t *task, uint8_t priority/*0..7*/)
    task->id = 0;
    task->priority = priority;
    task->req_stop = 0;
-   task->wait_for = 0;
+   task->req.waitfor = 0;
    task->qd_task = 0;
    init_taskwakeup(&task->qd_wakeup);
    task->next = 0;
 }
 
-void init_task(task_t *task, uint8_t priority/*0..7*/, task_main_f task_main, uintptr_t task_arg)
+void init_task(task_t *task, uint8_t priority/*0..31*/, task_main_f task_main, uintptr_t task_arg)
 {
    init_main_task(task, priority);
    task->sp[iframe_R0]  = task_arg;
@@ -55,7 +55,7 @@ void sleepms_task(uint32_t millisec)
 {
    if (millisec) {
       task_t *task = current_task();
-      task->sleepms = millisec;
+      task->req.sleepms = millisec;
       sw_msync();
       task->sched->req = task_req_SLEEP;
    }
@@ -65,7 +65,6 @@ void sleepms_task(uint32_t millisec)
 void suspend_task(void)
 {
    task_t *task = current_task();
-   // task->req = task_req_SUSPEND;
    task->sched->req = task_req_SUSPEND;
    yield_task();
 }
@@ -80,7 +79,7 @@ void end_task(void)
 void resume_task(task_t *task)
 {
    task_t *caller = current_task();
-   caller->req_task = task;
+   caller->req.task = task;
    sw_msync();
    caller->sched->req = task_req_RESUME;
    yield_task();
@@ -97,7 +96,7 @@ void resumeqd_task(task_t *task)
 void stop_task(task_t *task)
 {
    task_t *caller = current_task();
-   caller->req_task = task;
+   caller->req.task = task;
    sw_msync();
    caller->sched->req = task_req_STOP;
    yield_task();
@@ -108,7 +107,7 @@ void stop_task(task_t *task)
 void wakeup_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
-   task->wait_for = waitfor;
+   task->req.waitfor = waitfor;
    sw_msync();
    task->sched->req = task_req_WAKEUP;
    yield_task();
@@ -117,7 +116,7 @@ void wakeup_task(task_wait_t *waitfor)
 void wait_task(task_wait_t *waitfor)
 {
    task_t *task = current_task();
-   task->wait_for = waitfor;
+   task->req.waitfor = waitfor;
    sw_msync();
    task->sched->req = task_req_WAITFOR;
    yield_task();
@@ -137,12 +136,10 @@ void wakeupqd_task(task_wait_t *waitfor)
 
 #ifdef KONFIG_UNITTEST
 
-volatile uint32_t s_pendsvcounter;
+static volatile uint32_t s_pendsvcounter;
 
 static void local_pendsv_interrupt(void)
 {
-   // simulates freeing of entry in array s_task_wakeup, called with yield_task
-   // TODO: add something wakeup ?
    s_pendsvcounter++;
 }
 
@@ -160,48 +157,74 @@ int unittest_jrtos_task()
    uint32_t   const CCMRAM_SIZE = HW_MEMORYREGION_CCMRAM_SIZE;
    task_t   * const task   = (task_t*) CCMRAM;
    static_assert(512 >= sizeof(uint32_t)*len_interruptTable());
-   static_assert(3   <= (CCMRAM_SIZE - 512) / sizeof(task_t));
-   size_t     const nrtask = (CCMRAM_SIZE - 512) / sizeof(task_t);
+   static_assert(3   <= (CCMRAM_SIZE - 512 - sizeof(scheduler_t)) / sizeof(task_t));
+   size_t     const nrtask = (CCMRAM_SIZE - 512 - sizeof(scheduler_t)) / sizeof(task_t);
    uint32_t * const itable = (uint32_t*) &task[nrtask];
+   scheduler_t     *sched  = (scheduler_t*) ((uint8_t*)itable + 512);
+   task_t   * const mtask  = current_task();
 
    // prepare
    setprio0mask_interrupt();
+   TEST( 0 == s_pendsvcounter);
    TEST( 0 == relocate_interruptTable(itable));
    itable[coreinterrupt_PENDSV] = (uintptr_t) &local_pendsv_interrupt;
+   TEST( 0 == mtask->sched);
+   init_taskwakeup(&mtask->qd_wakeup);
+   mtask->sched = sched;
+   for (size_t i = 0; i < sizeof(*sched)/sizeof(uint32_t); ++i) {
+      ((uint32_t*)sched)[i] = 0;
+   }
 
    // TEST current_task
    for (size_t i = 0; i < nrtask; ++i) {
       uint32_t old_psp;
       __asm volatile (
-         "mrs %0, psp\n"
+         "mrs %0, psp\n"                     // save psp value
          : "=r" (old_psp) ::
       );
       __asm volatile (
          "msr psp, %0\n"
-         :: "r" (&task[i].stack[lengthof(task[i].stack)]) :
+         :: "r" (&task[i].stack[lengthof(task[i].stack)]) : // task->topstack excluded from stack size
       );
-      TEST( &task[i] == current_task());
+      TEST( &task[i] == current_task());     // does work
       __asm volatile (
          "msr psp, %0\n"
+         :: "r" (&task[i].stack[lengthof(task[i].stack)+1]) : // task->topstack included in stack size
+      );
+      TEST( &task[i+1] == current_task());   // does not work
+      __asm volatile (
+         "msr psp, %0\n"                     // restore old psp value
          :: "r" (old_psp) :
       );
+   }
+
+   // TEST initialstack_task
+   for (size_t i = 0; i < nrtask; ++i) {
+      TEST( &task[i].topstack == initialstack_task(&task[i]));
    }
 
    // TEST init_task
    clear_ram(CCMRAM, nrtask*sizeof(task_t));
    for (uintptr_t i = 0; i < nrtask; ++i) {
-      for (uint8_t p = 0; p < 16; ++p) {
+      for (uint8_t p = 0; p < 255; ++p) {
          init_task(&task[i], p, (task_main_f)(i+1), (i+2));
+         TEST( task[i].sp      == (uint32_t*)&task[i+1] - (8+1));
          TEST( task[i].regs[0] == 0x12345678);  // unchanged
          TEST( task[i].regs[7] == 0x12345678);  // unchanged
-         TEST( task[i].sp      == (uint32_t*)&task[i+1] - (8+1));
          TEST( task[i].lr      == 0xfffffffd);
+         TEST( task[i].priobit == (0x80000000>>(p&31)));
+         TEST( task[i].sched   == 0);
          TEST( task[i].state   == task_state_SUSPEND);
-         TEST( task[i].req_stop == 0);
          TEST( task[i].id      == 0);
-         TEST( task[i].priority == (p&~8));
-         TEST( task[i].sleepms == 0);
-         TEST( task[i].wait_for == 0);
+         TEST( task[i].priority == (p&31));
+         TEST( task[i].req_stop == 0);
+         TEST( task[i].req.waitfor == 0);
+         TEST( task[i].req.task == 0);
+         TEST( task[i].req.sleepms == 0);
+         TEST( task[i].qd_task == 0);
+         TEST( task[i].qd_wakeup.qsize == 4);
+         TEST( task[i].qd_wakeup.size == 0);
+         TEST( task[i].qd_wakeup.queue[0] == (void*)0x12345678);
          TEST( task[i].next    == 0);
          TEST( task[i]._protection[0] == 0x12345678); // unchanged
          TEST( task[i].stack[0] == 0x12345678); // unchanged
@@ -215,41 +238,202 @@ int unittest_jrtos_task()
    }
 
    // TEST yield_task
-   // TODO:
+   for (uint32_t i = 0; i < 10; ++i) {
+      TEST( 0 == is_coreinterrupt(coreinterrupt_PENDSV));
+      yield_task();
+      TEST( 0 != is_coreinterrupt(coreinterrupt_PENDSV));
+      clear_coreinterrupt(coreinterrupt_PENDSV);
+   }
 
-   // TEST sleepms_task
-   // TODO:
+   // TEST sleepms_task: millisec=0
+   sleepms_task(0);
+   TEST( 0 == sched->req32);
+   TEST( 0 != is_coreinterrupt(coreinterrupt_PENDSV));
+   clear_coreinterrupt(coreinterrupt_PENDSV);
 
-   // TEST wait_task
-   // TODO:
-
-
-   // TEST signal_task: all s_task_wakeup are free
-   // TODO: task_wait_t wait_for = task_wait_INIT;
-   // TODO: wait_for.last = &task[0];
-
-   // TEST signal_task
-
-   // prepare test signal_task
-   TEST( 0 == is_any_coreinterrupt());
+   // allow interrupts
    clearprio0mask_interrupt();
 
-   // TEST signal_task: all s_task_wakeup are used ==> yield (dummy pendsv_interrupt simulates freeing)
-   for (uint32_t i = 0; i < 10; ++i) {
+   // TEST sleepms_task: millisec!=0
+   for (uint32_t i = 1, cnt = 1; i; i <<= 1, ++cnt) {
+      sleepms_task(i);
+      TEST( task_req_SLEEP == sched->req);
+      TEST( cnt == s_pendsvcounter);
+      // reset
+      sched->req = 0;
+      TEST( 0 == sched->req32);
    }
    // reset
-   setprio0mask_interrupt();
    s_pendsvcounter = 0;
 
-   // TODO:
+   // TEST suspend_task
+   for (uint32_t i = 1; i < 10; ++i) {
+      suspend_task();
+      TEST( task_req_SUSPEND == sched->req);
+      TEST( i == s_pendsvcounter);
+      // reset
+      sched->req = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
 
-   // TODO:
+   // TEST end_task
+   for (uint32_t i = 1; i < 10; ++i) {
+      end_task();
+      TEST( task_req_END == sched->req);
+      TEST( i == s_pendsvcounter);
+      // reset
+      sched->req = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
 
-   // TODO:
+   // TEST wait_task
+   for (uint32_t i = 1; i < 10; ++i) {
+      task_wait_t waitfor = task_wait_INIT;
+      wait_task(&waitfor);
+      TEST( task_req_WAITFOR == sched->req);
+      TEST( &waitfor == mtask->req.waitfor);
+      TEST( i == s_pendsvcounter);
+      TEST( 0 == waitfor.nrevent);
+      TEST( 0 == waitfor.last);
+      // reset
+      sched->req = 0;
+      mtask->req.waitfor = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
+
+   // TEST resume_task
+   for (uint32_t i = 1; i < 3*nrtask; ++i) {
+      task_t * const T = &task[i%nrtask];
+      resume_task(T);
+      TEST( task_req_RESUME == sched->req);
+      TEST( T == mtask->req.task);
+      TEST( i == s_pendsvcounter);  // called into scheduler
+      TEST( task_state_SUSPEND == T->state);
+      // reset
+      sched->req = 0;
+      mtask->req.task = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
+
+   // TEST resumeqd_task: single task
+   for (uint32_t i = 1, cnt = 1; i; i <<= 1, ++cnt) {
+      task_t * const T = &task[cnt%nrtask];
+      T->priobit = i;
+      resumeqd_task(T);
+      TEST( 1 == sched->req_qd_task);
+      TEST( i == mtask->qd_task);
+      TEST( 0 == s_pendsvcounter);  // not called into scheduler
+      TEST( task_state_SUSPEND == T->state);
+      // reset
+      sched->req_qd_task = 0;
+      mtask->qd_task = 0;
+      TEST( 0 == sched->req32);
+   }
+
+   // TEST resumeqd_task: multiple tasks
+   for (uint32_t i = 1, cnt = 1, Q = 1; i; i <<= 1, ++cnt, Q |= i) {
+      task_t * const T = &task[cnt%nrtask];
+      T->priobit = i;
+      resumeqd_task(T);
+      TEST( 1 == sched->req_qd_task);
+      TEST( Q == mtask->qd_task);
+      TEST( 0 == s_pendsvcounter);  // not called into scheduler
+      TEST( task_state_SUSPEND == T->state);
+      // reset
+      sched->req_qd_task = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   mtask->qd_task = 0;
+
+   // TEST stop_task
+   for (uint32_t i = 1; i < 3*nrtask; ++i) {
+      task_t * const T = &task[i%nrtask];
+      stop_task(T);
+      TEST( task_req_STOP == sched->req);
+      TEST( T == mtask->req.task);
+      TEST( i == s_pendsvcounter);  // called into scheduler
+      TEST( task_state_SUSPEND == T->state);
+      // reset
+      sched->req = 0;
+      mtask->req.task = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
+
+   // TEST wakeup_task
+   for (uint32_t i = 1; i < 3*nrtask; ++i) {
+      task_wait_t waitfor = task_wait_INIT;
+      task_wait_t*const W = &waitfor;
+      wakeup_task(W);
+      TEST( task_req_WAKEUP == sched->req);
+      TEST( W == mtask->req.waitfor);
+      TEST( i == s_pendsvcounter);  // called into scheduler
+      TEST( 0 == waitfor.nrevent);
+      TEST( 0 == waitfor.last);
+      // reset
+      sched->req = 0;
+      mtask->req.task = 0;
+      TEST( 0 == sched->req32);
+   }
+   // reset
+   s_pendsvcounter = 0;
+
+   // TEST wakeupqd_task: single wakeup
+   for (uint32_t i = 1; i < 10; ++i) {
+      task_wait_t waitfor = task_wait_INIT;
+      task_wait_t*const W = &waitfor;
+      wakeupqd_task(W);
+      TEST( 1 == sched->req_qd_wakeup);
+      TEST( 4 == mtask->qd_wakeup.qsize);
+      TEST( 1 == mtask->qd_wakeup.size);
+      TEST( W == mtask->qd_wakeup.queue[0]);
+      TEST( 0 == s_pendsvcounter);  // not called into scheduler
+      TEST( 0 == waitfor.nrevent);
+      TEST( 0 == waitfor.last);
+      // reset
+      sched->req_qd_wakeup = 0;
+      init_taskwakeup(&mtask->qd_wakeup);
+      TEST( 0 == sched->req32);
+   }
+
+   // TEST wakeupqd_task: multiple wakeup
+   for (uint32_t i = 1; i < 10; ++i) {
+      task_wait_t waitfor[4] = { task_wait_INIT, task_wait_INIT, task_wait_INIT, task_wait_INIT };
+      for (uint32_t w = 0; w < 4; ++w) {
+         task_wait_t*const W = &waitfor[w];
+         wakeupqd_task(W);
+         TEST( 1 == sched->req_qd_wakeup);
+         TEST( 4 == mtask->qd_wakeup.qsize);
+         TEST( w+1 == mtask->qd_wakeup.size);
+         TEST( W == mtask->qd_wakeup.queue[w]);
+         TEST( 0 == s_pendsvcounter);  // not called into scheduler
+         TEST( 0 == W->nrevent);
+         TEST( 0 == W->last);
+         // reset
+         sched->req_qd_wakeup = 0;
+         TEST( 0 == sched->req32);
+      }
+      for (uint32_t w = 0; w < 4; ++w) {
+         TEST( &waitfor[w] == mtask->qd_wakeup.queue[w]);
+      }
+      // reset
+      init_taskwakeup(&mtask->qd_wakeup);
+   }
 
    // reset
    TEST( 0 == is_any_interrupt());
    TEST( 0 == is_any_coreinterrupt());
+   mtask->sched = 0;
    reset_interruptTable();
    clearprio0mask_interrupt();
 

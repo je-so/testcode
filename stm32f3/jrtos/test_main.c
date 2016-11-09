@@ -21,6 +21,7 @@ task_t _Alignas(sizeof(task_t))  g_task[3];
 semaphore_t    sem1;
 fifo_t         fifo1;
 
+// #define MEASURE_SPEED
 
 /* set by assert_failed_exception */
 volatile const char *filename;
@@ -105,22 +106,18 @@ void nmi_interrupt(void)
    }
 }
 
-volatile uint32_t s_timems;
-volatile uint32_t s_10ms;
-volatile uint32_t s_cycles1; // TODO: remove
-volatile uint32_t s_cycles2; // TODO: remove
-volatile uint32_t s_end;   // TODO: remove
+volatile uint32_t s_timems;   // incremented in systick_interrupt
+volatile uint32_t s_10ms;     // incremented in systick_interrupt, if 10 reached scheduler is triggered and value is reset to 0
+volatile uint32_t s_cycles1;  // counts number of loops cycles of task1 (if MEASURE_SPEED is defined)
+volatile uint32_t s_cycles2;  // counts number of loops cycles of task2 (if MEASURE_SPEED is defined)
 
 void systick_interrupt(void)
 {
    ++ s_timems;
+#ifdef MEASURE_SPEED
    stop_systick();
-   signaliq_semaphore(&sem1);
-#if 0
-   start_dwtdbg(dwtdbg_CYCLECOUNT);
-   signal_semaphore(&sem1);
-   trigger_scheduler();
-   s_end = cyclecount_dwtdbg();
+   // signaliq_semaphore(&sem1);
+#else
    if (periodic_scheduler(1)) {
       trigger_scheduler();
    }
@@ -142,16 +139,16 @@ static void task_main(uintptr_t id/*0..3*/)
 #if 0
    // use cooperative scheduling
    if (id == 0) {
-      while (0 == s_timems) {
+      while (0 == s_timems) {    // task1+2 : 112 cycles
          ++ s_cycles1;
-         clearbit_scheduler(g_task[0].priobit); // if removed ==> 44/46 cycles
+         clearbit_scheduler(g_task[0].priobit); // if removed ==> task1 only: 88 cycles
          trigger_scheduler();
       }
       return;
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         setbit_scheduler(g_task[0].priobit);   // 112 cycles
+         setbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
       setbit_scheduler(g_task[0].priobit);
@@ -165,9 +162,8 @@ static void task_main(uintptr_t id/*0..3*/)
    // use cooperative fifo
    if (id == 0) {
       init_taskwakeup(&s_wakequeue);
-      while (0 == s_timems) {
+      while (0 == s_timems) { // task1+2: 189 cycles
          ++ s_cycles1;
-         // put_fifo(&fifo1, (void*)s_cycles1);
          assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
          assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
          assert(0 == write_taskwakeup(&s_wakequeue, (task_wait_t*)0));
@@ -179,17 +175,12 @@ static void task_main(uintptr_t id/*0..3*/)
    } else {
       while (0 == s_timems) {
          ++ s_cycles2;
-         // void *dummy;
-         // get_fifo(&fifo1, &dummy);
-         // assert(dummy == (void*)s_cycles2);
-         assert(0 != isdata_taskwakeup(&s_wakequeue));
-         assert(0 == read_taskwakeup(&s_wakequeue));
-         assert(0 != isdata_taskwakeup(&s_wakequeue));
-         assert(0 == read_taskwakeup(&s_wakequeue));
-         assert(0 != isdata_taskwakeup(&s_wakequeue));
-         assert(0 == read_taskwakeup(&s_wakequeue));
-         assert(0 != isdata_taskwakeup(&s_wakequeue));
-         assert(0 == read_taskwakeup(&s_wakequeue));
+         assert(4 == size_taskwakeup(&s_wakequeue));
+         assert(0 == read_taskwakeup(&s_wakequeue, 0));
+         assert(0 == read_taskwakeup(&s_wakequeue, 1));
+         assert(0 == read_taskwakeup(&s_wakequeue, 2));
+         assert(0 == read_taskwakeup(&s_wakequeue, 3));
+         clear_taskwakeup(&s_wakequeue);
          setbit_scheduler(g_task[0].priobit);
          trigger_scheduler();
       }
@@ -198,16 +189,10 @@ static void task_main(uintptr_t id/*0..3*/)
    }
 #endif
 
-   while (0 == s_timems) {
-      yield_task();
-   }
-   resumeqd_task(&g_task[0]);
-   end_task();
-
-#if 1
+#if 0
    // use semaphore 1
    if (id == 0) {
-//#define V1
+#define V1
       while (0 == s_timems) {
          ++ s_cycles1;
          wait_semaphore(&sem1);
@@ -217,7 +202,7 @@ static void task_main(uintptr_t id/*0..3*/)
       while (0 == s_timems) {
          ++ s_cycles2;
 #ifdef V1
-         signal_semaphore(&sem1);   // 209 cycles
+         signal_semaphore(&sem1);   // 205 cycles
 #else
          signalqd_semaphore(&sem1); // 232 cycles
          yield_task();
@@ -229,15 +214,16 @@ static void task_main(uintptr_t id/*0..3*/)
 #endif
 
 
+#if 0
    // use suspend/resume
-#define V1
+//#define V1
    if (id == 0) {
       while (g_task[1].state != task_state_END) {
          ++ s_cycles1;
 #ifdef V1
-         suspend_task();   // 166 cycles
+         suspend_task();   // 168 cycles
 #else
-         suspend_task();   // 277 cycles (fifo) / 247 (cycles) mask
+         suspend_task();   // 242 (cycles) mask
          resumeqd_task(&g_task[1]);
 #endif
       }
@@ -255,13 +241,12 @@ static void task_main(uintptr_t id/*0..3*/)
       resumeqd_task(&g_task[0]);
       end_task();
    }
+#endif
 
    if (id == 0) {
       assert(s_count == 0);
-      // TODO: get_fifo(&fifo1, 0);
       wait_semaphore(&sem1);
       assert(s_count > 0);
-      // assert(0 == addtask_scheduler(&g_task[lengthof(g_task)-1]));
    }
    if (id == 1) {
       assert(s_count == 0);
@@ -271,7 +256,6 @@ static void task_main(uintptr_t id/*0..3*/)
    if (id == 2) {
       assert(s_count == 0);
       s_count = 1;
-      // TODO: put_fifo(&fifo1, 0);
       signal_semaphore(&sem1);
       signal_semaphore(&sem1);
    }
@@ -375,35 +359,40 @@ int main(void)
       switch_led();
       RUN(hw_cortexm4_atomic);
       RUN(hw_cortexm4_core);
-#if 0
       RUN(jrtos_task);
+#if 0
       RUN(jrtos_semaphore);
       RUN(jrtos_scheduler);
 #endif
    }
 
-#if 1
    init_task(&g_task[0], 0, 0, 0);
    for (uint32_t i = 1; i < lengthof(g_task); ++i) {
       init_task(&g_task[i], (uint8_t) i, &task_main, i);
    }
+#ifdef MEASURE_SPEED
    assert(0 == init_scheduler(2/*lengthof(g_task)*/, g_task));
-   // assert(0 == init_scheduler(1/*lengthof(g_task)*/, g_task));
+#else
+   assert(0 == init_scheduler(lengthof(g_task), g_task));
+#endif
 
    enable_trace_dbg();
    setpriority_coreinterrupt(coreinterrupt_SYSTICK, interrupt_priority_MIN-1);   // could preempt scheduler
+#ifdef MEASURE_SPEED
    config_systick(getHZ_clockcntrl()/10/*100ms*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
+#else
+   config_systick(getHZ_clockcntrl()/1000/*1ms*/, systickcfg_CORECLOCK|systickcfg_INTERRUPT|systickcfg_START);
+#endif
    start_dwtdbg(dwtdbg_CYCLECOUNT);
 
-   // g_task[0]._protection[0] = 0;
-   // g_task[1]._protection[0] = 0;
+   // Stack overflow generates an interrupt
+   // g_task[0].stack[-1] = 0;
 
-   // task_main(0);
-   wait_semaphore(&sem1);
-   suspend_task();
+   task_main(0);
+#ifdef MEASURE_SPEED
    s_10ms = cyclecount_dwtdbg();
-   // sleepms_task(990);
 #endif
+   sleepms_task(390);
 
    while (1) switch_led();
 }

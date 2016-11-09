@@ -59,14 +59,14 @@ static inline int sys_reset_scheduler(void)
    return 0;
 }
 
-static inline int sys_init_scheduler(task_t *main_task/*0: No stack protection*/)
+static inline int sys_init_scheduler(task_t *main_task)
 {
    int err;
    static_assert(scheduler_PRIORITY != interrupt_priority_MAX);
    static_assert(offsetof(task_t, _protection) == 3*32/*3rd subregion of 256 byte region (begin counting from 0)*/);
    static_assert(scheduler_TASKALIGN >= 256 && "minimum page size of MPU is 256 if subregions are in use");
 
-   if (main_task) {
+   if (scheduler_STACKPROTECT) {
       mpu_region_t region = mpu_region_INITRAM(main_task, mpu_size_256, (uint8_t)~(1<<3), mpu_access_READ, mpu_access_READ);
       err = config_mpu(1, &region, mpucfg_ALLOWPRIVACCESS|mpucfg_ENABLE);
       if (err) return err;
@@ -163,7 +163,7 @@ int init_scheduler(uint32_t nrtask, task_t task[nrtask])
       main_task->id = 1;
    }
 
-   err = sys_init_scheduler(scheduler_STACKPROTECT ? main_task : 0);
+   err = sys_init_scheduler(main_task);
    if (err) return err;
 
    return 0;
@@ -306,7 +306,7 @@ static inline void wakeup_taskwait(scheduler_t *sched, task_wait_t *waitfor)
       } else {
          last->next = first->next;
       }
-      first->wait_for = 0;
+      first->req.waitfor = 0;
       if (first->req_stop) {
          remove_task(sched, first);
       } else {
@@ -375,42 +375,42 @@ static scheduler_t* handle_req(scheduler_t *sched, task_t* task, uint32_t req)
                               task->state = task_state_SUSPEND;
                            }
                            break;
-   case task_req_RESUME:   if (task->req_task->state <= task_state_RESUMABLE) {
-                              activate_task(sched, task->req_task);
+   case task_req_RESUME:   if (task->req.task->state <= task_state_RESUMABLE) {
+                              activate_task(sched, task->req.task);
                            }
                            break;
    case task_req_SLEEP:    {
-                              sched->priomask  &= ~ task->priobit;
+                              sched->priomask &= ~ task->priobit;
                               task->state = task_state_SLEEP;     // state of task checked in periodic_scheduler
                               rw_msync();
                               sched->sleepmask |= task->priobit;  // could be interrupted by periodic_scheduler which clears these bits
                            }
                            break;
    case task_req_WAITFOR:  {
-                              if (task->wait_for->nrevent) {      // already woken-up ?
-                                 -- task->wait_for->nrevent;
+                              if (task->req.waitfor->nrevent) {   // already woken-up ?
+                                 -- task->req.waitfor->nrevent;
                               } else {                            // append task as last to list of waiting tasks
                                  sched->priomask &= ~ task->priobit;
                                  task->state = task_state_WAITFOR;
-                                 task_t *last = task->wait_for->last;
+                                 task_t *last = task->req.waitfor->last;
                                  if (last == 0) {
                                     task->next = task;
                                  } else {
                                     task->next = last->next;
                                     last->next = task;
                                  }
-                                 task->wait_for->last = task;
+                                 task->req.waitfor->last = task;
                               }
                            }
                            break;
    case task_req_WAKEUP:   {
-                              wakeup_taskwait(sched, task->wait_for);
+                              wakeup_taskwait(sched, task->req.waitfor);
                            }
                            break;
-   case task_req_STOP:     if (task->req_task->state <= task_state_RESUMABLE) {
-                              remove_task(sched, task->req_task);
-                           } else if (task->req_task->state == task_state_WAITFOR) {
-                              task->req_task->req_stop = task_req_STOP;
+   case task_req_STOP:     if (task->req.task->state <= task_state_RESUMABLE) {
+                              remove_task(sched, task->req.task);
+                           } else if (task->req.task->state == task_state_WAITFOR) {
+                              task->req.task->req_stop = task_req_STOP;
                            }
                            break;
    }
@@ -442,10 +442,10 @@ uint32_t periodic_scheduler(uint32_t millisec)
       task_t *task = s_sched.priotask[pri];
       if (task->state != task_state_SLEEP) {
          clearmask |= bit;
-      } else if (task->sleepms > millisec) {
-         task->sleepms -= millisec;
+      } else if (task->req.sleepms > millisec) {
+         task->req.sleepms -= millisec;
       } else {
-         task->sleepms = 0;
+         task->req.sleepms = 0;
          resumemask |= bit;
          ++ wokenup_count;
       }

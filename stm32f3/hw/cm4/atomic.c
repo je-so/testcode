@@ -21,7 +21,7 @@
 
 #ifdef KONFIG_UNITTEST
 
-volatile uint32_t s_pendsvcounter;
+static volatile uint32_t s_pendsvcounter;
 
 static void pendsv_interrupt(void)
 {
@@ -38,6 +38,7 @@ int unittest_hw_cortexm4_atomic()
    uint32_t   const CCMRAM_SIZE = HW_MEMORYREGION_CCMRAM_SIZE;
 
    // prepare
+   TEST( 0 == s_pendsvcounter);
    TEST( CCMRAM_SIZE/sizeof(uintptr_t) > len_interruptTable());
    TEST( 0 == relocate_interruptTable(CCMRAM));
    CCMRAM[coreinterrupt_PENDSV] = (uintptr_t) &pendsv_interrupt;

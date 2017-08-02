@@ -68,12 +68,12 @@ var locked_ships=[undefined,undefined]
 
 function* queryStarWarsAPI(nr) {
    try {
-      const shipnr = document.getElementById("ship"+nr).value
+      const shipnr= document.getElementById("ship"+nr).value
 
       if ((nr!=1 && nr!=2) || shipnr==locked_ships[nr-1])
          return "DONE"
 
-      locked_ships[nr-1]=shipnr
+      locked_ships[nr-1]= shipnr
  
       var ship= yield fetch("http://swapi.co/api/starships/" + shipnr)
       var data= yield ship.json()
@@ -86,18 +86,18 @@ function* queryStarWarsAPI(nr) {
       get("cargo"+nr).innerHTML= data.cargo_capacity
       get("passengers"+nr).innerHTML= data.passengers
       function highlight(prefix) {
-         var v1 = parseInt(get(prefix+"1").innerHTML)
-         var v2 = parseInt(get(prefix+"2").innerHTML)
+         var v1= parseInt(get(prefix+"1").innerHTML)
+         var v2= parseInt(get(prefix+"2").innerHTML)
          if (isNaN(v1) || isNaN(v2)) return;
-         get(prefix+"1").className=v1>v2?"winner":""
-         get(prefix+"2").className=v2>v1?"winner":""
+         get(prefix+"1").className= v1>v2? "winner":""
+         get(prefix+"2").className= v2>v1? "winner":""
       }
       highlight("cost")
       highlight("speed")
       highlight("cargo")
       highlight("passengers")
    } catch (ex) {
-      locked_ships[nr-1]=undefined
+      locked_ships[nr-1]= undefined
       return Promise.reject(ex)
    }
 
@@ -106,10 +106,10 @@ function* queryStarWarsAPI(nr) {
 
 function run(genobj) {
    function step(next) {
-      let prom = Promise.resolve(next.value)
+      let prom= Promise.resolve(next.value)
       if (!next.done)
-         prom = prom.then((result) => step(genobj.next(result)))
-                     .catch((err) => step(genobj.throw(err)))
+         prom= prom.then((result) => step(genobj.next(result)))
+                   .catch((err) => step(genobj.throw(err)))
       return prom
    }
    try {
@@ -120,10 +120,10 @@ function run(genobj) {
 }
 
 document.getElementById("button").addEventListener("click",
-   (ev) => run(queryStarWarsAPI(1)).catch((err)=>alert(err.message))
+   (ev) => run(queryStarWarsAPI(1)).catch((err) => alert(err.message))
 )
 document.getElementById("button").addEventListener("click",
-   (ev) => run(queryStarWarsAPI(2)).catch((err)=>alert(err.message))
+   (ev) => run(queryStarWarsAPI(2)).catch((err) => alert(err.message))
 )
 
  </script>

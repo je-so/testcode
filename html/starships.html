@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="UTF-8">
+ <title>Compare Starships</title>
+ <style>
+ table {
+    background: #ddd;
+ }
+ table,td,th {
+    border: 1px black solid;
+ }
+ td, th {
+    padding: 0.2em;
+    background: #fff;
+ }
+ td.winner {
+    background: #d00;
+    color: #fff
+ }
+ </style>
+</head>
+<body>
+ <h2>Select two Starships from the dropdown lists to compare</h2>
+ <select id="ship1">
+  <option value="2">CR90 Corvette</option>
+  <option value="75">V-wing</option>
+  <option value="74">Belbullab-22 Starfighter</option>
+  <option value="65">Jedi Interceptor</option>
+  <option value="3">Star Destroyer</option>
+  <option value="59">Trade Fedaration Cruiser</option>
+  <option value="58">Solar Sailer</option>
+  <option value="63">Republic Attack Cruiser</option>
+  <option value="28">A-wing</option>
+  <option value="29">B-wing</option>
+  <option value="39">Naboo Fighter</option>
+  <option value="10">Millenium Falcon</option>
+ </select>
+ <select id="ship2">
+  <option value="2">CR90 Corvette</option>
+  <option value="75">V-wing</option>
+  <option value="74">Belbullab-22 Starfighter</option>
+  <option value="65">Jedi Interceptor</option>
+  <option value="3">Star Destroyer</option>
+  <option value="59">Trade Fedaration Cruiser</option>
+  <option value="58">Solar Sailer</option>
+  <option value="63">Republic Attack Cruiser</option>
+  <option value="28">A-wing</option>
+  <option value="29">B-wing</option>
+  <option value="39">Naboo Fighter</option>
+  <option value="10">Millenium Falcon</option>
+ </select>
+ <button id="button">Compare</button>
+ <p id="result">
+ <table>
+  <tr><th></th><th>Starship 1</th><th>Starship 2</th></tr>
+  <tr><td>Name</td><td id="name1"></td><td id="name2"></td></tr>
+  <tr><td>Cost</td><td id="cost1"></td><td id="cost2"></td></tr>
+  <tr><td>Speed</td><td id="speed1"></td><td id="speed2"></td></tr>
+  <tr><td>Cargo Size</td><td id="cargo1"></td><td id="cargo2"></td></tr>
+  <tr><td>Passengers</td><td id="passengers1"></td><td id="passengers2"></td></tr>
+ </table>
+ </p>
+ 
+ <script>
+  
+var locked_ships=[undefined,undefined]
+
+function* queryStarWarsAPI(nr) {
+   try {
+      const shipnr = document.getElementById("ship"+nr).value
+
+      if ((nr!=1 && nr!=2) || shipnr==locked_ships[nr-1])
+         return "DONE"
+
+      locked_ships[nr-1]=shipnr
+ 
+      var ship= yield fetch("http://swapi.co/api/starships/" + shipnr)
+      var data= yield ship.json()
+      function get(id) {
+         return document.getElementById(id)
+      }
+      get("name"+nr).innerHTML= data.name
+      get("cost"+nr).innerHTML= data.cost_in_credits
+      get("speed"+nr).innerHTML= data.max_atmosphering_speed
+      get("cargo"+nr).innerHTML= data.cargo_capacity
+      get("passengers"+nr).innerHTML= data.passengers
+      function highlight(prefix) {
+         var v1 = Number.parseInt(get(prefix+"1").innerHTML)
+         var v2 = Number.parseInt(get(prefix+"2").innerHTML)
+         if (v1==Number.NaN || v2==Number.NaN) return;
+         get(prefix+"1").className=v1>v2?"winner":""
+         get(prefix+"2").className=v2>v1?"winner":""
+      }
+      highlight("cost")
+      highlight("speed")
+      highlight("cargo")
+      highlight("passengers")
+   } catch (ex) {
+      locked_ships[nr-1]=undefined
+      return Promise.reject(ex)
+   }
+
+   return "DONE"
+}
+
+function run(genobj) {
+   function step(next) {
+      let prom = Promise.resolve(next.value)
+      if (!next.done)
+         prom = prom.then((result) => step(genobj.next(result)))
+                     .catch((err) => step(genobj.throw(err)))
+      return prom
+   }
+   try {
+      return step(genobj.next())
+   } catch (ex) {
+      return Promise.reject(ex)
+   }
+}
+
+document.getElementById("button").addEventListener("click",
+   (ev) => run(queryStarWarsAPI(1)).catch((err)=>alert(err.message))
+)
+document.getElementById("button").addEventListener("click",
+   (ev) => run(queryStarWarsAPI(2)).catch((err)=>alert(err.message))
+)
+
+ </script>
+</body>
+</html>

@@ -86,9 +86,9 @@ function* queryStarWarsAPI(nr) {
       get("cargo"+nr).innerHTML= data.cargo_capacity
       get("passengers"+nr).innerHTML= data.passengers
       function highlight(prefix) {
-         var v1 = Number.parseInt(get(prefix+"1").innerHTML)
-         var v2 = Number.parseInt(get(prefix+"2").innerHTML)
-         if (v1==Number.NaN || v2==Number.NaN) return;
+         var v1 = parseInt(get(prefix+"1").innerHTML)
+         var v2 = parseInt(get(prefix+"2").innerHTML)
+         if (isNaN(v1) || isNaN(v2)) return;
          get(prefix+"1").className=v1>v2?"winner":""
          get(prefix+"2").className=v2>v1?"winner":""
       }

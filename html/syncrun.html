@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="UTF-8">
+ <title>Do Async in a Sync Way</title>
+ <style>
+ table {
+    background: #ddd;
+ }
+ td {
+    padding: 0.2em;
+    background: #fff;
+ }
+
+ #LoggerView th {
+    text-align: left;
+ }
+ #LoggerView table, #LoggerView td {
+    background: #fff;
+    border-collapse: collapse;
+    padding: 0.1em 0.4em;
+ }
+ #LoggerView tr:nth-child(even) td {
+    background: #eee;
+ }
+ #LoggerView th:first-child, #LoggerView td:first-child {
+   text-align: center;
+ }
+ #LoggerView td:first-child, #LoggerView td:last-child {
+   font-family: monospace;
+ }
+#LoggerView td .info {
+   font-weight: bold;
+}
+ #LoggerView tr.error td {
+   background: #f99;
+   color: #fff;
+ }
+ 
+ </style>
+</head>
+<body>
+ <h3>SyncRunner</h3> 
+ <p>Javascript adaption of syncrunner implemented in C</p>
+ <p>
+ <button id="button">Run</button>
+ </p>
+<p>
+ <table>
+  <tr id="1"><th>SyncFunc 1</th></tr>
+  <tr id="2"><th>SyncFunc 2</th></tr>
+  <tr id="3"><th>SyncFunc 3</th></tr>
+ </table>
+ </p>
+
+ <div id="LoggerView">
+ <table>
+ <thead>
+ <tr><th>ID</th><th>Message</th><th>Source Location</th></tr>
+ </thead>
+ <tbody>
+
+ </tbody>
+ </table>
+ </div>
+ 
+ <script>
+
+var col=undefined
+var stop=undefined
+var sleeping=undefined
+
+function* SyncFunc1() {
+   stop= false
+   for(col=1; col<=6; ++col) {
+      fillcol(1,""+col)
+      yield // give up cpu
+   }
+   fillcol(1,""+col)
+   stop= true
+   document.getElementById("button").disabled= false
+}
+
+function* SyncFunc2() {
+   while (!stop) {
+      fillcol(2,"Run")
+      yield // give up cpu
+      fillcol(2,"Sleep")
+      sleeping= SyncRunner.active
+      SyncRunner.sleep()
+      yield // give up cpu
+   } 
+   fillcol(2,"Exit")
+}
+
+function* SyncFunc3() {
+   while (!stop) {
+      fillcol(3,"Run")
+      yield // give up cpu
+      fillcol(3,"Run")
+      yield // give up cpu
+      fillcol(3,"Wakeup 2")
+      SyncRunner.wakeup(sleeping)
+      yield // give up cpu
+   } 
+   fillcol(3,"Error")
+   var e=null
+   e.id= 1
+}
+
+function appendcol() {
+   for (let id=1; id<=3; ++id) {
+      var row= document.getElementById(id)
+      var td=document.createElement("td")
+      row.appendChild(td)
+   }
+}
+
+function fillcol(id,msg) {
+   var row= document.getElementById(id)
+   var td=row.children[col]
+   td.innerHTML= msg
+}
+
+function start() {
+   if (!SyncRunner.isRunning()) {
+      document.getElementById("button").disabled= true
+      for (col=1; col<=7; ++col) {
+         fillcol(1,"")
+         fillcol(2,"")
+         fillcol(3,"")
+      }
+      SyncRunner.add(SyncFunc1)
+      SyncRunner.add(SyncFunc2)
+      SyncRunner.add(SyncFunc3)
+      SyncRunner.start(1000)
+   }
+}
+  
+document.getElementById("button").addEventListener("click",
+   (ev) => start()
+)
+
+for (let i=0; i<7; ++i) {
+   appendcol()
+}
+
+var SyncRunner= {
+   ACTIVE: 0,
+   WAITPROMISE: 1,
+   SLEEP: 2,
+   EXIT: 3,
+   Generator: (function*(){}).constructor,
+   funclist: [],
+   tid: undefined,
+   active: undefined,
+   isRunning() {
+      return this.tid!=undefined
+   },
+   getStackStr(err) {
+      return (err instanceof Error) ? err.stack : "";
+   },
+   getStackHTML(err) {
+      const str= this.getStackStr(err)
+      return str.substring(0,str.length-1).replace(/\n/g,"<br>")
+   },
+   getLogView() {
+      return document.querySelector("#LoggerView tbody")
+   },
+   clearlog() {
+      const view= this.getLogView()
+      view.innerHTML = "" 
+   },
+   sleep() {
+      this.active.state= this.SLEEP
+   },
+   wakeup(sleeping) {
+      if (sleeping.state==this.SLEEP) {
+         sleeping.state= this.ACTIVE
+         return true
+      }
+      return false
+   },
+   log(msg) {
+      const time= new Date()
+      const pos= (new Error()).stack.split("\n")[1]
+      const view= this.getLogView()
+      const isError= (msg instanceof Error)
+      view.innerHTML += (isError?"<tr class='error'>":"<tr>")
+                      + "<td>[" + 
+                      + time.getHours()+":"+time.getMinutes()
+                      + ":" + time.getSeconds()+"."+("000"+time.getMilliseconds()).substr(-3)
+                      + "]<br>SyncRunner</td><td>"
+                      + msg
+                      + "</td><td>" + pos
+                      + (!isError? ""
+                         : "<div class='info'>Stacktrace:</div>" + this.getStackHTML(msg))
+                      + "</td></tr>"
+   },
+   onTimer() {
+      this.run()
+      if (this.funclist.length==0)
+         this.stop()
+   },
+   start(millisec) {
+      if (this.tid==undefined) {
+         this.clearlog()
+         this.log("Starting")
+         this.tid= setInterval( this.onTimer.bind(this), millisec?millisec:10)
+      }
+   },
+   stop() {
+      if (this.tid!=undefined) {
+         this.log("Stopping")
+         clearInterval(this.tid)
+         this.tid= undefined
+      }
+   },
+   run() {
+      let isLog=false
+      for (let i=0; i<this.funclist.length; ++i) {
+         const f= this.funclist[i]
+         if (f.state!=this.ACTIVE) continue
+         if (!isLog) {
+            this.log("Running")
+            isLog=true
+         }
+         let next=undefined
+         try {
+            this.active= f
+            next= f.err==undefined ? f.gen.next(f.param)
+                : f.gen.throw(f.err)
+            f.err= undefined
+         } catch (ex) {
+            next= f.gen.return(ex)
+            f.err= ex
+         }
+         this.active= undefined
+         f.param= next.value
+         if (next.done) {
+            f.state= this.EXIT
+         } else {
+            if (f.param instanceof Promise) {
+               f.state= this.WAITPROMISE
+               f.param.then((result) => {
+                  f.param= result; f.state= this.ACTIVE;
+               }).catch((err) => {
+                  f.err= err; f.state= this.ACTIVE;
+               })
+            }
+         }
+      }
+      let a=0
+      for (let i=0; i<this.funclist.length; ++i) {
+         if (this.funclist[i].state!=this.EXIT) {
+            if (a!=i)
+               this.funclist[a]= this.funclist[i]
+            ++a
+         } else if (this.funclist[i].err!=undefined) {
+            this.log(this.funclist[i].err)
+         }
+      }
+      this.funclist.length=a
+   },
+   add(syncfunc,param) {
+      if (!syncfunc instanceof this.Generator)
+         throw new Error("Parameter not a SyncFunc (Generatorfunction)")
+      this.funclist.push({ syncfunc, gen: syncfunc(param), param: undefined, state: this.ACTIVE, err: undefined })
+   },
+}
+
+ </script>
+</body>
+</html>

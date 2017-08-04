@@ -24,6 +24,10 @@ Sudoku Solver
 -------------
 Jump to directory [sudoku/](old-projects/sudoku).
 
+JavaScript 
+----------
+[Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
+
 OS API
 -------------
 * How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).

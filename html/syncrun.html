@@ -45,11 +45,12 @@
  <p>
  <button id="button">Run</button>
  </p>
-<p>
- <table>
+ <p>
+ <table id="ShowState">
   <tr id="1"><th>SyncFunc 1</th></tr>
   <tr id="2"><th>SyncFunc 2</th></tr>
   <tr id="3"><th>SyncFunc 3</th></tr>
+  <tr id="4"><th>SyncFunc 4</th></tr>
  </table>
  </p>
 
@@ -67,57 +68,66 @@
  <script>
 
 var col=undefined
-var stop=undefined
 var sleeping=undefined
 
 function* SyncFunc1() {
    stop= false
-   for(col=1; col<=6; ++col) {
+   for(col=1; col<=5; ++col) {
       fillcol(1,""+col)
       yield // give up cpu
    }
-   fillcol(1,""+col)
-   stop= true
+   fillcol(1,"Exit")
    document.getElementById("button").disabled= false
 }
 
 function* SyncFunc2() {
-   while (!stop) {
-      fillcol(2,"Run")
-      yield // give up cpu
-      fillcol(2,"Sleep")
-      sleeping= SyncRunner.active
-      SyncRunner.sleep()
-      yield // give up cpu
-   } 
+   fillcol(2,"Run")
+   yield // give up cpu
+   fillcol(2,"Sleep")
+   sleeping= SyncRunner.active
+   SyncRunner.sleep()
+   yield // give up cpu
+   SyncRunner.abort(SyncFunc4)
+   fillcol(2,"Abort 4")
+   yield // give up cpu
    fillcol(2,"Exit")
 }
 
 function* SyncFunc3() {
-   while (!stop) {
-      fillcol(3,"Run")
-      yield // give up cpu
-      fillcol(3,"Run")
-      yield // give up cpu
-      fillcol(3,"Wakeup 2")
-      SyncRunner.wakeup(sleeping)
-      yield // give up cpu
-   } 
+   fillcol(3,"Run")
+   yield // give up cpu
+   fillcol(3,"Run")
+   yield // give up cpu
+   fillcol(3,"Wakeup 2")
+   SyncRunner.wakeup(sleeping)
+   yield // give up cpu
+   fillcol(3,"Run")
+   yield // give up cpu
    fillcol(3,"Error")
    var e=null
    e.id= 1
 }
 
-function appendcol() {
-   for (let id=1; id<=3; ++id) {
-      var row= document.getElementById(id)
-      var td=document.createElement("td")
-      row.appendChild(td)
+function* SyncFunc4() {
+   try {
+       for (;;) {
+          fillcol(4,"Run")
+          yield // give up cpu
+       } 
+   } catch (ex) {
+       fillcol(4,"Aborted")
+       var x2= new Error(ex)
+       console.log(x2)
+       throw x2
    }
 }
 
 function fillcol(id,msg) {
    var row= document.getElementById(id)
+   while (row.children.length <= col) {
+      var td=document.createElement("td")
+      row.appendChild(td)
+   }
    var td=row.children[col]
    td.innerHTML= msg
 }
@@ -125,25 +135,23 @@ function fillcol(id,msg) {
 function start() {
    if (!SyncRunner.isRunning()) {
       document.getElementById("button").disabled= true
-      for (col=1; col<=7; ++col) {
-         fillcol(1,"")
-         fillcol(2,"")
-         fillcol(3,"")
+      var rows= document.querySelectorAll("#ShowState tr")
+      for (const row of rows) {
+         while (row.children.length > 1) {
+            row.removeChild(row.children[1])
+         }
       }
       SyncRunner.add(SyncFunc1)
       SyncRunner.add(SyncFunc2)
       SyncRunner.add(SyncFunc3)
-      SyncRunner.start(1000)
+      SyncRunner.add(SyncFunc4)
+      SyncRunner.start(700)
    }
 }
   
 document.getElementById("button").addEventListener("click",
    (ev) => start()
 )
-
-for (let i=0; i<7; ++i) {
-   appendcol()
-}
 
 var SyncRunner= {
    ACTIVE: 0,
@@ -154,6 +162,13 @@ var SyncRunner= {
    funclist: [],
    tid: undefined,
    active: undefined,
+   findSyncFuncObject(syncfunc) {
+     for (const f of this.funclist) {
+        if (f.syncfunc === syncfunc) { 
+           return f
+        }
+     } 
+   },
    isRunning() {
       return this.tid!=undefined
    },
@@ -174,9 +189,23 @@ var SyncRunner= {
    sleep() {
       this.active.state= this.SLEEP
    },
-   wakeup(sleeping) {
-      if (sleeping.state==this.SLEEP) {
-         sleeping.state= this.ACTIVE
+   wakeup(syncfunc) {
+      if (typeof syncfunc == "function") {
+         syncfunc= this.findSyncFuncObject(syncfunc)
+      }
+      if (typeof syncfunc == "object" && syncfunc.state==this.SLEEP) {
+         syncfunc.state= this.ACTIVE
+         return true
+      }
+      return false
+   },
+   abort(syncfunc) {
+      if (typeof syncfunc == "function") {
+         syncfunc= this.findSyncFuncObject(syncfunc)
+      }
+      if (typeof syncfunc == "object" && syncfunc.state!=this.EXIT) {
+         syncfunc.state= this.ACTIVE
+         syncfunc.err= "abort(syncfunc)"
          return true
       }
       return false
@@ -199,6 +228,7 @@ var SyncRunner= {
    },
    onTimer() {
       this.run()
+      this.removeExitFunctions()
       if (this.funclist.length==0)
          this.stop()
    },
@@ -217,15 +247,10 @@ var SyncRunner= {
       }
    },
    run() {
-      let isLog=false
-      for (let i=0; i<this.funclist.length; ++i) {
-         const f= this.funclist[i]
+      this.log("Running")
+      for (const f of this.funclist) {
          if (f.state!=this.ACTIVE) continue
-         if (!isLog) {
-            this.log("Running")
-            isLog=true
-         }
-         let next=undefined
+         let next= undefined
          try {
             this.active= f
             next= f.err==undefined ? f.gen.next(f.param)
@@ -250,6 +275,8 @@ var SyncRunner= {
             }
          }
       }
+   },
+   removeExitFunctions() {
       let a=0
       for (let i=0; i<this.funclist.length; ++i) {
          if (this.funclist[i].state!=this.EXIT) {
@@ -265,7 +292,10 @@ var SyncRunner= {
    add(syncfunc,param) {
       if (!syncfunc instanceof this.Generator)
          throw new Error("Parameter not a SyncFunc (Generatorfunction)")
-      this.funclist.push({ syncfunc, gen: syncfunc(param), param: undefined, state: this.ACTIVE, err: undefined })
+      // syncfunc(param) returns Generatorobject
+      // first call of gen.next() executes syncfunc first time
+      this.funclist.push({ syncfunc, gen: syncfunc(param), param: undefined, 
+                           state: this.ACTIVE, err: undefined })
    },
 }
 

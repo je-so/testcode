@@ -1,131 +1,133 @@
 <!DOCTYPE html>
 <html>
 <head>
- <meta charset="UTF-8">
- <title>Compare Starships</title>
- <style>
- table {
-    background: #ddd;
- }
- table,td,th {
-    border: 1px black solid;
- }
- td, th {
-    padding: 0.2em;
-    background: #fff;
- }
- td.winner {
-    background: #d00;
-    color: #fff
- }
- </style>
+   <meta charset=utf-8>
+   <title>Compare Starships</title>
+<style>
+table {
+   background: #ddd;
+}
+table, td, th { 
+   border: 1px solid black;
+}
+td, th {
+   padding: 3px;
+   background: white;
+}
+.red {
+   background-color: red;
+   color: white;
+}
+</style>
 </head>
+
 <body>
- <h2>Select two Starships from the dropdown lists to compare</h2>
- <select id="ship1">
-  <option value="2">CR90 Corvette</option>
-  <option value="75">V-wing</option>
-  <option value="74">Belbullab-22 Starfighter</option>
-  <option value="65">Jedi Interceptor</option>
-  <option value="3">Star Destroyer</option>
-  <option value="59">Trade Fedaration Cruiser</option>
-  <option value="58">Solar Sailer</option>
-  <option value="63">Republic Attack Cruiser</option>
-  <option value="28">A-wing</option>
-  <option value="29">B-wing</option>
-  <option value="39">Naboo Fighter</option>
-  <option value="10">Millenium Falcon</option>
- </select>
- <select id="ship2">
-  <option value="2">CR90 Corvette</option>
-  <option value="75">V-wing</option>
-  <option value="74">Belbullab-22 Starfighter</option>
-  <option value="65">Jedi Interceptor</option>
-  <option value="3">Star Destroyer</option>
-  <option value="59">Trade Fedaration Cruiser</option>
-  <option value="58">Solar Sailer</option>
-  <option value="63">Republic Attack Cruiser</option>
-  <option value="28">A-wing</option>
-  <option value="29">B-wing</option>
-  <option value="39">Naboo Fighter</option>
-  <option value="10">Millenium Falcon</option>
- </select>
- <button id="button">Compare</button>
- <p id="result">
- <table>
-  <tr><th></th><th>Starship 1</th><th>Starship 2</th></tr>
-  <tr><td>Name</td><td id="name1"></td><td id="name2"></td></tr>
-  <tr><td>Cost</td><td id="cost1"></td><td id="cost2"></td></tr>
-  <tr><td>Speed</td><td id="speed1"></td><td id="speed2"></td></tr>
-  <tr><td>Cargo Size</td><td id="cargo1"></td><td id="cargo2"></td></tr>
-  <tr><td>Passengers</td><td id="passengers1"></td><td id="passengers2"></td></tr>
- </table>
- </p>
- 
- <script>
-  
-var locked_ships=[undefined,undefined]
+<h3>Select two Starships from the dropdown lists to compare</h3>
+<select id=ship1>
+<option value=2>CR90 Corvette</option>
+<option value=75>V-wing</option>
+<option value=74>Belbullab-22 Starfighter</option>
+<option value=65>Jedi Interceptor</option>
+<option value=3>Star Destroyer</option>
+<option value=59>Trade Fedaration Cruiser</option>
+<option value=58>Solar Sailer</option>
+<option value=63>Republic Attack Cruiser</option>
+<option value=28>A-wing</option>
+<option value=29>B-wing</option>
+<option value=39>Naboo Fighter</option>
+<option value=10>Millenium Falcon</option>
+</select>
+<select id=ship2>
+<option value=2>CR90 Corvette</option>
+<option value=75>V-wing</option>
+<option value=74>Belbullab-22 Starfighter</option>
+<option value=65>Jedi Interceptor</option>
+<option value=3>Star Destroyer</option>
+<option value=59>Trade Fedaration Cruiser</option>
+<option value=58>Solar Sailer</option>
+<option value=63>Republic Attack Cruiser</option>
+<option value=28>A-wing</option>
+<option value=29>B-wing</option>
+<option value=39>Naboo Fighter</option>
+<option value=10>Millenium Falcon</option>
+</select>
+<button id = "button">Compare</button>
+<p></p>
+<table>
+<thead>
+<tr><th></th><th>Starship 1</th><th>Starship 2</th></tr>
+</thead>
+<tbody>
+<tr><td>Name</td><td></td><td></td></tr>
+<tr><td>Cost</td><td></td><td></td></tr>
+<tr><td>Speed</td><td></td><td></td></tr>
+<tr><td>Cargo Size</td><td></td><td></td></tr>
+<tr><td>Passengers</td><td></td><td></td></tr>
+</tbody>
+</table>
 
-function* queryStarWarsAPI(nr) {
-   try {
-      const shipnr= document.getElementById("ship"+nr).value
+<script>
 
-      if ((nr!=1 && nr!=2) || shipnr==locked_ships[nr-1])
-         return "DONE"
+var dom_ship1=document.getElementById("ship1")
+var dom_ship2=document.getElementById("ship2")
+document.getElementById("button").addEventListener("click", (e) => {
+   run(genFunc(dom_ship1.value,dom_ship2.value)).catch(err => alert(err.message))
+})
 
-      locked_ships[nr-1]= shipnr
- 
-      var ship= yield fetch("http://swapi.co/api/starships/" + shipnr)
-      var data= yield ship.json()
-      function get(id) {
-         return document.getElementById(id)
-      }
-      get("name"+nr).innerHTML= data.name
-      get("cost"+nr).innerHTML= data.cost_in_credits
-      get("speed"+nr).innerHTML= data.max_atmosphering_speed
-      get("cargo"+nr).innerHTML= data.cargo_capacity
-      get("passengers"+nr).innerHTML= data.passengers
-      function highlight(prefix) {
-         var v1= parseInt(get(prefix+"1").innerHTML)
-         var v2= parseInt(get(prefix+"2").innerHTML)
-         if (isNaN(v1) || isNaN(v2)) return;
-         get(prefix+"1").className= v1>v2? "winner":""
-         get(prefix+"2").className= v2>v1? "winner":""
-      }
-      highlight("cost")
-      highlight("speed")
-      highlight("cargo")
-      highlight("passengers")
-   } catch (ex) {
-      locked_ships[nr-1]= undefined
-      return Promise.reject(ex)
+function* genFunc(ship1,ship2) {
+   ship1=Number(ship1)
+   ship2=Number(ship2)
+   if (!isFinite(ship1) || !isFinite(ship2) || ship1 <= 0 || ship2 <= 0)
+      throw new Error("Invalid Ship Numbers - Enter a number between 1 and 100")
+   var promises = [ fetch("https://swapi.co/api/starships/" + ship1),
+                    fetch("https://swapi.co/api/starships/" + ship2) ]
+   var ships = yield Promise.all(promises)
+
+   for (let i=0; i<ships.length; ++i) {
+      ships[i] = yield ships[i].json()
+   }
+   var trows = document.querySelectorAll("table > tbody > tr")
+   var attributes = [ "name", "cost_in_credits", "max_atmosphering_speed", 
+                      "cargo_capacity", "passengers"]
+   for (let i=0; i<attributes.length; ++i) {
+      trows[i].childNodes[1].innerHTML = ships[0][attributes[i]]
+      trows[i].childNodes[2].innerHTML = ships[1][attributes[i]]
+      
+      trows[i].childNodes[1].className = Number(ships[0][attributes[i]])
+                        > Number(ships[1][attributes[i]]) ? "red" : "";
+      trows[i].childNodes[2].className = Number(ships[0][attributes[i]]) 
+                        < Number(ships[1][attributes[i]]) ? "red" : "";
    }
 
-   return "DONE"
+   return "done"
 }
 
-function run(genobj) {
-   function step(next) {
-      let prom= Promise.resolve(next.value)
-      if (!next.done)
-         prom= prom.then((result) => step(genobj.next(result)))
-                   .catch((err) => step(genobj.throw(err)))
-      return prom
-   }
-   try {
-      return step(genobj.next())
-   } catch (ex) {
-      return Promise.reject(ex)
+function run(gen)
+{
+   let resolve, reject
+
+   if (!(function*(){}).prototype.__proto__.isPrototypeOf(gen))
+      return Promise.reject(Error("TypeError: Parameter is not a Generator"))
+
+   iterate({done:false,value:undefined})
+
+   return new Promise( (res,rej) => { resolve=res; reject=rej; })
+
+   function iterate(next) { // iterate through yielded values and promises
+      if (next.done)
+         resolve(next.value) // use return value 
+      else 
+         Promise.resolve(next.value).
+            // caller of then callback catches exception and calls catch
+            then(result => iterate(gen.next(result))).
+            // if gen.done is true gen.throw rethrows exception err
+            catch(err => {console.log("catch",err);iterate(gen.throw(err))}).
+            // which is catched by caller of catch and handled by following catch
+            catch(err => {console.log("catch2",err);reject(err)})
    }
 }
 
-document.getElementById("button").addEventListener("click",
-   (ev) => run(queryStarWarsAPI(1)).catch((err) => alert(err.message))
-)
-document.getElementById("button").addEventListener("click",
-   (ev) => run(queryStarWarsAPI(2)).catch((err) => alert(err.message))
-)
+</script>
 
- </script>
 </body>
 </html>

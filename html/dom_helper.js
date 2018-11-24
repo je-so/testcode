@@ -7,7 +7,7 @@
 // function qid === getElementById
 // function qtag === getElementsByTagName
 // function on === addEventListener
-// focument.jscomponentlib() === returns getElementsByTagName("script")[i] with value i so that its innerText contains "// js-component-library"
+// document.jscomponentlib() === returns getElementsByTagName("script")[i] with value i so that its innerText contains "// js-component-library"
 (function () {
    Object.defineProperty(
       Object.getPrototypeOf({}), 'proto', { get: function() { return Object.getPrototypeOf(this) }, enumerable: true, configurable: false }
@@ -22,7 +22,7 @@
          if (_.getElementsByTagName) _.qtag = _.getElementsByTagName
          if (_.addEventListener) _.on = _.addEventListener
       }
-   })([document.proto,window.proto,document.createElement("iframe").proto.proto]);
+   })([document.proto, window.proto, document.createElement("iframe").proto.proto]);
    document.proto.jscomponentlib=function() {
       return this.qtag("script").find( s => {
          return s.innerText.substring(0,30).search("// js-component-library")>=0;
@@ -79,7 +79,7 @@
             }
          };
       }
-   })([document.c("iframe").q("iframe").proto,document.c("iframe").qtag("iframe").proto]);
+   })([document.c("iframe").q("iframe").proto, document.c("iframe").qtag("iframe").proto]);
 })();
 </script>
 

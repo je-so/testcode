@@ -15,7 +15,7 @@
    (function(a) {
       for (_ of a) {
          if (_.createElement) _.c = _.createElement
-         if (_.createTextNode) _.ct = document.createTextNode
+         if (_.createTextNode) _.ct = _.createTextNode
          if (_.querySelectorAll) _.q = _.querySelectorAll
          if (_.querySelector) _.qs = _.querySelector
          if (_.getElementById) _.qid = _.getElementById

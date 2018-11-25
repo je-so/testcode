@@ -37,8 +37,8 @@
    })
 
    iframe.on("load", function() {
-      iframe.installlib().then( () => {
-         console.log("=== iframe.installlib() ===", "on:", iframe.contentWindow.on)
+      iframe.loadComponentLib().then( () => {
+         console.log("=== iframe.loadComponentLib() ===", "on:", iframe.contentWindow.on)
          iframe.contentWindow.on("resize", function() {
             console.log("=== on resize ===")
          })

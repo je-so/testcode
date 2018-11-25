@@ -36,11 +36,13 @@
       console.log("div offsetHeight", this.offsetHeight)
    })
 
-   iframe.contentWindow.addEventListener("resize", function() {
-      console.log("=== on resize ===")
-   })
-
    iframe.on("load", function() {
+      iframe.installlib().then( () => {
+         console.log("=== iframe.installlib() ===", "on:", iframe.contentWindow.on)
+         iframe.contentWindow.on("resize", function() {
+            console.log("=== on resize ===")
+         })
+      })
       console.log("=== onload ====")
       console.log("body offsetHeight", iframe.contentDocument.body.offsetHeight)
       console.log("body scrollHeight", iframe.contentDocument.body.scrollHeight)
@@ -59,8 +61,6 @@
          console.log("html clientWidth", iframe.contentDocument.documentElement.clientWidth)
       }, 100)
    })
-
-   iframe.installlib()
 
 </script>
 </body>

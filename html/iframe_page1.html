@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset=utf-8>
+ <meta name=viewport content="width=device-width,initial-scale=1">
+ <style>
+   html {
+      margin:5px;
+   }
+   body {
+      margin: 0;
+   }
+
+ @media only screen and (min-width: 30rem) {
+   .red { background-color: red;
+   }
+ }
+ </style>
+</head>
+<body onload='window.parent.postMessage("hello parent", "*")'>
+   <a href="iframe_page2.html">Frame2</a>
+   <div class=red style="height:200px;">Hello<br>World!
+   <p id="SomeElementYouWantToAnimate">Element</p>
+   </div>
+   <script>
+      setTimeout( () => {
+      var div = document.querySelector("div.red")
+      div.style.width = "2000px";
+      }, 2100)
+      setTimeout( () => {
+      var div = document.querySelector("div.red")
+      div.style.width = "";
+      }, 2100+2100)
+
+var start = null;
+var element = document.getElementById('SomeElementYouWantToAnimate');
+element.style.position = 'absolute';
+
+function step(timestamp) {
+  if (!start) start = timestamp;
+  var progress = timestamp - start;
+  element.style.left = Math.min(progress / 2, 400) + 'px';
+  if (progress < 2000) {
+    window.requestAnimationFrame(step);
+  }
+}
+
+window.requestAnimationFrame(step);
+   </script>
+</body>
+</html>

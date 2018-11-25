@@ -39,7 +39,7 @@ find(callback)    : Iterates contained nodes until callback returns true and ret
       }
    })([HTMLDocumentPrototype, WindowPrototype, HTMLElementPrototype]);
    HTMLDocumentPrototype.componentlib=function() {
-      return currentScript
+      return SCRIPT
    };
    // Extend iframe.proto with functions (only supports iframes with same origin):
    // - installlib: adds this library to the internal iframe
@@ -50,8 +50,10 @@ find(callback)    : Iterates contained nodes until callback returns true and ret
       // Must be called every time an iframe is loaded.
       _.installlib=function() {
          const s=document.c("script")
-         s.appendChild(document.ct(SCRIPT.innerText))
+         const p=new Promise((res,rej) => s.on("load", () => res(s)))
+         s.setAttribute("src", SCRIPT.src)
          this.contentDocument.documentElement.appendChild(s)
+         return p
       };
       _.adaptHeight=function() {
          const content = this.contentDocument.documentElement

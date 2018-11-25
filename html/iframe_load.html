@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset=utf-8>
+ <meta name=viewport content="width=device-width,initial-scale=1">
+ <style>
+ @media only screen and (min-width: 30rem) {
+   .red { background-color: red;
+   }
+ }
+ </style>
+ <script src=component.js></script>
+</head>
+<body>
+<div id=div style="margin:30px;border:1px black solid;width:200px;overflow:auto;"><div style="width:300px">Before Frame</div></div>
+<iframe src="iframe_page1.html" frameborder=0 style="width:100%;""></iframe>
+<div >After Frame</div>
+<script>
+   var iframe = document.qtag("iframe")[0]
+   var div = document.qtag("div")[0]
+
+   window.on("message", receiveMessage);
+
+   function receiveMessage(event)
+   {
+      console.log("event.origin", event.origin, event)
+   }
+
+   div.on("scroll", function(e) {
+      console.log("div", "" + this, this.scrollLeft, e)
+      console.log("div offsetWidth", this.offsetWidth)
+      console.log("div scrollWidth", this.scrollWidth)
+      console.log("div clientWidth", this.clientWidth)
+      console.log("div scrollHeight", this.scrollHeight)
+      console.log("div clientHeight", this.clientHeight)
+      console.log("div offsetHeight", this.offsetHeight)
+   })
+
+   iframe.contentWindow.addEventListener("resize", function() {
+      console.log("=== on resize ===")
+   })
+
+   iframe.on("load", function() {
+      console.log("=== onload ====")
+      console.log("body offsetHeight", iframe.contentDocument.body.offsetHeight)
+      console.log("body scrollHeight", iframe.contentDocument.body.scrollHeight)
+      console.log("body clientHeight", iframe.contentDocument.body.clientHeight)
+      console.log("html offsetHeight", iframe.contentDocument.documentElement.offsetHeight)
+      console.log("html scrollHeight", iframe.contentDocument.documentElement.scrollHeight)
+      console.log("html clientHeight", iframe.contentDocument.documentElement.clientHeight)
+      iframe.adaptHeight()
+      iframe.observeHeight()
+      setTimeout( function() {
+         console.log("html offsetHeight", iframe.contentDocument.documentElement.offsetHeight)
+         console.log("html scrollHeight", iframe.contentDocument.documentElement.scrollHeight)
+         console.log("html clientHeight", iframe.contentDocument.documentElement.clientHeight)
+         console.log("html offsetWidth", iframe.contentDocument.documentElement.offsetWidth)
+         console.log("html scrollWidth", iframe.contentDocument.documentElement.scrollWidth)
+         console.log("html clientWidth", iframe.contentDocument.documentElement.clientWidth)
+      }, 100)
+   })
+
+   iframe.installlib()
+
+</script>
+</body>
+</html>

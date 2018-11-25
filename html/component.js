@@ -42,13 +42,13 @@ find(callback)    : Iterates contained nodes until callback returns true and ret
       return SCRIPT
    };
    // Extend iframe.proto with functions (only supports iframes with same origin):
-   // - installlib: adds this library to the internal iframe
+   // - loadComponentLib: adds this library to the internal iframe
    // - adaptHeight: changes height of iframe to size of contained document
    // - observeHeight: adds timer to window of iframe to adapt height on size change
    const HTMLIFrameElementPrototype = document.c("iframe").proto;
    (function (_) {
       // Must be called every time an iframe is loaded.
-      _.installlib=function() {
+      _.loadComponentLib=function() {
          const s=document.c("script")
          const p=new Promise((res,rej) => s.on("load", () => res(s)))
          s.setAttribute("src", SCRIPT.src)

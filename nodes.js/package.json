@@ -1,6 +1,10 @@
 {
    "author": "jörg Seebohn",
+   "description": "learn something about npm",
+   "keywords": [ "node", "npm", "learn" ],
+   "license": "ISC",
    "name": "learn-npm-package-manager",
+   "version": "1.01",
    "depenencies": {
       "express": "^4.14.0"
    },

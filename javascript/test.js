@@ -1,53 +1,48 @@
-// internal type -- TestedValue
-
-function TestedValue(value,name) {
-   this.value=value
-   this.name=name
-}
-
-TestedValue.prototype.valueOf = function () {
-   return this.value
-}
 
 // internal type -- ConsoleLogger
 
 const ConsoleLogger = {
    console: console,
-   failedTest: function(TEST,description,testedValues/*array of {name,value} pairs where some of them has been unexpected*/) {
+   error: function(TEST,description,testedValues/*array of unexpected values at least some of them*/) {
       this.console.log(new Error(`TEST failed: ${description}`))
       for(const v of testedValues) {
-         this.console.log(`   Possibly unexpected value >${v.value}< (${v.name?v.name:""})`)
+         this.console.log(`   Possibly unexpected value >${v}<`)
       }
    },
-   passedTest: function(TEST) {
-      this.console.log("OK")
-   },
-   start: function(TEST,type,name) {
+   startTest: function(TEST,type,name) {
       this.console.log(`Run ${type} ${name}: ... start ...`)
    },
-   end: function(TEST,type,name) {
-      if (TEST.stats.failedCount)
-         this.console.error(`Run ${type} ${name}: ${TEST.stats.failedCount} test${TEST.stats.failedCount!==1?"s":""} failed out of ${TEST.stats.passedCount+TEST.stats.failedCount}.`)
-      else
-         this.console.log(`Run ${type} ${name}: ${TEST.stats.passedCount} tests passed.`)
+   endTestOK: function(TEST,type,name) {
+      this.console.log(`Run ${type} ${name}: OK.`)
+   },
+   endTestError: function(TEST,type,name,nrErrors) {
+      this.console.error(`Run ${type} ${name}: ${nrErrors} errors detected.`)
    },
 }
 
 // public type -- Stats
 
 const Stats = {
-   passedCount: 0,
-   failedCount: 0,
+   nrPassedTests: 0, 
+   nrFailedTests: 0, 
+   nrErrors: 0,
    reset: function() {
-      this.passedCount = 0
-      this.failedCount = 0
+      this.nrPassedTests = 0
+      this.nrFailedTests = 0 
+      this.nrErrors = 0
    },
-   passedTest: function() {
-      ++this.passedCount
+   error: function() {
+      ++this.nrErrors;
    },
-   failedTest: function() {
-      ++this.failedCount
-   }
+   startTest: function() {
+      this.nrErrors = 0
+   },
+   endTest: function() {
+      if (this.nrErrors)
+         ++this.nrFailedTests
+      else
+         ++this.nrPassedTests
+   },
 }
 
 // internal type -- Stats
@@ -77,50 +72,51 @@ const TestTypes = {
 export default function TEST(expression,description) {
    // checks that expression is true in case of false an error is printed
    if (!expression) {
-      TEST.stats.failedTest()
-      TEST.logger.failedTest(TEST,description,TEST.testedValues)
-   } else {
-      TEST.stats.passedTest()
-      TEST.logger.passedTest(TEST)
+      TEST.logger.error(TEST,description,TEST.testedValues)
+      TEST.stats.error()
    }
    TEST.testedValues = []
 }
 
-TEST.testedValues = []
-
-TEST.Value = function(value,name) {
-   // encapsulates variable value which is tested for having certain value
-   var v = new TestedValue(value,name)
-   TEST.testedValues.push(v)
-   return v
+TEST.Value = function(value) {
+   // encapsulates variable value which is tested for having a certain value
+   TEST.testedValues.push(value)
+   return value
 }
 
-TEST.start = function(type,name) {
+TEST.reset = function() {
+   TEST.logger = ConsoleLogger
+   TEST.stats = Stats
+   TEST.testedValues = []
+   TEST.types = TestTypes
    TEST.stats.reset()
-   TEST.logger.start(TEST,type,name)
 }
 
-TEST.end = function(type,name) {
-   TEST.logger.end(TEST,type,name)
+TEST.runTest = function(type,name,testfunc) {
+   TEST.logger.startTest(TEST,type,name)
+   TEST.stats.startTest()
+   testfunc(TEST)
+   if (TEST.stats.nrErrors)
+      TEST.logger.endTestError(TEST,type,name,TEST.stats.nrErrors)
+   else
+      TEST.logger.endTestOK(TEST,type,name,TEST.stats.nrErrors)
+   TEST.stats.endTest()
 }
 
 TEST.setLogger = function(logger) {
    TEST.logger = logger
 }
 
-TEST.logger = ConsoleLogger
-
-TEST.stats = Stats
-
-TEST.types = TestTypes
+TEST.reset()
 
 
 // -- Test Section --
 
 export function UNIT_TEST(TEST_) {
+   const V = TEST.Value
+
    test_Parameter()
-   test_TestedValue_primitives()
-   test_TestedValue_nonprimitives()
+   test_TEST_Value()
    test_ConsoleLogger()
    test_Stats()
    test_TEST()
@@ -129,40 +125,42 @@ export function UNIT_TEST(TEST_) {
       TEST( TEST_ == TEST,"1st parameter passed to UNITTEST is TEST")
    }
 
-   function test_TestedValue_primitives() {
-      // comparison operators with TestedValue and primitive types works cause of overwriting valueOf
-      var v;
+   function test_TEST_Value() {
       for(let val=-5; val<=5; ++val) {
-         v = new TestedValue(val,"name-"+val)
-         new TestedValue(v.value,"value of TestedValue:"+val)
-         TEST( v.value == val, "TestedValue Constructor")
-         new TestedValue(v.name,"name of TestedValue:"+val)
-         TEST( v.name == "name-"+val, "TestedValue Constructor")
-         new TestedValue(v.valueOf(),"valueOf of TestedValue:"+val)
-         TEST( v == val, "TestedValue.valueOf")
+         TEST( V(val) == val, "TEST.Value returns parameter value with type integer #"+val)
       }
-      v = new TestedValue("string-value","string-type")
-      TEST( v == "string-value", "TestedValue.valueOf type string")
-      v = new TestedValue(true,"true-type")
-      TEST( v == true, "TestedValue.valueOf type boolean")
-      v = new TestedValue(false,"false-type")
-      TEST( v == false, "TestedValue.valueOf type boolean")
-      v = new TestedValue(0.123,"float-type")
-      TEST( v == 0.123, "TestedValue.valueOf type float")
-   }
 
-   function test_TestedValue_nonprimitives() {
-      // need to access value explicitly for null,undefined and object types
-      var v = new TestedValue(null,"null-type")
-      TEST( v.value == null, "TestedValue with type null")
-      v = new TestedValue(undefined,"undefined-type")
-      TEST( v.value == undefined, "TestedValue with type undefined")
+      TEST( V("string-value") == "string-value", "TEST.Value returns parameter value with type string")
+
+      TEST( V(true) == true, "TEST.Value returns parameter value with type boolean true")
+
+      TEST( V(false) == false, "TEST.Value returns parameter value with type boolean false")
+
+      TEST( V(0.123) == 0.123, "TEST.Value returns parameter value with type float")
+
+      TEST( V(null) == null, "TEST.Value returns parameter value with type null")
+
+      TEST( V(undefined) == undefined, "TEST.Value returns parameter value with type undefined")
+
       var o = { name: "Jo Bar" }
-      v = new TestedValue(o,"object-type")
-      TEST( v.value == o, "TestedValue with type object")
+      TEST( V(o) == o, "TEST.Value with returns parameter value type object")
+
       var f = function() { return }
-      v = new TestedValue(f,"function-type")
-      TEST( v.value == f, "TestedValue.valueOf type function")
+      TEST( V(f) == f, "TEST.Value with returns parameter value type function")
+
+      for(var nrValues=1; nrValues<=10; ++nrValues) {
+         for(var i=1; i<=nrValues; ++i) {
+            V(i)
+         }
+
+         var testedValues = TEST.testedValues
+         TEST.testedValues = []
+         TEST( V(testedValues.length) == nrValues, "TEST.Value increments length of TEST.testedValues #"+nrValues)
+
+         for(var i=1; i<=nrValues; ++i) {
+            TEST( V(testedValues[i-1]) == i, "TEST.Value pushes value to TEST.testedValues #"+i)
+         }
+      }
    }
 
    function test_ConsoleLogger() {
@@ -182,106 +180,76 @@ export function UNIT_TEST(TEST_) {
       }
       function unprepare_proxy() {
          TEST.logger.console = old_console
-         TEST.stats.reset()
       }
       try {
          var logger = TEST.logger, v, testedValues
          TEST( ConsoleLogger == TEST.logger, "ConsoleLogger is default logger")
          TEST( console == TEST.logger.console, "ConsoleLogger writes to console")
 
-         // test function 'failedTest'
+         // test function 'error'
          for (var nrValues=0; nrValues<10; ++nrValues) {
             testedValues = []
             for (var i=0; i<nrValues; ++i) {
-               testedValues.push( new TestedValue(3*i, "name"+i) )
+               testedValues.push( 3*i)
             }
 
-            // call function 'failedTest' under test
+            // call function 'error' under test
             prepare_proxy()
-            logger.failedTest(TEST,"123-description-456",testedValues)
+            logger.error(TEST,"123-description-456",testedValues)
             unprepare_proxy()
 
-            v = TEST.Value(console_proxy.calls.length, "number calls in iteration #"+nrValues)
-            TEST( v == 1+nrValues, "failedTest calls console output x-times")
+            TEST( V(console_proxy.calls.length) == 1+nrValues, "error calls console output "+(1+nrValues)+" times")
 
             for (var i=0; i<=nrValues; ++i) {
-               v = TEST.Value(console_proxy.calls[0][0], "log call")
-               TEST( v == "log", "failedTest calls only log as output function")
+               TEST( V(console_proxy.calls[0][0]) == "log", "error calls only log as output function")
             }
 
-            v = TEST.Value(console_proxy.calls[0][1], "error object message")
-            TEST( v.value.indexOf("TEST failed: 123-description-456") > 0, "failedTest logs error object first")
+            TEST( V(console_proxy.calls[0][1]).indexOf("TEST failed: 123-description-456") > 0, "error logs error object first")
 
             for (var i=0; i<nrValues; ++i) {
-               v = TEST.Value(console_proxy.calls[1+i][1], "tested variable #"+i)
-               TEST( v == "   Possibly unexpected value >"+(3*i)+"< ("+("name"+i)+")", "failedTest logs tested variable #"+i)
+               TEST( V(console_proxy.calls[1+i][1]) == "   Possibly unexpected value >"+(3*i)+"<", "error writes tested variable to log #"+i)
             }
          }
 
-         // test function 'passedTest'
+         // test function 'startTest'
 
-         // call function 'passedTest' under test
+         // call function 'startTest' under test
          prepare_proxy()
-         logger.passedTest(TEST)
+         logger.startTest(TEST,"test-type-x","test-name-y")
          unprepare_proxy()
 
-         v = TEST.Value(console_proxy.calls.length, "number of calls of console output")
-         TEST( v == 1, "passedTest calls console output only once")
+         TEST( V(console_proxy.calls.length) == 1, "startTest calls console output only once")
 
-         v = TEST.Value(console_proxy.calls[0][0], "log call")
-         TEST( v == "log", "passedTest calls only log as output function")
+         TEST( V(console_proxy.calls[0][0]) == "log", "startTest calls only log as output function")
 
-         v = TEST.Value(console_proxy.calls[0][1], "log text")
-         TEST( v == "OK", "passedTest logs only OK")
+         TEST( V(console_proxy.calls[0][1]) == "Run test-type-x test-name-y: ... start ...", "startTest writes a start message to log")
 
-         // test function 'start'
+         // test function 'endTestOK'
 
-         // call function 'start' under test
+         // call function 'endTestOK' under test
          prepare_proxy()
-         logger.start(TEST,"test-type-x","test-name-y")
+         logger.endTestOK(TEST,"test-type-x","test-name-y")
          unprepare_proxy()
 
-         v = TEST.Value(console_proxy.calls.length, "number of calls of console output")
-         TEST( v == 1, "start calls console output only once")
+         TEST( V(console_proxy.calls.length) == 1, "endTestOK calls console output only once")
 
-         v = TEST.Value(console_proxy.calls[0][0], "log call")
-         TEST( v == "log", "start calls only log as output function")
+         TEST( V(console_proxy.calls[0][0]) == "log", "endTestOK calls only log as output function")
 
-         v = TEST.Value(console_proxy.calls[0][1], "log text")
-         TEST( v == "Run test-type-x test-name-y: ... start ...", "start logs a start message")
+         TEST( V(console_proxy.calls[0][1]) == "Run test-type-x test-name-y: OK.", "endTestOK writes OK to the log")
 
-         // test function 'end'
-         for (var nrTest=0; nrTest<10; ++nrTest) {
+         // test function 'endTestError'
+         for (var nrErrors=0; nrErrors<10; ++nrErrors) {
 
-            for (var nrTestFailed=0; nrTestFailed<=nrTest; ++nrTestFailed) {
+            // call function 'endTestError' under test
+            prepare_proxy()
+            logger.endTestError(TEST,"type-"+nrErrors,"name-"+nrErrors,nrErrors)
+            unprepare_proxy()
 
-               // call function 'end' under test
-               prepare_proxy()
-               TEST.stats.failedCount = nrTestFailed
-               TEST.stats.passedCount = nrTest - nrTestFailed
-               logger.end(TEST,"type-"+nrTest,"name-"+nrTest)
-               unprepare_proxy()
+            TEST( V(console_proxy.calls.length) == 1, "endTestError calls console output only once")
 
-               v = TEST.Value(console_proxy.calls.length, "number of calls of console output")
-               TEST( v == 1, "end calls console output only once")
+            TEST( V(console_proxy.calls[0][0]) == "error", "endTestError calls error as output function in case of any errors")
 
-               if (nrTestFailed) {
-
-                  v = TEST.Value(console_proxy.calls[0][0], "error call")
-                  TEST( v == "error", "end calls error as output function in case of failed tests")
-
-                  v = TEST.Value(console_proxy.calls[0][1], "log text")
-                  var test_s = nrTestFailed==1?"test":"tests"
-                  TEST( v == "Run type-"+nrTest+" name-"+nrTest+": "+nrTestFailed+" "+test_s+" failed out of "+nrTest+".", "end logs an error statistics message #"+nrTest+","+nrTestFailed)
-               } else {
-
-                  v = TEST.Value(console_proxy.calls[0][0], "log call")
-                  TEST( v == "log", "end calls only log as output function")
-
-                  v = TEST.Value(console_proxy.calls[0][1], "log text")
-                  TEST( v == "Run type-"+nrTest+" name-"+nrTest+": "+nrTest+" tests passed.", "end logs a statistics message #"+nrTest)
-               }
-            }
+            TEST( V(console_proxy.calls[0][1]) == "Run type-"+nrErrors+" name-"+nrErrors+": "+nrErrors+" errors detected.", "endTest logs an error statistics message #"+nrErrors)
          }
 
       } finally {

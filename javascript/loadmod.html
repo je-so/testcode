@@ -2,7 +2,6 @@
 <html>
 <head>
  <<meta charset=utf-8>
- <script type=module src=./mod1.js></script>
 </head>
 <body>
  <script type=module>
@@ -20,17 +19,15 @@
 
   console.log("import.meta",import.meta);
   // call some dummy test
-  TEST.start(TEST.types.UNIT, "loadmod.html")
-  for(var i=0;i<100;++i)
-    TEST(true)
-  var v=TEST.Value(200,"timeout")
-  TEST(v==201,"check timeout");
-  TEST.end(TEST.types.UNIT, "loadmod.html")
+  TEST.runTest(TEST.types.UNIT, "loadmod.html", function () {
+    for(var i=0;i<100;++i)
+      TEST(true)
+    var v=TEST.Value(200)
+    TEST(v==201,"check timeout");
+  })
 
   // test module test.js
-  TEST.start(TEST.types.UNIT, "./test.js")
-  UNITTEST_test(TEST)
-  TEST.end(TEST.types.UNIT, "./test.js")
+  TEST.runTest(TEST.types.UNIT, "./test.js", UNITTEST_test)
  </script>
 </body>
 <html>

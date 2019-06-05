@@ -27,7 +27,7 @@ const ConsoleLogger = {
    },
 }
 
-// public type -- Stats
+// internal type -- Stats
 
 const Stats = {
    nrPassedTests: 0,
@@ -55,7 +55,7 @@ const Stats = {
    }
 }
 
-// internal type -- Stats
+// public type -- TestTypes
 
 const TestTypes = {
    CONFORMANCE: "conformance-test",

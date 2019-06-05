@@ -6,7 +6,7 @@ const ConsoleLogger = {
    error: function(TEST,description,testedValues/*array of unexpected values at least some of them*/) {
       this.console.log(new Error(`TEST failed: ${description}`))
       for(const v of testedValues) {
-         this.console.log(`   Possibly unexpected value >${v}<`)
+         this.console.log(`   Value used in TEST >${v}<`)
       }
    },
    startTest: function(TEST,type,name) {
@@ -208,7 +208,7 @@ export function UNIT_TEST(TEST_) {
             TEST( V(console_proxy.calls[0][1]).indexOf("TEST failed: 123-description-456") > 0, "error logs error object first")
 
             for (var i=0; i<nrValues; ++i) {
-               TEST( V(console_proxy.calls[1+i][1]) == "   Possibly unexpected value >"+(3*i)+"<", "error writes tested variable to log #"+i)
+               TEST( V(console_proxy.calls[1+i][1]) == "   Value used in TEST >"+(3*i)+"<", "error writes tested variable to log #"+i)
             }
          }
 
@@ -318,20 +318,31 @@ export function UNIT_TEST(TEST_) {
    }
 
    function test_TEST() {
+      const old_console = TEST.logger.console
+      const old_stats = TEST.stats
+      const stats_proxy = Object.assign({}, TEST.stats)
       const console_proxy = {
          calls: [],
-         failedTest: function(TEST,description,testedValues) {
-            calls.push( [ "failedTest", TEST, description, testedValues ] )
+         log: function(str) {
+            this.calls.push( "log: " + str.toString())
          },
-         passedTest: function(TEST) {
-            calls.push( [ "passedTest", TEST ] )
+         error: function(str) {
+            this.calls.push( "error: " + str.toString())
          },
-         start: function(TEST,type,name) {
-            calls.push( [ "start", TEST, type, name ] )
-         },
-         end: function(TEST,type,name) {
-            calls.push( [ "end", TEST, type, name ] )
-         },
+      }
+      function prepare_proxy() {
+         console_proxy.calls = []
+         TEST.logger.console = console_proxy
+         TEST.logger.stats = stats_proxy
+      }
+      function unprepare_proxy() {
+         TEST.logger.console = old_console
+         TEST.logger.stats = old_stats
+      }
+      try {
+
+      } finally {
+         unprepare_proxy()
       }
    }
 

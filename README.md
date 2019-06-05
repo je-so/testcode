@@ -28,13 +28,16 @@ JavaScript
 ----------
 [Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
 
+[Test Framework in 130 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
+
+Use TEST( expression, "description") to test an expression for true and TEST.runTest to run a test.
+The tests are part of javascript-modules and not separated from them. A later step must remove this code before
+using it in production. The test module tests itself with its own framework. Testing adds another 400 LOC.
+
 OS API
 -------------
 * How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).
 
-New-C
--------------
-Design of my database language which I call [new-C](new-C) during design phase. Documents are mostly in *German*.
 
 License
 -------

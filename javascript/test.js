@@ -23,12 +23,12 @@ const ConsoleLogger = {
 // public type -- Stats
 
 const Stats = {
-   nrPassedTests: 0, 
-   nrFailedTests: 0, 
+   nrPassedTests: 0,
+   nrFailedTests: 0,
    nrErrors: 0,
    reset: function() {
       this.nrPassedTests = 0
-      this.nrFailedTests = 0 
+      this.nrFailedTests = 0
       this.nrErrors = 0
    },
    error: function() {
@@ -119,8 +119,9 @@ export function UNIT_TEST(TEST_) {
    test_TEST_Value()
    test_ConsoleLogger()
    test_Stats()
+   test_TestTypes()
    test_TEST()
-   
+
    function test_Parameter() {
       TEST( TEST_ == TEST,"1st parameter passed to UNITTEST is TEST")
    }
@@ -143,10 +144,10 @@ export function UNIT_TEST(TEST_) {
       TEST( V(undefined) == undefined, "TEST.Value returns parameter value with type undefined")
 
       var o = { name: "Jo Bar" }
-      TEST( V(o) == o, "TEST.Value with returns parameter value type object")
+      TEST( V(o) == o, "TEST.Value returns parameter value with type object")
 
       var f = function() { return }
-      TEST( V(f) == f, "TEST.Value with returns parameter value type function")
+      TEST( V(f) == f, "TEST.Value returns parameter value with type function")
 
       for(var nrValues=1; nrValues<=10; ++nrValues) {
          for(var i=1; i<=nrValues; ++i) {
@@ -258,7 +259,62 @@ export function UNIT_TEST(TEST_) {
    }
 
    function test_Stats() {
+      var stats = Object.assign({}, TEST.stats)
 
+      TEST( V(TEST.stats) == Stats, "Stats implements TEST.stats")
+
+      stats.nrPassedTests = 1
+      stats.nrFailedTests = 1
+      stats.nrErrors = 1
+      stats.reset()
+      TEST( (V(stats.nrPassedTests) == 0 && V(stats.nrFailedTests) == 0 && V(stats.nrErrors) == 0),
+            "stats.reset() sets counters to 0")
+
+      for (var i=1; i<100; ++i) {
+         stats.error()
+         TEST( V(stats.nrErrors) == i, "stats.error() increments error counter: "+i)
+      }
+
+      stats.nrPassedTests = 3
+      stats.nrFailedTests = 4
+      stats.startTest()
+      TEST( V(stats.nrErrors) == 0 && V(stats.nrPassedTests) == 3 && V(stats.nrFailedTests) == 4,
+         "stats.startTest() sets error counter to 0 and does not change other counters")
+
+      for (var i=1; i<=10; ++i) {
+         stats.nrPassedTests = 5+i
+         stats.nrFailedTests = 6+i
+         stats.nrErrors = 0
+         stats.endTest()
+         TEST( V(stats.nrErrors) == 0 && V(stats.nrPassedTests) == 6+i && V(stats.nrFailedTests) == 6+i,
+            "stats.endTest() increments passed counter #"+i)
+
+         stats.nrPassedTests = 5+i
+         stats.nrFailedTests = 6+i
+         stats.nrErrors = i
+         stats.endTest()
+         TEST( V(stats.nrErrors) == i && V(stats.nrPassedTests) == 5+i && V(stats.nrFailedTests) == 7+i,
+            "stats.endTest() increments failed counter #"+i)
+      }
+   }
+
+   function test_TestTypes() {
+      TEST( V(TEST.types) == TestTypes, "TestTypes implements TEST.types")
+      TEST( typeof V(TEST.types.functionName) === "function", "TEST.types should export functionName()")
+
+      const Types = [ "CONFORMANCE", "INTEGRATION", "PERFORMANCE", "UNIT", "USER", "REGRESSION" ]
+      for (var attr in TEST.types) {
+         if (attr == attr.toUpperCase())
+            TEST( Types.includes(attr), "TEST.types should offer only tested types: "+attr)
+      }
+
+      for (var type of Types) {
+         TEST( V(TEST.types)[type] !== undefined, "TEST.types should offer at least type: "+type)
+
+         TEST( V(TEST.types[type]) === type.toLowerCase()+"-test", "Test name should conform to convention: "+type)
+
+         TEST( V(TEST.types.functionName(type)) === type+"_TEST", "Mapped function name should conform to convention: "+type)
+      }
    }
 
    function test_TEST() {
@@ -280,4 +336,5 @@ export function UNIT_TEST(TEST_) {
    }
 
 }
+
 

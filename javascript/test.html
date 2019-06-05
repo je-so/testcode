@@ -7,19 +7,19 @@
  <script type=module>
 
   // import interface of module test
-  import TEST from "./test.js";
+  import TEST from "./test.jsm";
   // import unittest function from module test (could be added with a , to above import statement)
-  import { UNIT_TEST as UNITTEST_test} from "./test.js";
+  import { UNIT_TEST as UNITTEST_test} from "./test.jsm";
 
   // dynamically import a module
   (async () => {
-   const { default: xxx } = await import("./test.js");
-   console.log("await import", xxx)
+   const m = await import("./test.jsm");
+   console.log("await import result", m)
   })();
 
   console.log("import.meta",import.meta);
   // call some dummy test
-  TEST.runTest(TEST.types.UNIT, "loadmod.html", function () {
+  TEST.runTest(TEST.types.UNIT, location.pathname.replace(/^.*\//,""), function () {
     for(var i=0;i<100;++i)
       TEST(true)
     var v=TEST.Value(200)

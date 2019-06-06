@@ -11,6 +11,8 @@
   // import unittest function from module test (could be added with a , to above import statement)
   import { UNIT_TEST as UNITTEST_test} from "./test.jsm";
 
+  window.TEST = TEST;
+
   // dynamically import a module
   (async () => {
    const m = await import("./test.jsm");
@@ -22,13 +24,25 @@
   TEST.runTest(TEST.types.UNIT, location.pathname.replace(/^.*\//,""), function () {
     for(var i=0;i<100;++i)
       TEST(true)
-    var v=TEST.Value(200)
-    TEST(v==201,"check timeout");
   })
 
   // test module test.js
   TEST.runTest(TEST.types.UNIT, "./test.js", UNITTEST_test)
   TEST.showStats()
+
+  // use proxy interface
+  var p1 = TEST.proxy.createProxy(["f1","f2"])
+  var p2 = TEST.proxy.createProxy(["f1","f2"])
+  TEST.proxy.setReturnValues(p1,"f1",[1])
+  TEST.proxy.setReturnValues(p2,"f2",[2])
+  TEST(1 == p1.f1(1,2,3))
+  TEST(2 == p2.f2(1,2,3))
+  TEST( TEST.Value(TEST.proxy.compareCalls( [
+     [p1,"f1",[1,2,3]],
+     [p2,"f2",[1,2,3]],
+  ])) == "", "compare call sequence p1 and p2")
+
+
  </script>
 </body>
 <html>

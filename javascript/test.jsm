@@ -80,13 +80,11 @@ const TestTypes = {
 // public type -- Proxy
 
 const Proxy = {
-   calls: [], // every entry stores information about a single function call
+   calls: [], // every entry stores information about a single intercepted function call
               // every entry is of type: [this,"functionname",[function-arguments]]
    id: 0,
    reset: function() {
-      id=0
-      Proxy.calls = []
-      Proxy.calls2 = []
+      Proxy.id=0; Proxy.calls = []; Proxy.calls2 = [];
    },
    getOwnFunctionNames: function(...objects) {
       var funcnames = []
@@ -198,6 +196,7 @@ export function UNIT_TEST(TEST_) {
    test_ConsoleLogger()
    test_Stats()
    test_TestTypes()
+   test_Proxy()
    test_TEST()
 
    function test_Parameter() {
@@ -434,6 +433,10 @@ export function UNIT_TEST(TEST_) {
 
          TEST( V(TEST.types.functionName(type)) === type+"_TEST", "Mapped function name should conform to convention: "+type)
       }
+   }
+
+   function test_Proxy() {
+      // TODO: implement this test
    }
 
    function test_TEST() {

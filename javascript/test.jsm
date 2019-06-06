@@ -155,7 +155,7 @@ TEST.Value = function(value) {
 
 TEST.reset = function() {
    TEST.logger = ConsoleLogger
-   TEST.proxy = Proxy // TODO: test
+   TEST.proxy = Proxy
    TEST.stats = Stats
    TEST.testedValues = []
    TEST.types = TestTypes
@@ -482,6 +482,7 @@ export function UNIT_TEST(TEST_) {
          // call function 'reset' under test
          var old_stats_values = Object.assign({}, TEST.stats)
          TEST.logger = undefined
+         TEST.proxy = undefined
          TEST.stats = undefined
          TEST.testedValues = undefined
          TEST.types = undefined
@@ -489,8 +490,8 @@ export function UNIT_TEST(TEST_) {
          var testedValues = TEST.testedValues
          TEST.testedValues = []
 
-         TEST( V(TEST.logger) == ConsoleLogger && V(TEST.stats) == Stats && V(testedValues.length) == 0
-            && V(TEST.types) == TestTypes,
+         TEST( V(TEST.logger) == ConsoleLogger && V(TEST.proxy) == Proxy && V(TEST.stats) == Stats
+            && V(testedValues.length) == 0 && V(TEST.types) == TestTypes,
             "Test.reset resets data fields to standard values")
 
          TEST( V(TEST.stats.nrExecutedTests()) == 0, "Test.reset resets also stats")

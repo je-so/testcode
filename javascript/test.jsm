@@ -88,7 +88,7 @@ const Proxy = {
       Proxy.calls = []
       Proxy.calls2 = []
    },
-   getOwnFunctionNames(...objects) {
+   getOwnFunctionNames: function(...objects) {
       var funcnames = []
       for (var obj of objects)
          for (var name of Object.getOwnPropertyNames(obj))
@@ -111,10 +111,10 @@ const Proxy = {
       if (parent.returnValues[functionName] && parent.returnValues[functionName].length>0)
          return parent.returnValues[functionName].shift()
    },
-   addFunctionCall(proxy,name,args) {
+   addFunctionCall: function(proxy,name,args) {
       Proxy.calls.push( [proxy,name,args] )
    },
-   compareCalls(calls) {
+   compareCalls: function(calls) {
       Proxy.calls2 = Proxy.calls // backup for debugging
       Proxy.calls = []
       if (calls.length!=Proxy.calls2.length)

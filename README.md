@@ -28,11 +28,11 @@ JavaScript
 ----------
 [Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
 
-[Test Framework in 130 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
+[Test Framework in 188 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
 
 Use TEST( expression, "description") to test an expression for true and TEST.runTest to run a test.
 The tests are part of javascript-modules and not separated from them. A later step must remove this code before
-using it in production. The test module tests itself with its own framework. Testing adds another 400 LOC.
+using it in production. The test module tests itself with its own framework which adds another 380 LOC.
 
 OS API
 -------------

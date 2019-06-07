@@ -31,8 +31,8 @@
   TEST.showStats()
 
   // use proxy interface
-  var p1 = TEST.proxy.createProxy(["f1","f2"])
-  var p2 = TEST.proxy.createProxy(["f1","f2"])
+  var p1 = TEST.proxy.create(["f1","f2"])
+  var p2 = TEST.proxy.create(["f1","f2"])
   TEST.proxy.setReturnValues(p1,"f1",[1])
   TEST.proxy.setReturnValues(p2,"f2",[2])
   TEST(1 == p1.f1(1,2,3))

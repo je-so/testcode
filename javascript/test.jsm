@@ -124,7 +124,7 @@ export default function TEST(expression,description) {
 }
 
 TEST.Value = function(value) {
-   // encapsulates variable value which is tested for having a certain value
+   // remember tested variable value to print it in case of an error
    TEST.testedValues.push(value)
    return value
 }
@@ -135,14 +135,14 @@ TEST.reset = function() {
    TEST.stats = Stats
    TEST.testedValues = []
    TEST.stats.reset()
-   Object.assign(TEST, {
-      CONFORMANCE: "conformance",
-      INTEGRATION: "integration",
-      PERFORMANCE: "performance",
-      UNIT: "unit",
-      USER: "user",
-      REGRESSION: "regression",
-   })
+   // --- test types
+   TEST.ACCEPTANCE  = "acceptance"
+   TEST.INTEGRATION = "integration"
+   TEST.PERFORMANCE = "performance"
+   TEST.REGRESSION = "regression"
+   TEST.SYSTEM = "system"
+   TEST.UNIT = "unit"
+   TEST.USER = "user"
 }
 
 TEST.runTest = function(type,name,testfunc) {
@@ -393,7 +393,7 @@ export function UNIT_TEST(TEST_) {
 
       TEST( typeof V(TEST.userName) === "function", "TEST should export userName()")
 
-      const Types = [ "CONFORMANCE", "INTEGRATION", "PERFORMANCE", "UNIT", "USER", "REGRESSION" ]
+      const Types = [ "ACCEPTANCE", "INTEGRATION", "PERFORMANCE", "SYSTEM", "UNIT", "USER", "REGRESSION" ]
       for (var attr in TEST) {
          if (attr == attr.toUpperCase())
             TEST( Types.includes(V(attr)), "TEST offers unknown type")

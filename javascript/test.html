@@ -20,14 +20,14 @@
   })();
 
   console.log("import.meta",import.meta);
-  // call some dummy test
+  // call some dummy tests
   TEST.runTest(TEST.UNIT, location.pathname.replace(/^.*\//,""), function () {
     for(var i=0;i<100;++i)
       TEST(true)
   })
 
   // test module test.js
-  TEST.runTest(TEST.UNIT, "./test.js", UNITTEST_test)
+  TEST.runTest(TEST.UNIT, "test.jsm", UNITTEST_test)
   TEST.showStats()
 
   // use proxy interface

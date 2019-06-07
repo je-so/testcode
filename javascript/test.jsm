@@ -58,22 +58,17 @@ const Stats = {
 // public type -- TestTypes
 
 const TestTypes = {
-   CONFORMANCE: "conformance-test",
-   INTEGRATION: "integration-test",
-   PERFORMANCE: "performance-test",
-   UNIT: "unit-test",
-   USER: "user-test",
-   REGRESSION: "regression-test",
+   CONFORMANCE: "conformance",
+   INTEGRATION: "integration",
+   PERFORMANCE: "performance",
+   UNIT: "unit",
+   USER: "user",
+   REGRESSION: "regression",
+   userName: function(type) {
+      return type+"-test"
+   },
    functionName: function(type) {
-      const map = {
-         CONFORMANCE: "CONFORMANCE_TEST",
-         INTEGRATION: "INTEGRATION_TEST",
-         PERFORMANCE: "PERFORMANCE_TEST",
-         UNIT:        "UNIT_TEST",
-         USER:        "USER_TEST",
-         REGRESSION:  "REGRESSION_TEST",
-      }
-      return map[type]
+      return type.toUpperCase()+"_TEST"
    }
 }
 
@@ -94,10 +89,10 @@ const Proxy = {
                funcnames.push(name)
       return funcnames
    },
-   createProxy: function(functionNamesArray) {
+   create: function(functionNamesArray) {
       var proxy = Object.create( { id: ++Proxy.id, returnValues: [] } )
       for (var functionName of functionNamesArray)
-         eval(`proxy[functionName] = function (...args) { Proxy.addFunctionCall(this,'${functionName}',args); return Proxy.getReturnValue(this,'${functionName}'); }`)
+         eval(`proxy[functionName] = function (...args) { Proxy.addFunctionCall([this,'${functionName}',args]); return Proxy.getReturnValue(this,'${functionName}'); }`)
       return proxy
    },
    setReturnValues: function(createdProxy,functionName,returnValuesArray) {
@@ -109,8 +104,8 @@ const Proxy = {
       if (parent.returnValues[functionName] && parent.returnValues[functionName].length>0)
          return parent.returnValues[functionName].shift()
    },
-   addFunctionCall: function(proxy,name,args) {
-      Proxy.calls.push( [proxy,name,args] )
+   addFunctionCall: function(funccall) {
+      Proxy.calls.push( funccall )
    },
    compareCalls: function(calls) {
       Proxy.calls2 = Proxy.calls // backup for debugging
@@ -125,7 +120,7 @@ const Proxy = {
          if (Proxy.calls2[i][1] !== calls[i][1])
             return `calls[${i}][1]: expect function '${calls[i][1]}' instead of '${Proxy.calls2[i][1]}'`
          if (Proxy.calls2[i][2].length !== calls[i][2].length)
-            return `calls[${i}][2]: expect nr of parameters #${calls[i][2].length} instead of #${Proxy.calls2[i][2].length}`
+            return `calls[${i}][2]: expect #${calls[i][2].length} function arguments instead of #${Proxy.calls2[i][2].length}`
          for (var i2=0; i2<calls[i][2].length; ++i2)
             if (Proxy.calls2[i][2][i2] !== calls[i][2][i2])
                return `calls[${i}][2][${i2}]: expect value '${calls[i][2][i2]}' instead of '${Proxy.calls2[i][2][i2]}'`
@@ -161,13 +156,14 @@ TEST.reset = function() {
 }
 
 TEST.runTest = function(type,name,testfunc) {
-   TEST.logger.startTest(TEST,type,name)
+   var usertype = TEST.types.userName(type)
+   TEST.logger.startTest(TEST,usertype,name)
    TEST.stats.startTest()
    testfunc(TEST)
    if (TEST.stats.nrErrors)
-      TEST.logger.endTestError(TEST,type,name,TEST.stats.nrErrors)
+      TEST.logger.endTestError(TEST,usertype,name,TEST.stats.nrErrors)
    else
-      TEST.logger.endTestOK(TEST,type,name)
+      TEST.logger.endTestOK(TEST,usertype,name)
    TEST.stats.endTest()
 }
 
@@ -243,17 +239,8 @@ export function UNIT_TEST(TEST_) {
 
    function test_ConsoleLogger() {
       const old_console = TEST.logger.console
-      const console_proxy = {
-         calls: [],
-         log: function(str) {
-            this.calls.push( [ "log", str.toString() ])
-         },
-         error: function(str) {
-            this.calls.push( [ "error", str.toString() ])
-         },
-      }
+      const console_proxy = TEST.proxy.create(["log","error"])
       function prepare_proxy() {
-         console_proxy.calls = []
          TEST.logger.console = console_proxy
       }
       function unprepare_proxy() {
@@ -276,17 +263,14 @@ export function UNIT_TEST(TEST_) {
             logger.error(TEST,"123-description-456",testedValues)
             unprepare_proxy()
 
-            TEST( V(console_proxy.calls.length) == 1+nrValues, "error calls console output "+(1+nrValues)+" times")
-
-            for (var i=0; i<=nrValues; ++i) {
-               TEST( V(console_proxy.calls[0][0]) == "log", "error calls only log as output function")
-            }
-
-            TEST( V(console_proxy.calls[0][1]).indexOf("TEST failed: 123-description-456") > 0, "error logs error object first")
-
+            var calls = [ [console_proxy,"log",[TEST.proxy.calls[0][2][0]]] ]
             for (var i=0; i<nrValues; ++i) {
-               TEST( V(console_proxy.calls[1+i][1]) == "   Value used in TEST >"+(3*i)+"<", "error writes tested variable to log #"+i)
+               calls.push( [console_proxy,"log",[`   Value used in TEST >${3*i}<`]] )
             }
+
+            TEST( V(calls[0][2][0].toString()).indexOf("TEST failed: 123-description-456") > 0, "error logs error message first")
+
+            TEST( V(TEST.proxy.compareCalls(calls)) == "", "error writes tested variables to log #"+nrValues)
          }
 
          // test function 'startTest'
@@ -296,11 +280,9 @@ export function UNIT_TEST(TEST_) {
          logger.startTest(TEST,"test-type-x","test-name-y")
          unprepare_proxy()
 
-         TEST( V(console_proxy.calls.length) == 1, "startTest calls console output only once")
-
-         TEST( V(console_proxy.calls[0][0]) == "log", "startTest calls only log as output function")
-
-         TEST( V(console_proxy.calls[0][1]) == "Run test-type-x test-name-y: ... start ...", "startTest writes a start message to log")
+         TEST( V(TEST.proxy.compareCalls([
+               [console_proxy,"log",["Run test-type-x test-name-y: ... start ..."]]
+            ])) == "", "startTest calls console output only once")
 
          // test function 'endTestOK'
 
@@ -309,11 +291,9 @@ export function UNIT_TEST(TEST_) {
          logger.endTestOK(TEST,"test-type-x","test-name-y")
          unprepare_proxy()
 
-         TEST( V(console_proxy.calls.length) == 1, "endTestOK calls console output only once")
-
-         TEST( V(console_proxy.calls[0][0]) == "log", "endTestOK calls only log as output function")
-
-         TEST( V(console_proxy.calls[0][1]) == "Run test-type-x test-name-y: OK.", "endTestOK writes OK to the log")
+         TEST( V(TEST.proxy.compareCalls([
+            [console_proxy,"log",["Run test-type-x test-name-y: OK."]]
+         ])) == "", "endTestOK calls console output only once")
 
          // test function 'endTestError'
          for (var nrErrors=0; nrErrors<10; ++nrErrors) {
@@ -323,11 +303,9 @@ export function UNIT_TEST(TEST_) {
             logger.endTestError(TEST,"type-"+nrErrors,"name-"+nrErrors,nrErrors)
             unprepare_proxy()
 
-            TEST( V(console_proxy.calls.length) == 1, "endTestError calls console output only once")
-
-            TEST( V(console_proxy.calls[0][0]) == "error", "endTestError calls error as output function in case of any errors")
-
-            TEST( V(console_proxy.calls[0][1]) == "Run type-"+nrErrors+" name-"+nrErrors+": "+nrErrors+" errors detected.", "endTest logs an error statistics message #"+nrErrors)
+            TEST( V(TEST.proxy.compareCalls([
+               [console_proxy,"error",["Run type-"+nrErrors+" name-"+nrErrors+": "+nrErrors+" errors detected."]]
+            ])) == "", "endTestError calls console output only once #"+nrErrors)
          }
 
          // test function 'showStats'
@@ -339,21 +317,17 @@ export function UNIT_TEST(TEST_) {
                logger.showStats(TEST,nrExecutedTests,nrFailedTests)
                unprepare_proxy()
 
-               TEST( V(console_proxy.calls.length) == 2, "showStats calls console output twice")
-
                if (nrFailedTests == 0) {
-                  TEST( V(console_proxy.calls[1][0]) == "log", "showStats calls log as output function")
-
-                  TEST( V(console_proxy.calls[1][1]) == "Every test passed", "showStats logs passed tests #"+nrExecutedTests)
+                  TEST( V(TEST.proxy.compareCalls([
+                     [console_proxy,"log",["Number of tests executed: "+nrExecutedTests]],
+                     [console_proxy,"log",["Every test passed"]],
+                  ])) == "", "showStats calls console output twice #"+nrExecutedTests+","+nrFailedTests)
                } else {
-                  TEST( V(console_proxy.calls[1][0]) == "error", "showStats calls error as output function")
-
-                  TEST( V(console_proxy.calls[1][1]) == "Number of tests failed: "+nrFailedTests, "showStats logs number of failed tests #"+nrExecutedTests+","+nrFailedTests)
+                  TEST( V(TEST.proxy.compareCalls([
+                     [console_proxy,"log",["Number of tests executed: "+nrExecutedTests]],
+                     [console_proxy,"error",["Number of tests failed: "+nrFailedTests]],
+                  ])) == "", "showStats calls console output twice #"+nrExecutedTests+","+nrFailedTests)
                }
-
-               TEST( V(console_proxy.calls[0][0]) == "log", "showStats calls log as output function")
-
-               TEST( V(console_proxy.calls[0][1]) == "Number of tests executed: "+nrExecutedTests, "showStats logs number of executed tests #"+nrExecutedTests)
             }
          }
 
@@ -429,21 +403,158 @@ export function UNIT_TEST(TEST_) {
       for (var type of Types) {
          TEST( V(TEST.types)[type] !== undefined, "TEST.types should offer at least type: "+type)
 
-         TEST( V(TEST.types[type]) === type.toLowerCase()+"-test", "Test name should conform to convention: "+type)
+         TEST( V(TEST.types[type]) === type.toLowerCase(), "Test name should conform to convention: "+type)
 
-         TEST( V(TEST.types.functionName(type)) === type+"_TEST", "Mapped function name should conform to convention: "+type)
+         TEST( V(TEST.types.functionName(TEST.types[type])) === type+"_TEST", "Mapped function name should conform to convention: "+type)
+
+         TEST( V(TEST.types.userName(TEST.types[type])) === type.toLowerCase()+"-test", "Mapped user name should conform to convention: "+type)
       }
    }
 
    function test_Proxy() {
-      // TODO: implement this test
+      const proxy = TEST.proxy
+
+      TEST( V(proxy) == Proxy, "Proxy is default implementation")
+
+      // call 'reset' under test
+      proxy.calls = [1,2,3]
+      proxy.calls2 = [1,2,3]
+      proxy.id = 123
+      proxy.reset()
+
+      TEST( V(proxy.calls.length) == 0 && V(proxy.calls2.length) == 0 && V(proxy.id) == 0,
+         "reset initializes all fields")
+
+      let o1 = { a: null, b: undefined, i: 1, x: "", y: {}, f1: function() {} }
+      let o2 = { f2: function() {}, f3: function() {return 1;} }
+      let o3 = { f4: function(a) {}, f5: function(b,c) {return 1;} }
+
+      for (var i=0; i<3; ++i) {
+         var names = i==0?proxy.getOwnFunctionNames(o1):i==1?proxy.getOwnFunctionNames(o1,o2):proxy.getOwnFunctionNames(o1,o2,o3);
+         TEST( V(names.length) == 2*i+1 && V(names.includes("f1")), "getOwnFunctionNames exports array of own properties which are of type function")
+         for (var i2=2; i2<2*i+2; i2+=2)
+            TEST( V(names.includes("f"+i2)) && V(names.includes("f"+(i2+1))), "getOwnFunctionNames exports array of own properties which are of type function #"+i2)
+      }
+
+      for (var i=0; i<4; ++i) {
+         // call function 'create' under test
+         const funcNames=[ "func1", "test", "log", "buyAProduct" ].slice(0,1+i)
+         const id = TEST.proxy.id
+         const proxy = TEST.proxy.create(funcNames)
+         const parent = Object.getPrototypeOf(proxy)
+         let props = Object.getOwnPropertyNames(proxy)
+
+         TEST( proxy.id == id+1, "create increments id of proxy #"+i)
+
+         TEST( V(props.length) == funcNames.length, "create builds proxy with x functions #"+i)
+         for (var i2=0; i2<funcNames.length; ++i2) {
+            TEST( typeof V(proxy[funcNames[i2]]) === "function", "function is named after given parameter #"+i,+","+i2)
+         }
+
+         props = Object.getOwnPropertyNames(parent)
+         TEST( V(props.length) === 2 && V(parent.id) === id+1 && V(parent.returnValues.length) === 0, "create builds proxy with own prototype #"+i)
+      }
+
+      for (var i=0; i<5; ++i) {
+         const funcNames=["some","func","names"]
+         const values=[ 1, 0.5, "str", { name: "name" }, [1,2,3] ].slice(0,1+i)
+         const proxy = TEST.proxy.create(funcNames)
+         const parent = Object.getPrototypeOf(proxy)
+
+         for (var i2=0; i2<funcNames.length; ++i2) {
+            // call function 'setReturnValues' under test
+            const length = Object.getOwnPropertyNames(parent.returnValues).length
+            TEST.proxy.setReturnValues(proxy,funcNames[i2],values)
+
+            TEST( V(Object.getOwnPropertyNames(parent.returnValues).length) == length+1 &&
+               V(parent.returnValues[funcNames[i2]]) == values,
+               "setReturnValues sets reference to array of values and only for a certain function #"+i+","+i2)
+         }
+      }
+
+      for (var i=0; i<5; ++i) {
+         const funcNames=["some","func","names"]
+         const values=[ 1, 0.5, "str", { name: "name" }, [1,2,3] ].slice(0,1+i)
+         const proxy = TEST.proxy.create(funcNames)
+         const parent = Object.getPrototypeOf(proxy)
+         for (var i2=0; i2<funcNames.length; ++i2)
+            TEST.proxy.setReturnValues(proxy,funcNames[i2],values.slice()/*make independant clones of values array*/)
+
+         for (var i2=0; i2<funcNames.length; ++i2) {
+            const returnValues = parent.returnValues[funcNames[i2]]
+            for (var i3=0; i3<=i; ++i3) {
+               // call function 'getReturnValue' under test
+               const returnvalue = TEST.proxy.getReturnValue(proxy,funcNames[i2])
+
+               TEST( V(returnValues.length) == i-i3 && V(returnvalue) == values[i3],
+                  "getReturnValue returns first value of array and removes it #"+i+","+i2+","+i3)
+            }
+         }
+      }
+
+      for (var i=0; i<5; ++i) {
+         // function 'addFunctionCall' under test
+         let fcall = [ [{},"1",[1]], [{},"2",[1,2]], [{},"3",[4]], [{},"4",[5,6]], [{},"5",[7]] ]
+         proxy.addFunctionCall(fcall[i])
+
+         TEST( V(proxy.calls.length) == i+1 && V(proxy.calls[i]) === fcall[i], "addFunctionCall pushes parameter to array proxy.calls #"+i)
+      }
+
+
+      // test created proxy intercepts functions
+      proxy.reset()
+      const p1 = proxy.create(["f1","f2"])
+      const p2 = proxy.create(["f3","f4"])
+      TEST( V(p1.id) == 1 && V(p2.id) == 2, "create two proxies")
+      proxy.setReturnValues(p1,"f1",[1,5])
+      proxy.setReturnValues(p1,"f2",[2,6])
+      proxy.setReturnValues(p2,"f3",[3,7])
+      proxy.setReturnValues(p2,"f4",[4,8])
+      for (var i=0; i<=1; ++i) {
+         TEST( V(p1.f1()) == 1+4*i, "call p1.f1 #"+i)
+         TEST( V(p1.returnValues["f1"].length) ==1-i, "retval removed from f1 #"+i)
+         TEST( V(p1.f2(1+4*i)) == 2+4*i, "call p1.f2 #"+i)
+         TEST( V(p1.returnValues["f2"].length) ==1-i, "retval removed from f2 #"+i)
+         TEST( V(p2.f3(2+4*i,3+4*i)) == 3+4*i, "call p1.f2 #"+i)
+         TEST( V(p2.returnValues["f3"].length) ==1-i, "retval removed from f3 #"+i)
+         TEST( V(p2.f4(3+4*i,4+4*i,5+4*i)) == 4+4*i, "call p1.f2 #"+i)
+         TEST( V(p2.returnValues["f4"].length) ==1-i, "retval removed from f4 #"+i)
+      }
+      for (var i=0; i<8; ++i) {
+         var id = 1+Math.floor(i/2)%2, f = "f"+(1+i%4)
+         TEST( V(proxy.calls[i][0].id) == id && V(proxy.calls[i][1]) == f
+            && V(proxy.calls[i][2].length) == i%4, "compare call #"+i)
+         for (var i2=0; i2<proxy.calls[i][2].length; ++i2) {
+            TEST( V(proxy.calls[i][2][i2]) == i+i2, "compare parameter #"+i+","+i2)
+         }
+      }
+
+      // test compareCalls
+      proxy.reset()
+      for (var i=0; i<8; ++i) {
+         var calls = proxy.calls
+         p1.f1(1); p2.f3(2,3,4); p1.f2(1,2,3); p2.f4(2)
+         switch (i) {
+         case 0: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "", "compareCalls works OK"); break;
+         case 1: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p2,"f4",[2]]])) == "expect #3 number of calls instead of #4", "compareCalls expects less calls"); break;
+         case 2: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]] ,[p1,"f1",[1]]])) == "expect #5 number of calls instead of #4", "compareCalls expects more calls"); break;
+         case 3: TEST( V(proxy.compareCalls( [ [p2,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "calls[0][0]: expect proxy id:2 instead of id:1", "compareCalls expects another proxy"); break;
+         case 4: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f2",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "calls[1][1]: expect function 'f2' instead of 'f3'", "compareCalls expects another function"); break;
+         case 5: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,4]], [p2,"f4",[2]]])) == "calls[2][2][2]: expect value '4' instead of '3'", "compareCalls expects another argument"); break;
+         case 6: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[]]])) == "calls[3][2]: expect #0 function arguments instead of #1", "compareCalls expects less function call arguments"); break;
+         case 7: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2,3]]])) == "calls[3][2]: expect #2 function arguments instead of #1", "compareCalls expects more function call arguments"); break;
+         }
+         TEST( V(proxy.calls.length) == 0, "compareCalls clears intercepted calls #"+i)
+         TEST( V(proxy.calls2) == calls, "compareCalls makes backup for debegging into calls2 #"+i)
+      }
+
    }
 
    function test_TEST() {
       const old_logger = TEST.logger
       const old_stats = TEST.stats
-      const logger_proxy = TEST.proxy.createProxy(TEST.proxy.getOwnFunctionNames(TEST.logger))
-      const stats_proxy = TEST.proxy.createProxy(TEST.proxy.getOwnFunctionNames(TEST.stats))
+      const logger_proxy = TEST.proxy.create(TEST.proxy.getOwnFunctionNames(TEST.logger))
+      const stats_proxy = TEST.proxy.create(TEST.proxy.getOwnFunctionNames(TEST.stats))
       Object.assign(stats_proxy, { nrFailedTests: 0, nrPassedTests: 0, nrErrors: 0, })
       function prepare_proxy() {
          logger_proxy.calls = []
@@ -504,25 +615,25 @@ export function UNIT_TEST(TEST_) {
             // call function 'runTest' under test
             prepare_proxy()
             TEST.runTest("test-type","test-name", function(T) {
-               TEST.proxy.addFunctionCall(T,"function(T)",[T])
+               TEST.proxy.addFunctionCall([T,"function(T)",[T]])
                TEST.stats.nrErrors = nrErrors
             })
             unprepare_proxy()
 
             if (nrErrors == 0) {
                TEST( V(TEST.proxy.compareCalls([
-                  [logger_proxy,"startTest",[TEST,"test-type","test-name"]],
+                  [logger_proxy,"startTest",[TEST,"test-type-test","test-name"]],
                   [stats_proxy,"startTest",[]],
                   [TEST,"function(T)",[TEST]],
-                  [logger_proxy,"endTestOK",[TEST,"test-type","test-name"]],
+                  [logger_proxy,"endTestOK",[TEST,"test-type-test","test-name"]],
                   [stats_proxy,"endTest",[]],
                ])) == "", "runTest calls certain logger function in case of no error #"+nrErrors)
             } else {
                TEST( V(TEST.proxy.compareCalls([
-                  [logger_proxy,"startTest",[TEST,"test-type","test-name"]],
+                  [logger_proxy,"startTest",[TEST,"test-type-test","test-name"]],
                   [stats_proxy,"startTest",[]],
                   [TEST,"function(T)",[TEST]],
-                  [logger_proxy,"endTestError",[TEST,"test-type","test-name",nrErrors]],
+                  [logger_proxy,"endTestError",[TEST,"test-type-test","test-name",nrErrors]],
                   [stats_proxy,"endTest",[]],
                ])) == "", "runTest calls certain logger function in case of an error #"+nrErrors)
             }

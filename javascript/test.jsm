@@ -55,23 +55,6 @@ const Stats = {
    }
 }
 
-// public type -- TestTypes
-
-const TestTypes = {
-   CONFORMANCE: "conformance",
-   INTEGRATION: "integration",
-   PERFORMANCE: "performance",
-   UNIT: "unit",
-   USER: "user",
-   REGRESSION: "regression",
-   userName: function(type) {
-      return type+"-test"
-   },
-   functionName: function(type) {
-      return type.toUpperCase()+"_TEST"
-   }
-}
-
 // public type -- Proxy
 
 const Proxy = {
@@ -151,12 +134,19 @@ TEST.reset = function() {
    TEST.proxy = Proxy
    TEST.stats = Stats
    TEST.testedValues = []
-   TEST.types = TestTypes
    TEST.stats.reset()
+   Object.assign(TEST, {
+      CONFORMANCE: "conformance",
+      INTEGRATION: "integration",
+      PERFORMANCE: "performance",
+      UNIT: "unit",
+      USER: "user",
+      REGRESSION: "regression",
+   })
 }
 
 TEST.runTest = function(type,name,testfunc) {
-   var usertype = TEST.types.userName(type)
+   var usertype = TEST.userName(type)
    TEST.logger.startTest(TEST,usertype,name)
    TEST.stats.startTest()
    testfunc(TEST)
@@ -179,6 +169,14 @@ TEST.showStats = function() {
    TEST.logger.showStats(TEST,TEST.stats.nrExecutedTests(),TEST.stats.nrFailedTests)
 }
 
+TEST.userName = function(type) {
+   return type+"-test"
+}
+
+TEST.functionName = function(type) {
+   return type.toUpperCase()+"_TEST"
+}
+
 TEST.reset()
 
 
@@ -191,7 +189,7 @@ export function UNIT_TEST(TEST_) {
    test_TEST_Value()
    test_ConsoleLogger()
    test_Stats()
-   test_TestTypes()
+   test_Types()
    test_Proxy()
    test_TEST()
 
@@ -390,24 +388,25 @@ export function UNIT_TEST(TEST_) {
 
    }
 
-   function test_TestTypes() {
-      TEST( V(TEST.types) == TestTypes, "TestTypes implements TEST.types")
-      TEST( typeof V(TEST.types.functionName) === "function", "TEST.types should export functionName()")
+   function test_Types() {
+      TEST( typeof V(TEST.functionName) === "function", "TEST should export functionName()")
+
+      TEST( typeof V(TEST.userName) === "function", "TEST should export userName()")
 
       const Types = [ "CONFORMANCE", "INTEGRATION", "PERFORMANCE", "UNIT", "USER", "REGRESSION" ]
-      for (var attr in TEST.types) {
+      for (var attr in TEST) {
          if (attr == attr.toUpperCase())
-            TEST( Types.includes(attr), "TEST.types should offer only tested types: "+attr)
+            TEST( Types.includes(V(attr)), "TEST offers unknown type")
       }
 
       for (var type of Types) {
-         TEST( V(TEST.types)[type] !== undefined, "TEST.types should offer at least type: "+type)
+         TEST( V(TEST[type]) !== undefined, "TEST should export test type: "+type)
 
-         TEST( V(TEST.types[type]) === type.toLowerCase(), "Test name should conform to convention: "+type)
+         TEST( V(TEST[type]) === type.toLowerCase(), "Test name should conform to convention: "+type)
 
-         TEST( V(TEST.types.functionName(TEST.types[type])) === type+"_TEST", "Mapped function name should conform to convention: "+type)
+         TEST( V(TEST.functionName(TEST[type])) === type+"_TEST", "Mapped function name should conform to convention: "+type)
 
-         TEST( V(TEST.types.userName(TEST.types[type])) === type.toLowerCase()+"-test", "Mapped user name should conform to convention: "+type)
+         TEST( V(TEST.userName(TEST[type])) === type.toLowerCase()+"-test", "Mapped user name should conform to convention: "+type)
       }
    }
 
@@ -599,14 +598,12 @@ export function UNIT_TEST(TEST_) {
          TEST.proxy = undefined
          TEST.stats = undefined
          TEST.testedValues = undefined
-         TEST.types = undefined
          TEST.reset()
          var testedValues = TEST.testedValues
          TEST.testedValues = []
 
          TEST( V(TEST.logger) == ConsoleLogger && V(TEST.proxy) == Proxy && V(TEST.stats) == Stats
-            && V(testedValues.length) == 0 && V(TEST.types) == TestTypes,
-            "Test.reset resets data fields to standard values")
+            && V(testedValues.length) == 0, "Test.reset resets data fields to standard values")
 
          TEST( V(TEST.stats.nrExecutedTests()) == 0, "Test.reset resets also stats")
          Object.assign(TEST.stats,old_stats_values)

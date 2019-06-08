@@ -87,17 +87,27 @@ const Proxy = {
       if (parent.returnValues[functionName] && parent.returnValues[functionName].length>0)
          return parent.returnValues[functionName].shift()
    },
+   checkParamFunccall: function(funccall,fctname,parname) {
+      if (typeof funccall !== "object" || typeof funccall.length !== "number" || funccall.length !== 3)
+         throw new Error(`${fctname}: Expect parameter ${parname} of type [] with length 3`)
+      if (typeof funccall[0] !== "object" && typeof funccall[0] !== "function")
+         throw new Error(`${fctname}: Expect parameter ${parname}[0] of type object|function`)
+      if (typeof funccall[1] !== "string")
+         throw new Error(`${fctname}: Expect parameter ${parname}[1] of type string`)
+      if (typeof funccall[2] !== "object" || typeof funccall[2].length !== "number")
+         throw new Error(`${fctname}: Expect parameter ${parname}[2] of type []`)
+      return funccall
+   },
    addFunctionCall: function(funccall) {
-      Proxy.calls.push( funccall )
+      Proxy.calls.push( Proxy.checkParamFunccall(funccall,"addFunctionCall(p)","p") )
    },
    compareCalls: function(calls) {
       Proxy.calls2 = Proxy.calls // backup for debugging
       Proxy.calls = []
-      if (calls.length!=Proxy.calls2.length)
+      if (calls.length !== Proxy.calls2.length)
          return `expect #${calls.length} number of calls instead of #${Proxy.calls2.length}`
       for (var i=0; i<calls.length; ++i) {
-         if (calls[i].length!=3 || typeof calls[i][2].length !== "number")
-            return 'calls[${i}]: expect parameter format [ [proxy,"fctname", [paramlist]], ... ]'
+         Proxy.checkParamFunccall(calls[i],"compareCalls(p)",`p[${i}]`)
          if (Proxy.calls2[i][0] !== calls[i][0])
             return `calls[${i}][0]: expect proxy id:${Object.getPrototypeOf(calls[i][0]).id} instead of id:${Object.getPrototypeOf(Proxy.calls2[i][0]).id}`
          if (Proxy.calls2[i][1] !== calls[i][1])
@@ -491,6 +501,17 @@ export function UNIT_TEST(TEST_) {
          }
       }
 
+      function getError(func,param) {
+         try { proxy[func](param,func+"(p)","p"); } catch(e) { return e.message; }
+      }
+
+      // function 'checkParamFunccall' under test
+      TEST( V(getError("checkParamFunccall", {})) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checkParamFunccall checks input parameter")
+      TEST( V(getError("checkParamFunccall", [1,2])) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checkParamFunccall checks input arameter")
+      TEST( V(getError("checkParamFunccall", [1,2,3])) == "checkParamFunccall(p): Expect parameter p[0] of type object|function", "checkParamFunccall checks input parameter")
+      TEST( V(getError("checkParamFunccall", [null,2,3])) == "checkParamFunccall(p): Expect parameter p[1] of type string", "checkParamFunccall checks input parameter")
+      TEST( V(getError("checkParamFunccall", [null,"",{}])) == "checkParamFunccall(p): Expect parameter p[2] of type []", "checkParamFunccall checks input parameter")
+
       for (var i=0; i<5; ++i) {
          // function 'addFunctionCall' under test
          let fcall = [ [{},"1",[1]], [{},"2",[1,2]], [{},"3",[4]], [{},"4",[5,6]], [{},"5",[7]] ]
@@ -498,6 +519,7 @@ export function UNIT_TEST(TEST_) {
 
          TEST( V(proxy.calls.length) == i+1 && V(proxy.calls[i]) === fcall[i], "addFunctionCall pushes parameter to array proxy.calls #"+i)
       }
+      TEST( V(getError("addFunctionCall", {})) == "addFunctionCall(p): Expect parameter p of type [] with length 3", "addFunctionCall checks input parameter")
 
 
       // test created proxy intercepts functions
@@ -534,7 +556,7 @@ export function UNIT_TEST(TEST_) {
          var calls = proxy.calls
          p1.f1(1); p2.f3(2,3,4); p1.f2(1,2,3); p2.f4(2)
          switch (i) {
-         case 0: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "", "compareCalls works OK"); break;
+         case 0: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "", "compareCalls works without error"); break;
          case 1: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p2,"f4",[2]]])) == "expect #3 number of calls instead of #4", "compareCalls expects less calls"); break;
          case 2: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]] ,[p1,"f1",[1]]])) == "expect #5 number of calls instead of #4", "compareCalls expects more calls"); break;
          case 3: TEST( V(proxy.compareCalls( [ [p2,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2]]])) == "calls[0][0]: expect proxy id:2 instead of id:1", "compareCalls expects another proxy"); break;
@@ -546,7 +568,11 @@ export function UNIT_TEST(TEST_) {
          TEST( V(proxy.calls.length) == 0, "compareCalls clears intercepted calls #"+i)
          TEST( V(proxy.calls2) == calls, "compareCalls makes backup for debegging into calls2 #"+i)
       }
-
+      proxy.addFunctionCall([{},"",[]])
+      TEST( V(getError("compareCalls", [ [1,2,3] ])) == "compareCalls(p): Expect parameter p[0][0] of type object|function", "compareCalls checks input parameter")
+      proxy.addFunctionCall([{},"",[]])
+      proxy.addFunctionCall([{},"",[]])
+      TEST( V(getError("compareCalls", [ proxy.calls[0], [proxy.calls[1][0],2,3] ])) == "compareCalls(p): Expect parameter p[1][1] of type string", "compareCalls checks input parameter")
    }
 
    function test_TEST() {

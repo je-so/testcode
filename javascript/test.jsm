@@ -246,18 +246,17 @@ export function UNIT_TEST(TEST_) {
    }
 
    function test_ConsoleLogger() {
-      const old_console = TEST.logger.console
+      const old_console = ConsoleLogger.console
       const console_proxy = TEST.proxy.create(["log","error"])
       function prepare_proxy() {
-         TEST.logger.console = console_proxy
+         ConsoleLogger.console = console_proxy
       }
       function unprepare_proxy() {
-         TEST.logger.console = old_console
+         ConsoleLogger.console = old_console
       }
       try {
-         var logger = TEST.logger, v, testedValues
-         TEST( ConsoleLogger == TEST.logger, "ConsoleLogger is default logger")
-         TEST( console == TEST.logger.console, "ConsoleLogger writes to console")
+         var logger = ConsoleLogger, v, testedValues
+         TEST( console == ConsoleLogger.console, "ConsoleLogger writes to console")
 
          // test function 'error'
          for (var nrValues=0; nrValues<10; ++nrValues) {

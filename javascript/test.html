@@ -38,15 +38,83 @@
 
 
  </script>
-
+<style>
+   table, th, td {
+      border: 1px black solid;
+   }
+   th, td {
+      border: 1px #AAA solid;
+      text-align: center;
+      padding: 0.5em;
+   }
+   #errorlog {
+      font-size: 13px;
+      font-family: monospace;
+   }
+</style>
  <input type=number min=10>
  <br><input type=button onclick='document.querySelector("input[type=number]").value=document.querySelector("input[type=number]").value?parseInt(document.querySelector("input[type=number]").value)+1:document.querySelector("input[type=number]").min' value="Increment">
+ <br>
+ <br>
+ <table cellspacing=10>
+   <tr>
+      <th>Test:&nbsp;</th>
+   </tr>
+   <tr>
+      <th>State:&nbsp;</th>
+   </tr>
+ </table>
+ <h5>Log</h5>
+ <div id="errorlog"></div>
  <script>
+   function addcol(name,state) {
+      var rows = document.querySelectorAll("table tr")
+      var td = document.createElement("td")
+      td.innerHTML = name
+      rows[0].appendChild(td)
+      td = document.createElement("td")
+      td.innerHTML = state
+      rows[1].appendChild(td)
+   }
+
    // dynamically import a module
    (async () => {
       const m = await import("./test.jsm");
       console.log("dynamic import result", m)
       var TEST = m.default
+
+      const htmllogger = {
+         old: TEST.logger,
+         error: function(TEST,description,testedValues) {
+            this.old.error(TEST,description,testedValues)
+            document.querySelector("#errorlog").innerHTML += "-------- Error: " + description + " --------<br>"
+            document.querySelector("#errorlog").innerHTML += (new Error()).stack.toString()
+            for(const v of testedValues) {
+               document.querySelector("#errorlog").innerHTML += ` Value used in TEST &gt;${v}&lt;<br>`
+            }
+         },
+         startTest: function(TEST,type,name) {
+            this.old.startTest(TEST,type,name)
+         },
+         endTestOK: function(TEST,type,name) {
+            this.old.endTestOK(TEST,type,name)
+            addcol(type + "<br>" + name, "<span style='color:green'>OK</span>")
+         },
+         endTestError: function(TEST,type,name,nrErrors) {
+            this.old.endTestError(TEST,type,name,nrErrors)
+            addcol(type + "<br>" + name, "<span style='color:red'>Error</span>")
+         },
+         showStats: function(TEST,nrExecutedTests,nrFailedTests) {
+            this.old.showStats(TEST,nrExecutedTests,nrFailedTests)
+            document.querySelector("#errorlog").innerHTML += "<br>Number of tests executed: " + nrExecutedTests
+            if (nrFailedTests)
+               document.querySelector("#errorlog").innerHTML += "<br><br>Number of tests failed: " + nrFailedTests
+            else
+               document.querySelector("#errorlog").innerHTML += "<br><br>Every test passed"
+         },
+      }
+
+      TEST.setLogger(htmllogger)
 
       TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
          var V = TEST.Value

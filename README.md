@@ -28,11 +28,18 @@ JavaScript
 ----------
 [Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
 
-[Test Framework in 188 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
-
-Use TEST( expression, "description") to test an expression for true and TEST.runTest to run a test.
-The tests are part of javascript-modules and not separated from them. A later step must remove this code before
-using it in production. The test module tests itself with its own framework which adds another 380 LOC.
+[Test Framework in 180 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
+```    
+    TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
+         var V = TEST.Value
+         var inputnr = document.querySelector("input[type=number]")
+         var button = document.querySelector("input[type=button]")
+         inputnr.value = ""
+         TEST( V(inputnr.value) == "", "input is empty")
+         button.click()
+         TEST( V(inputnr.value) == "10", "input is set to minimum value")
+    })
+```
 
 OS API
 -------------

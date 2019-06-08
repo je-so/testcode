@@ -13,12 +13,6 @@
 
   window.TEST = TEST;
 
-  // dynamically import a module
-  (async () => {
-   const m = await import("./test.jsm");
-   console.log("await import result", m)
-  })();
-
   console.log("import.meta",import.meta);
   // call some dummy tests
   TEST.runTest(TEST.UNIT, location.pathname.replace(/^.*\//,""), function () {
@@ -44,5 +38,33 @@
 
 
  </script>
+
+ <input type=number min=10>
+ <br><input type=button onclick='document.querySelector("input[type=number]").value=document.querySelector("input[type=number]").value?parseInt(document.querySelector("input[type=number]").value)+1:document.querySelector("input[type=number]").min' value="Increment">
+ <script>
+   // dynamically import a module
+   (async () => {
+      const m = await import("./test.jsm");
+      console.log("dynamic import result", m)
+      var TEST = m.default
+
+      TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
+         var V = TEST.Value
+         var inputnr = document.querySelector("input[type=number]")
+         var button = document.querySelector("input[type=button]")
+         inputnr.value = ""
+         TEST( V(inputnr.value) == "", "input is empty")
+         button.click()
+         TEST( V(inputnr.value) == "10", "input is set to minimum value")
+         inputnr.value = "100"
+         button.click()
+         TEST( V(inputnr.value) == "101", "increment by 1")
+         inputnr.value = 54
+         button.click()
+         TEST( V(inputnr.value) == "55", "increment by 1")
+      })
+   })();
+ </script>
+
 </body>
 <html>

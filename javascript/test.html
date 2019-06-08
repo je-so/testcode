@@ -15,26 +15,27 @@
 
   console.log("import.meta",import.meta);
   // call some dummy tests
-  TEST.runTest(TEST.UNIT, location.pathname.replace(/^.*\//,""), function () {
-    for(var i=0;i<100;++i)
-      TEST(true)
+  TEST.runTest(TEST.UNIT, location.pathname.replace(/^.*\//,""), function (TEST,V) {
+      for(var i=0;i<100;++i)
+         TEST(true)
+
+      // use proxy interface
+      var p1 = TEST.proxy.create(["f1","f2"])
+      var p2 = TEST.proxy.create(["f1","f2"])
+      TEST.proxy.setReturnValues(p1,"f1",[1])
+      TEST.proxy.setReturnValues(p2,"f2",[2])
+      TEST(1 == p1.f1(1,2,3))
+      TEST(2 == p2.f2(1,2,3))
+      TEST( TEST.Value(TEST.proxy.compareCalls( [
+         [p1,"f1",[1,2,3]],
+         [p2,"f2",[1,2,3]],
+      ])) == "", "compare call sequence p1 and p2")
   })
 
   // test module test.js
   TEST.runTest(TEST.UNIT, "test.jsm", UNITTEST_test)
   TEST.showStats()
 
-  // use proxy interface
-  var p1 = TEST.proxy.create(["f1","f2"])
-  var p2 = TEST.proxy.create(["f1","f2"])
-  TEST.proxy.setReturnValues(p1,"f1",[1])
-  TEST.proxy.setReturnValues(p2,"f2",[2])
-  TEST(1 == p1.f1(1,2,3))
-  TEST(2 == p2.f2(1,2,3))
-  TEST( TEST.Value(TEST.proxy.compareCalls( [
-     [p1,"f1",[1,2,3]],
-     [p2,"f2",[1,2,3]],
-  ])) == "", "compare call sequence p1 and p2")
 
 
  </script>
@@ -87,10 +88,10 @@
          old: TEST.logger,
          error: function(TEST,description,testedValues) {
             this.old.error(TEST,description,testedValues)
-            document.querySelector("#errorlog").innerHTML += "-------- Error: " + description + " --------<br>"
-            document.querySelector("#errorlog").innerHTML += (new Error()).stack.toString()
+            document.querySelector("#errorlog").innerHTML += "<br>-------- Error: " + description + " --------<br>&nbsp;"
+            document.querySelector("#errorlog").innerHTML += (new Error()).stack.toString().replace(/\n./g,"<br>&nbsp;")+"<br>"
             for(const v of testedValues) {
-               document.querySelector("#errorlog").innerHTML += ` Value used in TEST &gt;${v}&lt;<br>`
+               document.querySelector("#errorlog").innerHTML += `<br>&nbsp;Value used in TEST &gt;${v}&lt;<br>`
             }
          },
          startTest: function(TEST,type,name) {
@@ -116,8 +117,7 @@
 
       TEST.setLogger(htmllogger)
 
-      TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
-         var V = TEST.Value
+      TEST.runTest(TEST.UNIT, "value & button", function (TEST,V) {
          var inputnr = document.querySelector("input[type=number]")
          var button = document.querySelector("input[type=button]")
          inputnr.value = ""

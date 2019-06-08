@@ -159,7 +159,7 @@ TEST.runTest = function(type,name,testfunc) {
    var usertype = TEST.userName(type)
    TEST.logger.startTest(TEST,usertype,name)
    TEST.stats.startTest()
-   testfunc(TEST)
+   testfunc(TEST,TEST.Value)
    if (TEST.stats.nrErrors)
       TEST.logger.endTestError(TEST,usertype,name,TEST.stats.nrErrors)
    else
@@ -192,8 +192,7 @@ TEST.reset()
 
 // -- Test Section --
 
-export function UNIT_TEST(TEST_) {
-   const V = TEST.Value
+export function UNIT_TEST(TEST_,V) {
 
    test_Parameter()
    test_TEST_Value()
@@ -205,6 +204,7 @@ export function UNIT_TEST(TEST_) {
 
    function test_Parameter() {
       TEST( TEST_ == TEST,"1st parameter passed to UNITTEST is TEST")
+      TEST( V == TEST.Value,"2nd parameter passed to UNITTEST is TEST.Value")
    }
 
    function test_TEST_Value() {

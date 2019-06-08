@@ -19,7 +19,7 @@ JavaScript
 [Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
 
 [Test Framework in 180 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
-```    
+```javascript
     TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
          var V = TEST.Value
          var inputnr = document.querySelector("input[type=number]")

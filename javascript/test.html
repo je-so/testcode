@@ -59,23 +59,25 @@
  <br>
  <table cellspacing=10>
    <tr>
-      <th>Test:&nbsp;</th>
-   </tr>
-   <tr>
-      <th>State:&nbsp;</th>
+      <th>Type</th> <th>Name</th> <th>State</th>
    </tr>
  </table>
  <h5>Log</h5>
  <div id="errorlog"></div>
  <script>
-   function addcol(name,state) {
-      var rows = document.querySelectorAll("table tr")
+   function addrow(type,name,state) {
+      var table = document.querySelector("table tr").parentElement
+      var tr = document.createElement("tr")
       var td = document.createElement("td")
+      td.innerHTML = type
+      tr.appendChild(td)
+      td = document.createElement("td")
       td.innerHTML = name
-      rows[0].appendChild(td)
+      tr.appendChild(td)
       td = document.createElement("td")
       td.innerHTML = state
-      rows[1].appendChild(td)
+      tr.appendChild(td)
+      table.appendChild(tr)
    }
 
    // dynamically import a module
@@ -99,11 +101,11 @@
          },
          endTestOK: function(TEST,type,name) {
             this.old.endTestOK(TEST,type,name)
-            addcol(type + "<br>" + name, "<span style='color:green'>OK</span>")
+            addrow(type, name, "<span style='color:green'>OK</span>")
          },
          endTestError: function(TEST,type,name,nrErrors) {
             this.old.endTestError(TEST,type,name,nrErrors)
-            addcol(type + "<br>" + name, "<span style='color:red'>Error</span>")
+            addrow(type, name, "<span style='color:red'>Error</span>")
          },
          showStats: function(TEST,nrExecutedTests,nrFailedTests) {
             this.old.showStats(TEST,nrExecutedTests,nrFailedTests)

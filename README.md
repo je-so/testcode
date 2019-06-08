@@ -14,16 +14,6 @@ See [regex-main.c](parser/automat/main.c) for usage of the regex-parser which su
 is to build the deterministic version for the left and right hand side of `&!` and combine the results
 [`makedfa2_automat(ndfa, OP_AND_NOT, ndfa2)`](parser/automat/automat.c#L2913).
 
-iperf
------
-**Measure performance of multiple threads/processes.**
-
-See directory [iperf/](iperf/).
-
-Sudoku Solver
--------------
-Jump to directory [sudoku/](old-projects/sudoku).
-
 JavaScript 
 ----------
 [Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
@@ -44,6 +34,16 @@ JavaScript
 OS API
 -------------
 * How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).
+
+iperf
+-----
+**Measure performance of multiple threads/processes.**
+
+See directory [iperf/](iperf/).
+
+Sudoku Solver
+-------------
+Jump to directory [sudoku/](old-projects/sudoku).
 
 
 License

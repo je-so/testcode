@@ -90,8 +90,8 @@
          old: TEST.logger,
          error: function(TEST,description,testedValues) {
             this.old.error(TEST,description,testedValues)
-            document.querySelector("#errorlog").innerHTML += "<br>-------- Error: " + description + " --------<br>&nbsp;"
-            document.querySelector("#errorlog").innerHTML += (new Error()).stack.toString().replace(/\n./g,"<br>&nbsp;")+"<br>"
+            document.querySelector("#errorlog").innerHTML += "<br>-------- Error: " + TEST.getPath() + ": " + description + " --------<br>&nbsp;"
+            document.querySelector("#errorlog").innerHTML += (new Error()).stack.toString().replace(/\n(.)/g,"<br>&nbsp;$1")+"<br>"
             for(const v of testedValues) {
                document.querySelector("#errorlog").innerHTML += `<br>&nbsp;Value used in TEST &gt;${v}&lt;<br>`
             }

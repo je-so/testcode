@@ -4,7 +4,7 @@
 const ConsoleLogger = {
    console: console,
    error: function(TEST,description,testedValues/*array of tested values and some of them are unexpected*/) {
-      this.console.log(new Error(`TEST failed: ${description}`))
+      this.console.log(new Error(`TEST failed: ${TEST.getPath()!=""?TEST.getPath()+": ":""}${description}`))
       for(const v of testedValues) {
          this.console.log(`   Value used in TEST >${v}<`)
       }
@@ -141,6 +141,7 @@ TEST.Value = function(value) {
 
 TEST.reset = function() {
    TEST.logger = ConsoleLogger
+   TEST.path = ""
    TEST.proxy = Proxy
    TEST.stats = Stats
    TEST.testedValues = []
@@ -173,6 +174,14 @@ TEST.setDefaultLogger = function() {
 
 TEST.setLogger = function(logger) {
    TEST.logger = logger
+}
+
+TEST.setPath = function(path) {
+   TEST.path = path // current path under test, for example "object.subobject.f1()" or "functionX() 'in error state'"
+}
+
+TEST.getPath = function() {
+   return TEST.path
 }
 
 TEST.showStats = function() {
@@ -208,27 +217,29 @@ export function UNIT_TEST(TEST_,V) {
    }
 
    function test_TEST_Value() {
+      TEST.setPath("TEST.Value()")
+
       for(let val=-5; val<=5; ++val) {
-         TEST( V(val) == val, "TEST.Value returns parameter value with type integer #"+val)
+         TEST( V(val) == val, "returns parameter value with type integer #"+val)
       }
 
-      TEST( V("string-value") == "string-value", "TEST.Value returns parameter value with type string")
+      TEST( V("string-value") == "string-value", "returns parameter value with type string")
 
-      TEST( V(true) == true, "TEST.Value returns parameter value with type boolean true")
+      TEST( V(true) == true, "returns parameter value with type boolean true")
 
-      TEST( V(false) == false, "TEST.Value returns parameter value with type boolean false")
+      TEST( V(false) == false, "returns parameter value with type boolean false")
 
-      TEST( V(0.123) == 0.123, "TEST.Value returns parameter value with type float")
+      TEST( V(0.123) == 0.123, "returns parameter value with type float")
 
-      TEST( V(null) == null, "TEST.Value returns parameter value with type null")
+      TEST( V(null) == null, "returns parameter value with type null")
 
-      TEST( V(undefined) == undefined, "TEST.Value returns parameter value with type undefined")
+      TEST( V(undefined) == undefined, "returns parameter value with type undefined")
 
       var o = { name: "Jo Bar" }
-      TEST( V(o) == o, "TEST.Value returns parameter value with type object")
+      TEST( V(o) == o, "returns parameter value with type object")
 
       var f = function() { return }
-      TEST( V(f) == f, "TEST.Value returns parameter value with type function")
+      TEST( V(f) == f, "returns parameter value with type function")
 
       for(var nrValues=1; nrValues<=10; ++nrValues) {
          for(var i=1; i<=nrValues; ++i) {
@@ -237,10 +248,10 @@ export function UNIT_TEST(TEST_,V) {
 
          var testedValues = TEST.testedValues
          TEST.testedValues = []
-         TEST( V(testedValues.length) == nrValues, "TEST.Value increments length of TEST.testedValues #"+nrValues)
+         TEST( V(testedValues.length) == nrValues, "increments length of TEST.testedValues #"+nrValues)
 
          for(var i=1; i<=nrValues; ++i) {
-            TEST( V(testedValues[i-1]) == i, "TEST.Value pushes value to TEST.testedValues #"+i)
+            TEST( V(testedValues[i-1]) == i, "pushes value to TEST.testedValues #"+i)
          }
       }
    }
@@ -255,10 +266,13 @@ export function UNIT_TEST(TEST_,V) {
          ConsoleLogger.console = old_console
       }
       try {
-         var logger = ConsoleLogger, v, testedValues
-         TEST( console == ConsoleLogger.console, "ConsoleLogger writes to console")
+         TEST.setPath("Consolelogger.console")
 
-         // test function 'error'
+         var logger = ConsoleLogger, testedValues
+         TEST( console == ConsoleLogger.console, "writes to console")
+
+         TEST.setPath("Consolelogger.error()")
+
          for (var nrValues=0; nrValues<10; ++nrValues) {
             testedValues = []
             for (var i=0; i<nrValues; ++i) {
@@ -275,12 +289,12 @@ export function UNIT_TEST(TEST_,V) {
                calls.push( [console_proxy,"log",[`   Value used in TEST >${3*i}<`]] )
             }
 
-            TEST( V(calls[0][2][0].toString()).indexOf("TEST failed: 123-description-456") > 0, "error logs error message first")
+            TEST( V(calls[0][2][0].toString()).indexOf("TEST failed: Consolelogger.error(): 123-description-456") > 0, "logs error message first")
 
-            TEST( V(TEST.proxy.compareCalls(calls)) == "", "error writes tested variables to log #"+nrValues)
+            TEST( V(TEST.proxy.compareCalls(calls)) == "", "writes tested variables to log #"+nrValues)
          }
 
-         // test function 'startTest'
+         TEST.setPath("Consolelogger.startTest()")
 
          // call function 'startTest' under test
          prepare_proxy()
@@ -289,9 +303,9 @@ export function UNIT_TEST(TEST_,V) {
 
          TEST( V(TEST.proxy.compareCalls([
                [console_proxy,"log",["Run test-type-x test-name-y: ... start ..."]]
-            ])) == "", "startTest calls console output only once")
+            ])) == "", "calls console output only once")
 
-         // test function 'endTestOK'
+         TEST.setPath("Consolelogger.endTestOK()")
 
          // call function 'endTestOK' under test
          prepare_proxy()
@@ -300,9 +314,10 @@ export function UNIT_TEST(TEST_,V) {
 
          TEST( V(TEST.proxy.compareCalls([
             [console_proxy,"log",["Run test-type-x test-name-y: OK."]]
-         ])) == "", "endTestOK calls console output only once")
+         ])) == "", "calls console output only once")
 
-         // test function 'endTestError'
+         TEST.setPath("Consolelogger.endTestError()")
+
          for (var nrErrors=0; nrErrors<10; ++nrErrors) {
 
             // call function 'endTestError' under test
@@ -312,10 +327,11 @@ export function UNIT_TEST(TEST_,V) {
 
             TEST( V(TEST.proxy.compareCalls([
                [console_proxy,"error",["Run type-"+nrErrors+" name-"+nrErrors+": "+nrErrors+" errors detected."]]
-            ])) == "", "endTestError calls console output only once #"+nrErrors)
+            ])) == "", "calls console output only once #"+nrErrors)
          }
 
-         // test function 'showStats'
+         TEST.setPath("Consolelogger.showStats()")
+
          for (var nrExecutedTests=0; nrExecutedTests<10; ++nrExecutedTests) {
             for (var nrFailedTests=0; nrFailedTests<nrExecutedTests; ++nrFailedTests) {
 
@@ -328,12 +344,12 @@ export function UNIT_TEST(TEST_,V) {
                   TEST( V(TEST.proxy.compareCalls([
                      [console_proxy,"log",["Number of tests executed: "+nrExecutedTests]],
                      [console_proxy,"log",["Every test passed"]],
-                  ])) == "", "showStats calls console output twice #"+nrExecutedTests+","+nrFailedTests)
+                  ])) == "", "calls console output twice #"+nrExecutedTests+","+nrFailedTests)
                } else {
                   TEST( V(TEST.proxy.compareCalls([
                      [console_proxy,"log",["Number of tests executed: "+nrExecutedTests]],
                      [console_proxy,"error",["Number of tests failed: "+nrFailedTests]],
-                  ])) == "", "showStats calls console output twice #"+nrExecutedTests+","+nrFailedTests)
+                  ])) == "", "calls console output twice #"+nrExecutedTests+","+nrFailedTests)
                }
             }
          }
@@ -346,25 +362,35 @@ export function UNIT_TEST(TEST_,V) {
    function test_Stats() {
       var stats = Object.assign({}, TEST.stats)
 
-      TEST( V(TEST.stats) == Stats, "Stats implements TEST.stats")
+      TEST.setPath("TEST.stats")
+
+      TEST( V(TEST.stats) == Stats, "is implemented by Stats")
+
+      TEST.setPath("Stats.reset()")
 
       stats.nrPassedTests = 1
       stats.nrFailedTests = 1
       stats.nrErrors = 1
       stats.reset()
       TEST( (V(stats.nrPassedTests) == 0 && V(stats.nrFailedTests) == 0 && V(stats.nrErrors) == 0),
-         "stats.reset() sets counters to 0")
+         "sets counters to 0")
+
+      TEST.setPath("Stats.error()")
 
       for (var i=1; i<100; ++i) {
          stats.error()
-         TEST( V(stats.nrErrors) == i, "stats.error() increments error counter: "+i)
+         TEST( V(stats.nrErrors) == i, "increments error counter: "+i)
       }
+
+      TEST.setPath("Stats.startTest()")
 
       stats.nrPassedTests = 3
       stats.nrFailedTests = 4
       stats.startTest()
       TEST( V(stats.nrErrors) == 0 && V(stats.nrPassedTests) == 3 && V(stats.nrFailedTests) == 4,
-         "stats.startTest() sets error counter to 0 and does not change other counters")
+         "sets error counter to 0 and does not change other counters")
+
+      TEST.setPath("Stats.endTest()")
 
       for (var i=1; i<=10; ++i) {
          stats.nrPassedTests = 5+i
@@ -372,15 +398,17 @@ export function UNIT_TEST(TEST_,V) {
          stats.nrErrors = 0
          stats.endTest()
          TEST( V(stats.nrErrors) == 0 && V(stats.nrPassedTests) == 6+i && V(stats.nrFailedTests) == 6+i,
-            "stats.endTest() increments passed counter #"+i)
+            "increments passed counter #"+i)
 
          stats.nrPassedTests = 5+i
          stats.nrFailedTests = 6+i
          stats.nrErrors = i
          stats.endTest()
          TEST( V(stats.nrErrors) == i && V(stats.nrPassedTests) == 5+i && V(stats.nrFailedTests) == 7+i,
-            "stats.endTest() increments failed counter #"+i)
+            "increments failed counter #"+i)
       }
+
+      TEST.setPath("Stats.nrExecutedTests()")
 
       for (var nrPassed=0; nrPassed<10; ++nrPassed) {
          for (var nrFailed=0; nrFailed<10; ++nrFailed) {
@@ -388,41 +416,53 @@ export function UNIT_TEST(TEST_,V) {
             stats.nrFailedTests = nrFailed
             stats.nrErrors = nrPassed - 3
 
-            TEST( V(stats.nrExecutedTests()) == nrPassed + nrFailed, "stats.nrExecutedTests() returns number of all tests #"+nrPassed+","+nrFailed)
+            TEST( V(stats.nrExecutedTests()) == nrPassed + nrFailed, "returns number of all tests #"+nrPassed+","+nrFailed)
 
             TEST( V(stats.nrPassedTests) == nrPassed && V(stats.nrFailedTests) == nrFailed && V(stats.nrErrors) == nrPassed - 3,
-               "stats.nrExecutedTests() does not change state")
+               "does not change state")
          }
       }
 
    }
 
    function test_Types() {
-      TEST( typeof V(TEST.functionName) === "function", "TEST should export functionName()")
+      TEST.setPath("TEST.functionName()")
 
-      TEST( typeof V(TEST.userName) === "function", "TEST should export userName()")
+      TEST( typeof V(TEST.functionName) === "function", "function should be exported")
+
+      TEST.setPath("TEST.userName()")
+
+      TEST( typeof V(TEST.userName) === "function", "function should be exported")
+
 
       const Types = [ "ACCEPTANCE", "INTEGRATION", "PERFORMANCE", "SYSTEM", "UNIT", "USER", "REGRESSION" ]
       for (var attr in TEST) {
+         TEST.setPath("TEST."+attr)
          if (attr == attr.toUpperCase())
-            TEST( Types.includes(V(attr)), "TEST offers unknown type")
+            TEST( Types.includes(V(attr)), "test type not known")
       }
 
       for (var type of Types) {
-         TEST( V(TEST[type]) !== undefined, "TEST should export test type: "+type)
+         TEST.setPath("TEST."+type)
+         TEST( V(TEST[type]) !== undefined, "known type not exported: "+type)
+         TEST( V(TEST[type]) === type.toLowerCase(), "test name should conform to convention #"+type)
 
-         TEST( V(TEST[type]) === type.toLowerCase(), "Test name should conform to convention: "+type)
+         TEST.setPath("TEST.functionName()")
+         TEST( V(TEST.functionName(TEST[type])) === type+"_TEST", "return value should conform to convention #"+type)
 
-         TEST( V(TEST.functionName(TEST[type])) === type+"_TEST", "Mapped function name should conform to convention: "+type)
-
-         TEST( V(TEST.userName(TEST[type])) === type.toLowerCase()+"-test", "Mapped user name should conform to convention: "+type)
+         TEST.setPath("TEST.userName()")
+         TEST( V(TEST.userName(TEST[type])) === type.toLowerCase()+"-test", "return value should conform to convention #"+type)
       }
    }
 
    function test_Proxy() {
       const proxy = TEST.proxy
 
-      TEST( V(proxy) == Proxy, "Proxy is default implementation")
+      TEST.setPath("TEST.proxy")
+
+      TEST( V(proxy) == Proxy, "is implemented by Proxy")
+
+      TEST.setPath("Proxy.reset()")
 
       // call 'reset' under test
       proxy.calls = [1,2,3]
@@ -433,16 +473,20 @@ export function UNIT_TEST(TEST_,V) {
       TEST( V(proxy.calls.length) == 0 && V(proxy.calls2.length) == 0 && V(proxy.id) == 0,
          "reset initializes all fields")
 
+      TEST.setPath("Proxy.getOwnFunctionNames()")
+
       let o1 = { a: null, b: undefined, i: 1, x: "", y: {}, f1: function() {} }
       let o2 = { f2: function() {}, f3: function() {return 1;} }
       let o3 = { f4: function(a) {}, f5: function(b,c) {return 1;} }
 
       for (var i=0; i<3; ++i) {
          var names = i==0?proxy.getOwnFunctionNames(o1):i==1?proxy.getOwnFunctionNames(o1,o2):proxy.getOwnFunctionNames(o1,o2,o3);
-         TEST( V(names.length) == 2*i+1 && V(names.includes("f1")), "getOwnFunctionNames exports array of own properties which are of type function")
+         TEST( V(names.length) == 2*i+1 && V(names.includes("f1")), "exports array of own properties which are of type function")
          for (var i2=2; i2<2*i+2; i2+=2)
-            TEST( V(names.includes("f"+i2)) && V(names.includes("f"+(i2+1))), "getOwnFunctionNames exports array of own properties which are of type function #"+i2)
+            TEST( V(names.includes("f"+i2)) && V(names.includes("f"+(i2+1))), "exports array of own properties which are of type function #"+i2)
       }
+
+      TEST.setPath("Proxy.create()")
 
       for (var i=0; i<4; ++i) {
          // call function 'create' under test
@@ -452,16 +496,18 @@ export function UNIT_TEST(TEST_,V) {
          const parent = Object.getPrototypeOf(proxy)
          let props = Object.getOwnPropertyNames(proxy)
 
-         TEST( proxy.id == id+1, "create increments id of proxy #"+i)
+         TEST( proxy.id == id+1, "increments id of proxy #"+i)
 
-         TEST( V(props.length) == funcNames.length, "create builds proxy with x functions #"+i)
+         TEST( V(props.length) == funcNames.length, "builds proxy with x functions #"+i)
          for (var i2=0; i2<funcNames.length; ++i2) {
             TEST( typeof V(proxy[funcNames[i2]]) === "function", "function is named after given parameter #"+i,+","+i2)
          }
 
          props = Object.getOwnPropertyNames(parent)
-         TEST( V(props.length) === 2 && V(parent.id) === id+1 && V(parent.returnValues.length) === 0, "create builds proxy with own prototype #"+i)
+         TEST( V(props.length) === 2 && V(parent.id) === id+1 && V(parent.returnValues.length) === 0, "builds proxy with own prototype #"+i)
       }
+
+      TEST.setPath("Proxy.setReturnValues()")
 
       for (var i=0; i<5; ++i) {
          const funcNames=["some","func","names"]
@@ -476,9 +522,11 @@ export function UNIT_TEST(TEST_,V) {
 
             TEST( V(Object.getOwnPropertyNames(parent.returnValues).length) == length+1 &&
                V(parent.returnValues[funcNames[i2]]) == values,
-               "setReturnValues sets reference to array of values and only for a certain function #"+i+","+i2)
+               "sets reference to array of values and only for a certain function #"+i+","+i2)
          }
       }
+
+      TEST.setPath("Proxy.getReturnValue()")
 
       for (var i=0; i<5; ++i) {
          const funcNames=["some","func","names"]
@@ -495,7 +543,7 @@ export function UNIT_TEST(TEST_,V) {
                const returnvalue = TEST.proxy.getReturnValue(proxy,funcNames[i2])
 
                TEST( V(returnValues.length) == i-i3 && V(returnvalue) == values[i3],
-                  "getReturnValue returns first value of array and removes it #"+i+","+i2+","+i3)
+                  "returns first value of array and removes it #"+i+","+i2+","+i3)
             }
          }
       }
@@ -504,24 +552,29 @@ export function UNIT_TEST(TEST_,V) {
          try { proxy[func](param,func+"(p)","p"); } catch(e) { return e.message; }
       }
 
+      TEST.setPath("Proxy.checkParamFunccall()")
+
       // function 'checkParamFunccall' under test
-      TEST( V(getError("checkParamFunccall", {})) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checkParamFunccall checks input parameter")
-      TEST( V(getError("checkParamFunccall", [1,2])) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checkParamFunccall checks input arameter")
-      TEST( V(getError("checkParamFunccall", [1,2,3])) == "checkParamFunccall(p): Expect parameter p[0] of type object|function", "checkParamFunccall checks input parameter")
-      TEST( V(getError("checkParamFunccall", [null,2,3])) == "checkParamFunccall(p): Expect parameter p[1] of type string", "checkParamFunccall checks input parameter")
-      TEST( V(getError("checkParamFunccall", [null,"",{}])) == "checkParamFunccall(p): Expect parameter p[2] of type []", "checkParamFunccall checks input parameter")
+      TEST( V(getError("checkParamFunccall", {})) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checks input parameter")
+      TEST( V(getError("checkParamFunccall", [1,2])) == "checkParamFunccall(p): Expect parameter p of type [] with length 3", "checks input arameter")
+      TEST( V(getError("checkParamFunccall", [1,2,3])) == "checkParamFunccall(p): Expect parameter p[0] of type object|function", "checks input parameter")
+      TEST( V(getError("checkParamFunccall", [null,2,3])) == "checkParamFunccall(p): Expect parameter p[1] of type string", "checks input parameter")
+      TEST( V(getError("checkParamFunccall", [null,"",{}])) == "checkParamFunccall(p): Expect parameter p[2] of type []", "checks input parameter")
+
+      TEST.setPath("Proxy.addFunctionCall()")
 
       for (var i=0; i<5; ++i) {
          // function 'addFunctionCall' under test
          let fcall = [ [{},"1",[1]], [{},"2",[1,2]], [{},"3",[4]], [{},"4",[5,6]], [{},"5",[7]] ]
          proxy.addFunctionCall(fcall[i])
 
-         TEST( V(proxy.calls.length) == i+1 && V(proxy.calls[i]) === fcall[i], "addFunctionCall pushes parameter to array proxy.calls #"+i)
+         TEST( V(proxy.calls.length) == i+1 && V(proxy.calls[i]) === fcall[i], "pushes parameter to array proxy.calls #"+i)
       }
-      TEST( V(getError("addFunctionCall", {})) == "addFunctionCall(p): Expect parameter p of type [] with length 3", "addFunctionCall checks input parameter")
+      TEST( V(getError("addFunctionCall", {})) == "addFunctionCall(p): Expect parameter p of type [] with length 3", "checks input parameter")
 
+      TEST.setPath("Proxy.create().<function>()")
 
-      // test created proxy intercepts functions
+      // test created proxy returns correct values
       proxy.reset()
       const p1 = proxy.create(["f1","f2"])
       const p2 = proxy.create(["f3","f4"])
@@ -540,6 +593,7 @@ export function UNIT_TEST(TEST_,V) {
          TEST( V(p2.f4(3+4*i,4+4*i,5+4*i)) == 4+4*i, "call p1.f2 #"+i)
          TEST( V(p2.returnValues["f4"].length) ==1-i, "retval removed from f4 #"+i)
       }
+      // test created proxy stores intercepted function calls
       for (var i=0; i<8; ++i) {
          var id = 1+Math.floor(i/2)%2, f = "f"+(1+i%4)
          TEST( V(proxy.calls[i][0].id) == id && V(proxy.calls[i][1]) == f
@@ -548,6 +602,8 @@ export function UNIT_TEST(TEST_,V) {
             TEST( V(proxy.calls[i][2][i2]) == i+i2, "compare parameter #"+i+","+i2)
          }
       }
+
+      TEST.setPath("Proxy.compareCalls()")
 
       // test compareCalls
       proxy.reset()
@@ -564,14 +620,14 @@ export function UNIT_TEST(TEST_,V) {
          case 6: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[]]])) == "calls[3][2]: expect #0 function arguments instead of #1", "compareCalls expects less function call arguments"); break;
          case 7: TEST( V(proxy.compareCalls( [ [p1,"f1",[1]], [p2,"f3",[2,3,4]], [p1,"f2",[1,2,3]], [p2,"f4",[2,3]]])) == "calls[3][2]: expect #2 function arguments instead of #1", "compareCalls expects more function call arguments"); break;
          }
-         TEST( V(proxy.calls.length) == 0, "compareCalls clears intercepted calls #"+i)
-         TEST( V(proxy.calls2) == calls, "compareCalls makes backup for debegging into calls2 #"+i)
+         TEST( V(proxy.calls.length) == 0, "clears intercepted calls #"+i)
+         TEST( V(proxy.calls2) == calls, "makes backup for debegging into calls2 #"+i)
       }
       proxy.addFunctionCall([{},"",[]])
-      TEST( V(getError("compareCalls", [ [1,2,3] ])) == "compareCalls(p): Expect parameter p[0][0] of type object|function", "compareCalls checks input parameter")
+      TEST( V(getError("compareCalls", [ [1,2,3] ])) == "compareCalls(p): Expect parameter p[0][0] of type object|function", "checks input parameter")
       proxy.addFunctionCall([{},"",[]])
       proxy.addFunctionCall([{},"",[]])
-      TEST( V(getError("compareCalls", [ proxy.calls[0], [proxy.calls[1][0],2,3] ])) == "compareCalls(p): Expect parameter p[1][1] of type string", "compareCalls checks input parameter")
+      TEST( V(getError("compareCalls", [ proxy.calls[0], [proxy.calls[1][0],2,3] ])) == "compareCalls(p): Expect parameter p[1][1] of type string", "checks input parameter")
    }
 
    function test_TEST() {
@@ -592,6 +648,8 @@ export function UNIT_TEST(TEST_,V) {
       }
       try {
 
+         TEST.setPath("TEST()")
+
          for (var expr=0; expr<=1; ++expr) {
             for (var nrTestedValues=0; nrTestedValues<5; ++nrTestedValues) {
                for (var i=0; i<nrTestedValues; ++i) {
@@ -604,22 +662,27 @@ export function UNIT_TEST(TEST_,V) {
                TEST(expr==0,"<DESCRIPTION>")
                unprepare_proxy()
 
-               TEST( V(TEST.testedValues.length) == 0, "TEST() resets testedValues array to length 0")
+               TEST( V(TEST.testedValues.length) == 0, "resets testedValues array to length 0")
 
                if (expr==0) {
-                  TEST( V(TEST.proxy.compareCalls([])) == "", "TEST(true) does not change stats")
+                  TEST.setPath("TEST(true)")
+                  TEST( V(TEST.proxy.compareCalls([])) == "", "does not change stats")
                } else {
+                  TEST.setPath("TEST(false)")
                   TEST( V(TEST.proxy.compareCalls([
                            [logger_proxy,"error",[TEST,"<DESCRIPTION>",testedValues]],
                            [stats_proxy,"error",[]],
-                        ])) == "", "TEST(false) does log an error")
+                        ])) == "", "does log an error")
                }
             }
          }
 
+         TEST.setPath("TEST.reset()")
+
          // call function 'reset' under test
          var old_stats_values = Object.assign({}, TEST.stats)
          TEST.logger = undefined
+         TEST.path = undefined
          TEST.proxy = undefined
          TEST.stats = undefined
          TEST.testedValues = undefined
@@ -627,11 +690,13 @@ export function UNIT_TEST(TEST_,V) {
          var testedValues = TEST.testedValues
          TEST.testedValues = []
 
-         TEST( V(TEST.logger) == ConsoleLogger && V(TEST.proxy) == Proxy && V(TEST.stats) == Stats
-            && V(testedValues.length) == 0, "Test.reset resets data fields to standard values")
+         TEST( V(TEST.logger) == ConsoleLogger && V(TEST.proxy) == Proxy && V(TEST.path.length) === 0
+            && V(TEST.stats) == Stats && V(testedValues.length) == 0, "resets data fields to standard values")
 
-         TEST( V(TEST.stats.nrExecutedTests()) == 0, "Test.reset resets also stats")
+         TEST( V(TEST.stats.nrExecutedTests()) == 0, "resets also stats")
          Object.assign(TEST.stats,old_stats_values)
+
+         TEST.setPath("TEST.runTest()")
 
          for (var nrErrors=0; nrErrors<=2; ++nrErrors) {
             // call function 'runTest' under test
@@ -649,7 +714,7 @@ export function UNIT_TEST(TEST_,V) {
                   [TEST,"function(T)",[TEST]],
                   [logger_proxy,"endTestOK",[TEST,"test-type-test","test-name"]],
                   [stats_proxy,"endTest",[]],
-               ])) == "", "runTest calls certain logger function in case of no error #"+nrErrors)
+               ])) == "", "calls certain logger function in case of no error #"+nrErrors)
             } else {
                TEST( V(TEST.proxy.compareCalls([
                   [logger_proxy,"startTest",[TEST,"test-type-test","test-name"]],
@@ -657,22 +722,30 @@ export function UNIT_TEST(TEST_,V) {
                   [TEST,"function(T)",[TEST]],
                   [logger_proxy,"endTestError",[TEST,"test-type-test","test-name",nrErrors]],
                   [stats_proxy,"endTest",[]],
-               ])) == "", "runTest calls certain logger function in case of an error #"+nrErrors)
+               ])) == "", "calls certain logger function in case of an error #"+nrErrors)
             }
 
          }
 
-         TEST.setLogger(undefined)
-         TEST( V(TEST.logger) == undefined, "setLogger sets a new logger")
+         TEST.setPath("TEST.setLogger()")
 
-         TEST.setDefaultLogger()
-         TEST( V(TEST.logger) == ConsoleLogger, "setDefaultLogger sets ConsoleLogger as default")
+         TEST.setLogger(undefined)
+         TEST( V(TEST.logger) == undefined, "sets a new logger")
 
          TEST.setLogger(logger_proxy)
-         TEST( V(TEST.logger) == logger_proxy, "setLogger sets a new logger")
+         TEST( V(TEST.logger) == logger_proxy, "sets a new logger")
 
+         TEST.setPath("TEST.setDefaultLogger()")
+
+         TEST.setLogger(undefined)
          TEST.setDefaultLogger()
-         TEST( V(TEST.logger) == ConsoleLogger, "setDefaultLogger sets ConsoleLogger as default")
+         TEST( V(TEST.logger) == ConsoleLogger, "sets ConsoleLogger as default")
+
+         TEST.setLogger(logger_proxy)
+         TEST.setDefaultLogger()
+         TEST( V(TEST.logger) == ConsoleLogger, "sets ConsoleLogger as default")
+
+         TEST.setPath("TEST.showStats()")
 
          for (var nrPassed=0; nrPassed<=5; ++nrPassed) {
             for (var nrFailed=0; nrFailed<=5; ++nrFailed) {
@@ -687,9 +760,25 @@ export function UNIT_TEST(TEST_,V) {
                TEST( V(TEST.proxy.compareCalls([
                   [stats_proxy,"nrExecutedTests",[]],
                   [logger_proxy,"showStats",[TEST,nrPassed+nrFailed,nrFailed]],
-               ])) == "", "TEST.showStats calls certain logger and stats function #"+nrPassed+","+nrFailed)
+               ])) == "", "calls certain logger and stats function #"+nrPassed+","+nrFailed)
 
             }
+         }
+
+         TEST.setPath("TEST.setPath()")
+
+         for (var i=0; i<10; ++i) {
+            var path = "TEST.setPath("+i+")"
+            TEST.setPath(path)
+            TEST( V(TEST.path) === path, "sets current path")
+         }
+
+         TEST.setPath("TEST.getPath()")
+
+         for (var i=0; i<10; ++i) {
+            var path = "TEST.setPath("+i+")"
+            TEST.setPath(path)
+            TEST( V(TEST.getPath()) === path, "returns current path")
          }
 
       } finally {

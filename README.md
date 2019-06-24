@@ -1,7 +1,7 @@
 Testcode
 ========
 
-This repository contains unrelated stuff and references to external articles: [patterns](reading-list/patterns.md).
+This repository contains unrelated stuff and references to external articles: [patterns](reading-list/patterns.md), [linux-api](reading-list/linux-api.md).
 
 Parser
 ------

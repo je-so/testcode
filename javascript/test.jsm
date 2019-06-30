@@ -88,13 +88,13 @@ const Proxy = {
          return parent.returnValues[functionName].shift()
    },
    checkParamFunccall: function(funccall,fctname,parname) {
-      if (typeof funccall !== "object" || typeof funccall.length !== "number" || funccall.length !== 3)
+      if (!Array.isArray(funccall) || funccall.length !== 3)
          throw new Error(`${fctname}: Expect parameter ${parname} of type [] with length 3`)
       if (typeof funccall[0] !== "object" && typeof funccall[0] !== "function")
          throw new Error(`${fctname}: Expect parameter ${parname}[0] of type object|function`)
       if (typeof funccall[1] !== "string")
          throw new Error(`${fctname}: Expect parameter ${parname}[1] of type string`)
-      if (typeof funccall[2] !== "object" || typeof funccall[2].length !== "number")
+      if (!Array.isArray(funccall[2]))
          throw new Error(`${fctname}: Expect parameter ${parname}[2] of type []`)
       return funccall
    },
@@ -602,6 +602,21 @@ export function UNIT_TEST(TEST_,V) {
             TEST( V(proxy.calls[i][2][i2]) == i+i2, "compare parameter #"+i+","+i2)
          }
       }
+
+      TEST.setPath("Proxy.create().<function>( throw exception )")
+
+      // test overwrite function of created proxy, function throws exception
+      proxy.reset()
+      const px_proto = proxy.create(["fx"])
+      const px = Object.create(px_proto)
+      px.fx = function () { px_proto.fx();/*log call*/ throw new Error("fx"); }
+      try {
+         px.fx();
+         TEST(false,"no exception was thrown")
+      } catch(e) {
+         TEST( e.message == "fx", "proxy function throws an exception");
+      }
+      TEST( V(proxy.compareCalls( [ [px,"fx",[]] ] ), "fx was called once"))
 
       TEST.setPath("Proxy.compareCalls()")
 

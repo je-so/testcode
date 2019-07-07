@@ -74,8 +74,8 @@ const Proxy = {
    },
    create: function(functionNamesArray) {
       var proxy = Object.create( { id: ++Proxy.id, returnValues: [] } )
-      for (var functionName of functionNamesArray)
-         eval(`proxy[functionName] = function (...args) { Proxy.addFunctionCall([this,'${functionName}',args]); return Proxy.getReturnValue(this,'${functionName}'); }`)
+      for (const functionName of functionNamesArray)
+         proxy[functionName] = function (...args) { Proxy.addFunctionCall([this,functionName,args]); return Proxy.getReturnValue(this,functionName); }
       return proxy
    },
    setReturnValues: function(createdProxy,functionName,returnValuesArray) {

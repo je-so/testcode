@@ -24,7 +24,7 @@
       var p2 = TEST.proxy.create(["f1","f2"])
       TEST.proxy.setReturnValues(p1,"f1",[1])
       TEST.proxy.setReturnValues(p2,"f2",[2])
-      TEST(1 == p1.f1(1,2,3))
+      TEST(1 == V(p1.f1(1,2,3)))
       TEST(2 == p2.f2(1,2,3))
       TEST( TEST.Value(TEST.proxy.compareCalls( [
          [p1,"f1",[1,2,3]],

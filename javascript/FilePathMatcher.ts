@@ -23,11 +23,10 @@ class FilePathMatcher {
   // Falls afterSubdirMatch[i] == true, dann gingen patternSections[i] ein oder mehrere "**/"
   // im Dateipfadmuster voraus, die jedoch nicht mehr in patternSections gespeichert sind.
   readonly afterSubdirMatch: boolean[]
-  // Mehrere pattern Indizes (0 basiert)
-  // Zeigt auf einen Patternabschnitt in patternSections.
-  // Die vor diesem Index im Array patternSections vorkommenden Sektionen wurden alle schon erkannt.
-  // Da es sich um die Simulation eines NDA handelt, müssen mehrere Indizes untertützt werden.
-  readonly sectionPos: number[]
+  // Zeigt auf einen Patternabschnitt in patternSections[i], falls sectionPos[i] == true.
+  // Die vor i im Array patternSections vorkommenden Sektionen wurden alle schon erkannt.
+  // Da es sich um die Simulation eines NDA handelt, müssen mehrere Indizes unterstützt werden.
+  readonly sectionPos: boolean[]
   // Ist true, falls alle Teilpfade, die dem Dateinamensmuster vorausgehen, schon erkannt wurden.
   readonly couldMatchFilename: boolean
 
@@ -36,7 +35,7 @@ class FilePathMatcher {
      1. starts with "./", "../", or "/"
      2. contains "/./" or "/../" anywhere
   */
-  constructor(pattern: string | { patternSections: string[], afterSubdirMatch: boolean[], sectionPos: number[]}) {
+  constructor(pattern: string | { patternSections: string[], afterSubdirMatch: boolean[], sectionPos: boolean[]}) {
     if (typeof pattern == "string") {
       let patternSections: string[] = []
       let afterSubdirMatch: boolean[] = []
@@ -51,22 +50,24 @@ class FilePathMatcher {
           afterSubdir=true
         } else {
           patternSections[nextSectionIndex] = section
-          afterSubdirMatch[nextSectionIndex] = afterSubdir
+          afterSubdirMatch[nextSectionIndex++] = afterSubdir
           afterSubdir = false
         }
       }
       this.patternSections = patternSections
       this.afterSubdirMatch = afterSubdirMatch
-      this.sectionPos = [0]
+      this.sectionPos = [true]
     } else {
       this.patternSections = pattern.patternSections
       this.afterSubdirMatch = pattern.afterSubdirMatch
       this.sectionPos = pattern.sectionPos
     }
     let couldMatchFilename = false;
-    for (let pos of this.sectionPos) {
-      if (this.patternSections.length-1 === pos)
+    for (let pos in this.sectionPos) {
+      if (this.patternSections.length-1 === parseInt(pos)) {
         couldMatchFilename = true;
+        break
+      }
     }
     this.couldMatchFilename = couldMatchFilename
   }
@@ -121,19 +122,20 @@ class FilePathMatcher {
    * @returns Gibt einen neuen Matcher zurück, falls das Unterverzeichnis erkannt wurde, sonst null.
    */
   matchSubDirectory(dirname: string): FilePathMatcher | null {
-    let newSectionPos: number[] = []
-    let afterSubdirMatch: number[] = []
-    for (let pos of this.sectionPos) {
-      if (pos >= this.patternSections.length-1/*last section matches no subdirectory*/) continue
+    let newSectionPos: boolean[] = []
+    let afterSubdirMatch: boolean[] = []
+    for (let pos in this.sectionPos) {
       if (this.afterSubdirMatch[pos])
-        afterSubdirMatch[pos] = pos
+        afterSubdirMatch[pos] = true
+      const posnum = parseInt(pos)
+      if (posnum >= this.patternSections.length-1/*last section matches no subdirectory*/) continue
       const section = this.patternSections[pos]
       const len = this.matchSection(section, dirname)
       if (len < section.length) continue
-      newSectionPos[pos+1] = pos+1
+      newSectionPos[posnum+1] = true
     }
-    for (const pos of afterSubdirMatch) {
-      newSectionPos[pos] = pos
+    for (const pos in afterSubdirMatch) {
+      newSectionPos[pos] = true
     }
     if (newSectionPos.length)
       return new FilePathMatcher({ patternSections: this.patternSections, afterSubdirMatch: this.afterSubdirMatch, sectionPos: newSectionPos})
@@ -159,5 +161,11 @@ class FilePathMatcher {
 exports.FilePathMatcher = FilePathMatcher
 
 let matcher = new FilePathMatcher("**abc**/**/**/*.c")
-console.log(matcher.matchSubDirectory("abc").matchSubDirectory("\nsubdir1-").matchSubDirectory("subdir2").matchFilename("_*_.c"))
+let m1 = matcher.matchSubDirectory("abc")
+console.log("m1",m1)
+let m2 = m1.matchSubDirectory("\nsubdir1-")
+console.log("m2",m2)
+let m3 = m2.matchSubDirectory("subdir2")
+console.log("m3",m3)
+console.log("match filename", m3.matchFilename("_*_.c"))
 

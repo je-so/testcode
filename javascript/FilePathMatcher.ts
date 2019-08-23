@@ -13,7 +13,7 @@
  * Unterverzeichnisebenen beliebigen Namens.
  *
  */
-class FilePathMatcher {
+export class FilePathMatcher {
   // Das eigentliche Dateipfadmuster aufgeteilt in Abschnitte zwischen den einzelnen "/".
   // Die "/" sind nicht meht enthalten.
   // Das Unterverzeichnismuster "**/", das beliebige Unterverzeichnisse erkennt, ist auch nicht
@@ -150,7 +150,8 @@ class FilePathMatcher {
    * @returns Gibt true zurück, wenn filename erkannt wurde.
    */
   matchFilename(filename: string): boolean {
-    if (!this.couldMatchFilename) false
+    if (!this.couldMatchFilename)
+      return false
     const pattern = this.patternSections[this.patternSections.length-1]
     const len = this.matchSection(pattern, filename)
     return len >= pattern.length
@@ -158,14 +159,9 @@ class FilePathMatcher {
 
 }
 
-exports.FilePathMatcher = FilePathMatcher
-
-let matcher = new FilePathMatcher("**abc**/**/**/*.c")
-let m1 = matcher.matchSubDirectory("abc")
-console.log("m1",m1)
-let m2 = m1.matchSubDirectory("\nsubdir1-")
-console.log("m2",m2)
-let m3 = m2.matchSubDirectory("subdir2")
-console.log("m3",m3)
-console.log("match filename", m3.matchFilename("_*_.c"))
-
+// let m1 = new FilePathMatcher("C-kern/**/api/**/*.h")
+// console.log("m1",m1)
+// let m2 = m1.matchSubDirectory("C-kern")
+// console.log("m2",m2)
+// let m3 = m2.matchSubDirectory("ds")
+// console.log("m3",m3)

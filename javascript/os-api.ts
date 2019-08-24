@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { FilePathMatcher } from "./filepathmatcher";
 
-async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<string[]>
+async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<string[]>
 {
   return new Promise<string[]>( (resolve, reject) => {
     fs.readdir(dirpath, function (err, files) {
@@ -19,13 +19,19 @@ async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<strin
               } else {
                 let result:Promise<string[]>|string[]|undefined = undefined
                 if (stats.isFile()) {
-                  if (matcher.matchFilename(filename)) {
+                  if (matchers.some( (matcher) => matcher.matchFilename(filename))) {
                     result=[filepath]
                   }
                 } else if (stats.isDirectory()) {
-                  let subdirMatcher: FilePathMatcher = matcher.matchSubDirectory(filename)
-                  if (subdirMatcher) {
-                    result=scanDir(filepath, subdirMatcher)
+                  let subdirMatchers: FilePathMatcher[] = []
+                  for (const matcher of matchers) {
+                    const subdirMatcher = matcher.matchSubDirectory(filename)
+                    if (subdirMatcher) {
+                      subdirMatchers.push(subdirMatcher)
+                    }
+                  }
+                  if (subdirMatchers.length) {
+                    result=scanDir(filepath, subdirMatchers)
                   }
                 }
                 resolve(result)
@@ -46,9 +52,7 @@ async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<strin
   })
 }
 
-const dirpath = '.'
-let matcher = new FilePathMatcher("C-kern/**/api/**/*.h")
-
-scanDir(dirpath, matcher).then( files => {
-  console.log(files)
-}).catch( err => console.log(err))
+export const OS_API = {
+  FilePathMatcher,
+  scanDir,
+}

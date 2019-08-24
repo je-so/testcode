@@ -12,7 +12,7 @@ async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<strin
       } else {
         Promise.all( files.map((filename): Promise<string[]|undefined> => {
           const filepath = path.join(dirpath, filename)
-          return new Promise<string[]>( (resolve, reject) => {
+          return new Promise<string[]|undefined>( (resolve, reject) => {
             fs.stat(filepath, (err, stats) => {
               if (err) {
                 reject(new Error(`Unable to get status of file '${filepath}': ${err}`))

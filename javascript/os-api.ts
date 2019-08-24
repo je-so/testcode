@@ -3,10 +3,6 @@ import * as fs from "fs";
 import * as path from "path";
 import { FilePathMatcher } from "./filepathmatcher";
 
-//joining path of directory
-const dirpath = '.'
-let matcher = new FilePathMatcher("C-kern/**/api/**/*.h")
-
 async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<string[]>
 {
   return new Promise<string[]>( (resolve, reject) => {
@@ -49,6 +45,9 @@ async function scanDir(dirpath: string, matcher: FilePathMatcher): Promise<strin
     })
   })
 }
+
+const dirpath = '.'
+let matcher = new FilePathMatcher("C-kern/**/api/**/*.h")
 
 scanDir(dirpath, matcher).then( files => {
   console.log(files)

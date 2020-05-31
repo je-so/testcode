@@ -1,4 +1,4 @@
-import { OS_API } from "./os-api";
+import { OS_API } from "./os-api.ts";
 
 const dirpath = '.'
 let matcher = new OS_API.FilePathMatcher("C-kern/api/math/**/*.h")

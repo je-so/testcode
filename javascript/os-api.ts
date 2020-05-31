@@ -1,7 +1,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import { FilePathMatcher } from "./filepathmatcher";
+import { FilePathMatcher } from "./filepathmatcher.ts";
 
 async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<string[]>
 {

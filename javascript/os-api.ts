@@ -1,55 +1,34 @@
 
-import * as fs from "fs";
-import * as path from "path";
+import * as path from "https://deno.land/std/path/mod.ts";
 import { FilePathMatcher } from "./filepathmatcher.ts";
 
-async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<string[]>
-{
-  return new Promise<string[]>( (resolve, reject) => {
-    fs.readdir(dirpath, function (err, files) {
-      if (err) {
-        reject(new Error(`Unable to scan directory '${dirpath}': ${err}`))
-      } else {
-        Promise.all( files.map((filename): Promise<string[]|undefined> => {
-          const filepath = path.join(dirpath, filename)
-          return new Promise<string[]|undefined>( (resolve, reject) => {
-            fs.stat(filepath, (err, stats) => {
-              if (err) {
-                reject(new Error(`Unable to get status of file '${filepath}': ${err}`))
-              } else {
-                let result:Promise<string[]>|string[]|undefined = undefined
-                if (stats.isFile()) {
-                  if (matchers.some( (matcher) => matcher.matchFilename(filename))) {
-                    result=[filepath]
-                  }
-                } else if (stats.isDirectory()) {
-                  let subdirMatchers: FilePathMatcher[] = []
-                  for (const matcher of matchers) {
-                    const subdirMatcher = matcher.matchSubDirectory(filename)
-                    if (subdirMatcher) {
-                      subdirMatchers.push(subdirMatcher)
-                    }
-                  }
-                  if (subdirMatchers.length) {
-                    result=scanDir(filepath, subdirMatchers)
-                  }
-                }
-                resolve(result)
-              }
-            })
-          })
-        })).then( (files) => {
-          let all: string[] = []
-          for (const file of files)
-            if (file && file.length)
-              all = all.concat(file)
-          resolve(all)
-        }).catch( (err) => {
-          reject(err)
-        });
+async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<string[]> {
+    try {
+      let result: string[] = []
+      for await (const dirEntry of Deno.readDir(dirpath)) {
+        const filename = dirEntry.name
+        const filepath = path.join(dirpath, filename)
+        if (dirEntry.isFile) {
+          if (matchers.some( (matcher) => matcher.matchFilename(filename))) {
+            result.push(filepath)
+          }
+        } else if (dirEntry.isDirectory) {
+          let subdirMatchers: FilePathMatcher[] = []
+          for (const matcher of matchers) {
+            const subdirMatcher = matcher.matchSubDirectory(filename)
+            if (subdirMatcher) {
+              subdirMatchers.push(subdirMatcher)
+            }
+          }
+          if (subdirMatchers.length) {
+            result=result.concat(await scanDir(filepath, subdirMatchers))
+          }
+        }
       }
-    })
-  })
+      return result
+    } catch (e) {
+      throw new Error(`Unable to scan directory '${dirpath}': ${e}`)
+    }
 }
 
 export const OS_API = {

@@ -83,7 +83,7 @@ export class FilePathMatcher {
     let patternPos: number[] = []
     patternPos[0] = 0
     for (const ch of name) {
-      if ('/' === ch) return undefined
+      if ('/' === ch) return -1
       let newPatternPos: number[] = []
       for (let pos of patternPos) {
         if (pos >= pattern.length) continue
@@ -123,19 +123,15 @@ export class FilePathMatcher {
    */
   matchSubDirectory(dirname: string): FilePathMatcher | null {
     let newSectionPos: boolean[] = []
-    let afterSubdirMatch: boolean[] = []
     for (let pos in this.sectionPos) {
-      if (this.afterSubdirMatch[pos])
-        afterSubdirMatch[pos] = true
       const posnum = parseInt(pos)
+      if (this.afterSubdirMatch[pos])
+        newSectionPos[pos] = true
       if (posnum >= this.patternSections.length-1/*last section matches no subdirectory*/) continue
       const section = this.patternSections[pos]
       const len = this.matchSection(section, dirname)
       if (len < section.length) continue
       newSectionPos[posnum+1] = true
-    }
-    for (const pos in afterSubdirMatch) {
-      newSectionPos[pos] = true
     }
     if (newSectionPos.length)
       return new FilePathMatcher({ patternSections: this.patternSections, afterSubdirMatch: this.afterSubdirMatch, sectionPos: newSectionPos})

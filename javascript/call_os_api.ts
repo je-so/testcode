@@ -1,6 +1,6 @@
 import { OS_API } from "./os-api.ts";
 
-const dirpath = '.'
+const dirpath = '/jsprojekt/JS'
 let matcher = new OS_API.FilePathMatcher("C-kern/api/math/**/*.h")
 let matcher2 = new OS_API.FilePathMatcher("C-kern/platform/**/*.c")
 

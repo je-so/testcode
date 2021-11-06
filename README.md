@@ -1,39 +1,8 @@
 Testcode
 ========
 
-This repository contains unrelated stuff and some references to [external articles](reading-list) see [patterns](reading-list/patterns.md), [linux-api](reading-list/linux-api.md).
+This repository contains unrelated stuff and some references to [external articles](reading-list) in particular [patterns](reading-list/patterns.md), [linux-api](reading-list/linux-api.md).
 
-Current Work
-------------
-```javascript
-   const hiddenComputation=new jslib.modules.flow.FlowFunction("if:hidden")
-   hiddenComputation.bind(
-      () => { // compute hidden state of tag
-         const v=param1.value
-         const v2=param3.value
-         const result= v2==="3" || v==="1" || v==="2" || v==="4";
-         return result
-      },
-      param1, param3 // subscribe to value change of input parameters
-   )
-   const tag=jslib.tag
-   const text=jslib.tagText
-   var table=tag("table",{hidden: hiddenComputation},
-      tag("thead",null,
-         tag("tr",null,
-            tag("th",null,text("head 1")),
-            tag("th",null,text("head 2")),
-         )//</tr>
-      ),//</thead>
-      tag("tbody",null,
-         tag("tr",null,
-            tag("td",null,jslib.tagParse("<u>data 1</u>")),
-            tag("td",null,text("data 2")),
-         )//</tr>
-      ),//</tbody>
-   )//</table>
-   document.body.appendChild(table)
-```   
 Parser
 ------
 Prototype algorithm _Parsing with Context_ implemented

@@ -76,7 +76,7 @@ function TEST(value,cmp,expect,errormsg) {
          let hasPassed=false;
          try { hasPassed=cmp(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
          if (hasPassed !== true)
-            THROW(value,expect,`${errormsg} (failed: ${cmp.name??"cmp"}(value,expect) == true`)
+            THROW(value,expect,`${errormsg} (failed: ${cmp.name??"cmp"}(value,expect) == true)`)
       }
       else if (Array.isArray(value)) {
          if (value.length !== expect.length)

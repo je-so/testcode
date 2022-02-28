@@ -12,7 +12,7 @@ const runWithinContext=(name,logFct,runTestFct) => {
    testContext.pop()
 }
 
-/** Throws an Error exception and adds arguments value(value to under test), and expect(expected result) to be output to the log. */
+/** Throws an Error exception and adds arguments value(value to test for), and expect(expected result) to be output to the log. */
 function THROW(value,expect,errormsg) {
    addFailedValue("value", value)
    addFailedValue("expect", expect)

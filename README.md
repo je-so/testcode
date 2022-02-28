@@ -16,19 +16,20 @@ is to build the deterministic version for the left and right hand side of `&!` a
 
 JavaScript 
 ----------
-[Test Scheduler](https://htmlpreview.github.io/?https://github.com/je-so/testcode/blob/master/html/syncrun.html)
-
-[Test Framework in 190 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.jsm)
+[Test Framework in 110 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.js)
 ```javascript
-    TEST.runTest(TEST.UNIT, "value & button", function (TEST) {
-         var V = TEST.Value
-         var inputnr = document.querySelector("input[type=number]")
-         var button = document.querySelector("input[type=button]")
-         inputnr.value = ""
-         TEST( V(inputnr.value) == "", "input is empty")
-         button.click()
-         TEST( V(inputnr.value) == "10", "input is set to minimum value")
-    })
+   <script type="module">
+      import { RUN_TEST, TEST } from "./jslib/test.js"
+      RUN_TEST(unittest_of_some_module)
+      function cmpUser(o1,o2) { return o1.name === o2.name }
+      function unittest_of_some_module() {
+         TEST(1,"==",1,"This error message is never shown")
+         TEST(1,"<",1,"This error message is shown")
+         TEST(() => { throw Error("abc") },"throw","abc","Expect exception with message abc")
+         TEST(() => { throw Error("abc") ; return 3; },"==",3,"Expect function returning 3")
+         TEST({name:"JOhn"},cmpUser,{name:"John"},"Both logged in users must be equal")
+      }
+   </script>
 ```
 
 OS API

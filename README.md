@@ -18,27 +18,27 @@ JavaScript
 ----------
 [Test Framework in 110 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.js)
 ```javascript
-   <script type="module">
-      import { RUN_TEST, TEST } from "./jslib/test.js"
-      RUN_TEST(unittest_of_some_module)
-      function unittest_of_some_module() {
-         TEST(1,"==",1,"no message shown")
-         TEST(1,"<",1,"message shown")
-         TEST(() => { throw Error("abc") },"throw","abc","test for exception with message abc")
-         // use cmpUser to compare objects
-         const cmpUser=(o1,o2) => (o1.name === o2.name)
-         TEST({name:"JOhn"},cmpUser,{name:"John"},"test for same user (is not)")
-         // or use "user"
-         TEST.setCompare("user",cmpUser,true/*return value for success*/)
-         TEST({name:"JOhn"},"user",{name:"John"},"test for same user")
-         // compare array and show `value[2]` in error message
-         const a=[5,10,15]
-         for (let i=0; i<a.length; ++i)
-            TEST(a[i],"==",5*(i+1)+(i==2),"index=2 should cause an error",`[${i}]`)
-         // but TEST does array comparison for us
-         TEST([[1,2],[3,4,5]],"==",[[1,2],[3,4,6]],"digits 5 and 6 differ")
-      }
-   </script>
+<script type="module">
+import { RUN_TEST, TEST } from "./jslib/test.js"
+RUN_TEST(unittest_of_some_module)
+function unittest_of_some_module() {
+   TEST(1,"==",1,"no message shown")
+   TEST(1,"<",1,"message shown")
+   TEST(() => { throw Error("abc") },"throw","abc","test for exception with message abc")
+   // use cmpUser to compare objects
+   const cmpUser=(o1,o2) => (o1.name === o2.name)
+   TEST({name:"JOhn"},cmpUser,{name:"John"},"test for same user (is not)")
+   // or use "user"
+   TEST.setCompare("user",cmpUser,true/*return value for success*/)
+   TEST({name:"JOhn"},"user",{name:"John"},"test for same user")
+   // compare array and show `value[2]` in error message
+   const a=[5,10,15]
+   for (let i=0; i<a.length; ++i)
+      TEST(a[i],"==",5*(i+1)+(i==2),"index=2 should cause an error",`[${i}]`)
+   // but TEST does array comparison for us
+   TEST([[1,2],[3,4,5]],"==",[[1,2],[3,4,6]],"digits 5 and 6 differ")
+}
+</script>
 ```
 
 OS API

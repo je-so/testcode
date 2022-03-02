@@ -8,7 +8,7 @@ const cmpMap=new Map([
    ["<=",{ cmp:(v,e)=>(v<= e), ok:true }], [">=",{ cmp:(v,e)=>(v>= e), ok:true }],
    ["<", { cmp:(v,e)=>(v < e), ok:true }], [">", { cmp:(v,e)=>(v > e), ok:true }],
 ])
-/** Adds a named value in case of failure to be output after an error describing exception. */
+/** In case of failure adds a named value which is logged before the error describing exception. */
 const addFailedValue=(name,value) => currentContext().values.push({name, value})
 const currentContext=() => { if (testContext.length) return testContext.at(-1); throw new Error("no test context - call RUN_TEST first"); }
 const log=(...args) => currentContext().log(...args)

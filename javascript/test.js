@@ -20,19 +20,19 @@ const runWithinContext=(name,logFct,runTestFct) => {
    testContext.pop()
 }
 
-/** Throws an Error exception and adds arguments value(value to test for), and expect(expected result) to be output to the log. */
-function THROW(value,expect,failedCmp,vindex="",eindex="") {
-   addFailedValue(`value${vindex}`, value)
-   addFailedValue(`expect${eindex}`, expect)
+/** Throws an Error exception and adds key,value pairs of failedValues to the log. */
+function THROW(failedCmp,failedValues={}) {
+   for (const key of Object.keys(failedValues))
+      addFailedValue(key,failedValues[key])
    throw new Error(failedCmp)
 }
 
-/** Counts failure of a single TEST call and logs an error exception for debugging (called from within TEST). */
-function FAILED(failedCmp,errormsg,unexpected_exception) {
+/** Counts failure of a single TEST call,  logs errormsg and also key,value pairs of failedValues (called from within TEST). */
+function FAILED(failedCmp,errormsg,failedValues={}) {
    let context=currentContext()
    context.failedCount ++
-   if (unexpected_exception !== undefined)
-      addFailedValue("unexpected_exception",unexpected_exception)
+   for (const key of Object.keys(failedValues))
+      addFailedValue(key,failedValues[key])
    log(`${context.name}: TEST failed: ${failedCmp}`)
    context.values.forEach( v => log(v.name+":","{",v.value,"}"))
    context.values.length=0
@@ -44,7 +44,7 @@ const PASSED=() => currentContext().passedCount ++
 
 /** Runs a complete test unit (i.e. unittest_of_module_A) and logs the number of TEST calls which passed or failed. */
 const RUN_TEST=(testFct,logFct) => runWithinContext(testFct.name,logFct, (context) => {
-   try { testFct() } catch(e) { FAILED("unexpected exception","RUN_TEST aborted",e) }
+   try { testFct() } catch(e) { FAILED("unexpected exception","RUN_TEST aborted",{unexpected_exception:e}) }
    // log test result
    if (context.failedCount === 0)
       log(`${context.name}: all ${context.passedCount} tests PASSED`)
@@ -62,20 +62,20 @@ const RUN_TEST=(testFct,logFct) => runWithinContext(testFct.name,logFct, (contex
  * with arguments (value,expect) returning true in case of success or false in case of failure. */
 function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
    try {
-      if (typeof value === "function")
+      if (typeof value === "function") {
          value=value()
-      if (cmp === "throw")
-         return FAILED("no exception thrown",errormsg)
+      }
+      if (cmp === "throw") {
+         return FAILED("no exception thrown", errormsg, { [`expect${eindex}`]: expect })
+      }
    }
    catch(e) {
-      if (cmp !== "throw") {
-         FAILED("unexpected exception",errormsg,e)
-      }
-      else if (e.message !== expect) {
-         addFailedValue("exception.message",e.message)
-         addFailedValue("expect",expect)
-         FAILED("exception.message == expect",errormsg)
-      }
+      if (cmp !== "throw")
+         FAILED("unexpected exception", errormsg, { [`expect${eindex}`]:expect, unexpected_exception:e })
+      else if (e.message !== expect)
+         FAILED("exception.message == expect", errormsg, { "exception.message":e.message, [`expect${eindex}`]:expect, exception:e })
+      else
+         PASSED()
       return
    }
 
@@ -84,7 +84,7 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
    function doTest(value,expect,vindex,eindex) {
       if (Array.isArray(value) && Array.isArray(expect)) {
          if (value.length !== expect.length)
-            THROW(value,expect,`==(value${vindex}.length,expect${eindex}.length)`,vindex,eindex)
+            THROW(`==(value${vindex}.length,expect${eindex}.length)`,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
          for (var i=0; i<value.length; ++i) {
             doTest(value[i],expect[i],vindex+`[${i}]`,eindex+`[${i}]`) // vindex and eindex reflect comparison of sub-elements
          }
@@ -92,14 +92,14 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
       else {
          const isCmpFct=(typeof cmp === "function")
          if (!(isCmpFct || currentContext().cmpMap.has(cmp)))
-            THROW(value,expect,`TEST argument cmp '${String(cmp)}' unsupported`)
+            THROW(`TEST argument cmp '${String(cmp)}' unsupported`,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
          const {cmp: cmpFct,ok: SUCCESS}=(isCmpFct ? {cmp,ok:true} : currentContext().cmpMap.get(cmp))
          let cmpResult=!SUCCESS
          try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
          if (cmpResult !== SUCCESS) {
             if (typeof cmpResult === "string")
-               THROW(value,expect,cmpResult)
-            THROW(value,expect,`${isCmpFct?cmpFct.name||"cmp":String(cmp)}(value${vindex},expect${eindex})`,vindex,eindex)
+               THROW(cmpResult,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
+            THROW(`${isCmpFct?cmpFct.name||"cmp":String(cmp)}(value${vindex},expect${eindex})`,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
          }
       }
    }

@@ -70,13 +70,13 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
       }
    }
    catch(e) {
-      if (cmp !== "throw")
-         FAILED("unexpected exception", errormsg, { [`expect${eindex}`]:expect, unexpected_exception:e })
-      else if (e.message !== expect)
-         FAILED("exception.message == expect", errormsg, { "exception.message":e.message, [`expect${eindex}`]:expect, exception:e })
-      else
-         PASSED()
-      return
+      if (cmp !== "throw") {
+         return FAILED("unexpected exception", errormsg, { [`expect${eindex}`]:expect, unexpected_exception:e })
+      }
+      else if (e.message !== expect) {
+         return FAILED("exception.message == expect", errormsg, { "exception.message":e.message, [`expect${eindex}`]:expect, exception:e })
+      }
+      return PASSED()
    }
 
    try { doTest(value,expect,vindex,eindex); PASSED(); } catch(e) { FAILED(e.message,errormsg) }
@@ -97,9 +97,9 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
          let cmpResult=!SUCCESS
          try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
          if (cmpResult !== SUCCESS) {
-            if (typeof cmpResult === "string")
-               THROW(cmpResult,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
-            THROW(`${isCmpFct?cmpFct.name||"cmp":String(cmp)}(value${vindex},expect${eindex})`,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
+            const failedCmp=( typeof cmpResult === "string" ? cmpResult
+                            : `${isCmpFct?cmpFct.name||"==":String(cmp)}(value${vindex},expect${eindex})`)
+            THROW(failedCmp,{ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
          }
       }
    }

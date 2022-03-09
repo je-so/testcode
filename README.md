@@ -19,9 +19,9 @@ JavaScript
 [Test Framework in 110 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.js)
 ```javascript
 <script type="module">
-import { RUN_TEST, TEST } from "./jslib/test.js"
+import { RUN_TEST } from "./jslib/test.js"
 RUN_TEST(unittest_of_some_module)
-function unittest_of_some_module() {
+function unittest_of_some_module(TEST) {
    TEST(1,"==",1,"no message shown")
    TEST(1,"<",1,"message shown")
    TEST(() => { throw Error("abc") },"throw","abc","test for exception with message abc")

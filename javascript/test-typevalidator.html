@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <style>
+  </style>
+</head>
+<body>
+   <script type="module">
+      import * as tv from "./typevalidator.js"
+      import { RUN_TEST } from "./test.js"
+      RUN_TEST(tv.unittest)
+      tv.union(tv.string,tv.tuple(tv.object,tv.number)).assertType([1,2],"x")
+   </script>
+</body>
+</html>

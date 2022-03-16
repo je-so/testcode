@@ -2,6 +2,33 @@
    (c) 2022 Jörg Seebohn */
 
 const ownKeys=Reflect.ownKeys
+const strIndex=(key) => {
+   return (typeof key === "symbol" || /^([1-9][0-9]*|0)$/.test(key)
+          ? "[" + String(key) + "]"
+          : /^([$_a-zA-Z][$_a-zA-Z0-9]*)$/.test(key)
+          ? "." + key
+          : "[" + strLiteral(key) + "]")
+}
+/** Call it with (["key1","key2",3]) or ("key1","key2",3) to get ".key1.key2[3]". */
+const strIndices=(...keys) => {
+   const path=(Array.isArray(keys[0])? keys[0]:keys).reduce((str,k) => str+strIndex(k), "")
+   return path
+}
+const strKey=(key) => {
+   return (typeof key === "symbol"
+          ? "[" + String(key) + "]"
+          : /^([$_a-zA-Z][$_a-zA-Z0-9]*|[1-9][0-9]*|0)$/.test(key)
+          ? key
+          : strLiteral(key))
+}
+const strLiteral=(value)=>"'"+String(value).replace(/['\\]/g,c=>"\\"+c)+"'"
+const strObjectType=(value) => { return value.constructor?.name ?? "object" }
+const strType=(value,maxdepth=2,maxlen=130) => {
+   return new TypeStringifier(maxdepth,maxlen).toString(value)
+}
+const strValue=(value,maxdepth=2,maxlen=130) => {
+   return new Stringifier(maxdepth,maxlen).toString(value)
+}
 
 class Stringifier {
    constructor(maxdepth,maxlen) {
@@ -61,7 +88,12 @@ class Stringifier {
 
    strKey(value) { this.append(strKey(value)) }
 
-   strPrimitive(type,value) { this.append(type === "string" ? strLiteral(value) : String(value)) }
+   strPrimitive(type,value) {
+      this.append( type === "string" ? strLiteral(value) :
+         type === "bigint" ? String(value) + "n" :
+         String(value)
+      )
+   }
 
    strFunction(value) {
       if (value.name)
@@ -125,40 +157,6 @@ class TypeStringifier extends Stringifier {
    strObject(value) { this.append(strObjectType(value)); super.strObject(value) }
 }
 
-const strObjectType=(value) => { return value.constructor?.name ?? "object" }
-
-const strType=(value,maxdepth=2,maxlen=130) => {
-   return new TypeStringifier(maxdepth,maxlen).toString(value)
-}
-
-const strValue=(value,maxdepth=2,maxlen=130) => {
-   return new Stringifier(maxdepth,maxlen).toString(value)
-}
-
-const strLiteral=(value)=>"'"+String(value).replace(/['\\]/g,c=>"\\"+c)+"'"
-
-const strKey=(key) => {
-   return (typeof key === "symbol"
-          ? "[" + String(key) + "]"
-          : /^([$_a-zA-Z][$_a-zA-Z0-9]*|[1-9][0-9]*|0)$/.test(key)
-          ? key
-          : strLiteral(key))
-}
-
-const strIndex=(key) => {
-   return (typeof key === "symbol" || /^([1-9][0-9]*|0)$/.test(key)
-          ? "[" + String(key) + "]"
-          : /^([$_a-zA-Z][$_a-zA-Z0-9]*)$/.test(key)
-          ? "." + key
-          : "[" + strLiteral(key) + "]")
-}
-
-/** Call it with (["key1","key2",3]) or ("key1","key2",3) to get ".key1.key2[3]". */
-const strIndices=(...keys) => {
-   const path=(Array.isArray(keys[0])? keys[0]:keys).reduce((str,k) => str+strIndex(k), "")
-   return path
-}
-
 /** Stores information about current argument, namely its value and name or property key.
   * This information is called the validation context. */
 class ValidationContext {
@@ -212,7 +210,7 @@ class TypeValidator {
 
    validateType(arg,argName) { return this.validateWith(new ValidationContext(arg,argName)) }
 
-   /** Validates property with key i of argument context.arg. */
+   /** Validates property i of argument context.arg. */
    validateProperty(context,i) { return this.validateWith(context.childContext(i)) }
 
    /** Returns undefined | TypeError.
@@ -407,12 +405,13 @@ function unittest_typevalidator(TEST) {
 
    testFunctions()
    testSimpleTV()
-   // TODO: testComplexTV()
+   testComplexTV()
 
    function testFunctions() {
       const syms=[ Symbol(0), Symbol(1), Symbol(2), Symbol(3) ]
       const o1={[syms[1]]:'s1',[syms[2]]:'s2',b:'b',a:'a',1:1,0:0,'x and y':'xy'}
       const oinherit=Object.create(o1)
+      function TestType() { this.name="test" }
 
       // TEST ownKeys
       TEST(ownKeys({}),"==",[],
@@ -474,11 +473,47 @@ function unittest_typevalidator(TEST) {
       TEST(strIndices(["o",1,",''","id",syms[1]]),"==",".o[1][',\\'\\''].id[Symbol(1)]","multiple properties")
       TEST(strIndices("id_",2,"\\","ty",syms[2]),"==",".id_[2]['\\\\'].ty[Symbol(2)]","multiple properties")
 
+      // TEST strLiteral
+      // TODO: strLiteral
+
+      // TEST strObjectType
+      // TODO: strObjectType
+
       // TEST strType
-      // TODO:
+      TEST(strType(undefined),"==","undefined","type of undefined value")
+      TEST(strType(null),"==","null","type of null value")
+      TEST(strType(false),"==","boolean","type of boolean value")
+      TEST(strType(true),"==","boolean","type of boolean value")
+      TEST(strType(1),"==","number","type of number value")
+      TEST(strType(1n),"==","bigint","type of bigint value")
+      TEST(strType({},0),"==","Object","type of object is constructor name")
+      TEST(strType([],0),"==","Array","type of array value")
+      TEST(strType(new TestType(),0),"==","TestType","type of object is constructor name")
+      TEST(strType(TestType),"==","function","type of named function")
+      TEST(strType(()=>true),"==","function","type of function expression")
+      TEST(strType({a:1,b:"2",[Symbol(1)]:[]}),"==","Object{a:number,b:string,[Symbol(1)]:Array}","deep type of object")
+      TEST(strType(new TestType()),"==","TestType{name:string}","deep type of object")
+      TEST(strType([1,"2",true,[]]),"==","[number,string,boolean,Array]","deep type of array is tuple")
+      TEST(strType([[1,null]],3),"==","[[number,null]]","deep type of array of tuple")
 
       // TEST strValue
-      // TODO:
+      TEST(strValue(undefined),"==","undefined","undefined value")
+      TEST(strValue(null),"==","null","null value")
+      TEST(strValue(false),"==","false","boolean value")
+      TEST(strValue(true),"==","true","boolean value")
+      TEST(strValue(0),"==","0","number value")
+      TEST(strValue(12),"==","12","number value")
+      TEST(strValue(1234n),"==","1234n","bigint value")
+      TEST(strValue({},0),"==","{}","empty object value")
+      TEST(strValue(new TestType(),0),"==","{...}","non empty object")
+      TEST(strValue([],0),"==","[]","empty array value")
+      TEST(strValue([1],0),"==","[...]","non empty array value")
+      TEST(strValue(TestType),"==","function TestType","value of named function")
+      TEST(strValue(()=>true),"==","()=>{}","value of function expression")
+      TEST(strValue({a:1,b:"2",[Symbol(1)]:[]}),"==","{a:1,b:'2',[Symbol(1)]:[]}","deep value of object")
+      TEST(strValue(new TestType()),"==","{name:'test'}","deep value of object")
+      TEST(strValue([1,"2",true,[],[1]]),"==","[1,'2',true,[],[...]]","deep value of array")
+      TEST(strValue([[1,null,[],[1]]],3),"==","[[1,null,[],[...]]]","deep value of array of array of array")
    }
 
    function testSimpleTV() {
@@ -488,7 +523,7 @@ function unittest_typevalidator(TEST) {
       const testTypes=[
          TT(null,"null"), TT(undefined,"undefined"),
          TT(true,"boolean","true"), TT(false,"boolean","false"),
-         TT(10,"number","10"), TT(1_000_000_000_000n,"bigint",1_000_000_000_000),
+         TT(10,"number","10"), TT(1_000_000_000_000n,"bigint",1_000_000_000_000+"n"),
          TT("abc","string","'abc'"), TT(Symbol("symbol"),"symbol","Symbol(symbol)"),
          TT([],"Array","[]"),
          TT({},"Object","{}"), TT({ a:1 },"Object","{a:1}"), TT({ a:1,b:2 },"Object","{a:1,b:2}"),
@@ -595,6 +630,11 @@ function unittest_typevalidator(TEST) {
       }
    } // testSimpleTV
 
+   function testComplexTV() {
+
+      // TODO: implement testComplexTV
+
+   } // testComplexTV
 }
 
 export {

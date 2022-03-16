@@ -11,7 +11,11 @@
       import * as tv from "./typevalidator.js"
       import { RUN_TEST } from "./test.js"
       RUN_TEST(tv.unittest)
-      tv.union(tv.string,tv.tuple(tv.object,tv.number)).assertType([1,2],"x")
+      // tv.union(tv.string,tv.tuple(tv.object,tv.number)).assertType([1,2],"x")
+      class Test { constructor() { this.name="test"; } }
+      var test=new Test()
+      console.log((tv.and(tv.key1)).validateType(Test,"test"))
+      console.log((tv.key(tv.any,"a")).validateType({[Symbol(1)]:1},"test"))
    </script>
 </body>
 </html>

@@ -11,15 +11,20 @@
       import * as tv from "./typevalidator.js"
       import { RUN_TEST } from "./test.js"
       RUN_TEST(tv.unittest)
-      // tv.union(tv.string,tv.tuple(tv.object,tv.number)).assertType([1,2],"x")
       class Test { constructor() { this.name="test"; } }
       var test=new Test()
+      console.log((tv.number).validateType(Test,"test").message)
       console.log(tv.or(tv.number).validateType(Test,"test").message)
-      console.log(tv.or(tv.key(tv.any,"a")).validateType({[Symbol(1)]:1},"test")?.message)
-      console.log(tv.or(tv.key(tv.key(tv.number,"b"),"a")).validateType({a:{b:1n}},"test")?.message)
-      console.log(tv.or(tv.and(tv.object,tv.instance(Test),tv.key1)).validateType({a:1},"test")?.message)
-      console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateType([1,2,3,"x",4],"test")?.message)
-      console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateType(1,"test")?.message)
+      console.log((tv.key(tv.any,"a")).validateType({[Symbol(1)]:1},"test").message)
+      console.log(tv.or(tv.key(tv.any,"a")).validateType({[Symbol(1)]:1},"test").message)
+      console.log((tv.key(tv.key(tv.number,"b"),"a")).validateType({a:{b:1n}},"test").message)
+      console.log(tv.or(tv.key(tv.key(tv.number,"b"),"a")).validateType({a:{b:1n}},"test").message)
+      console.log((tv.key(tv.key(tv.key(tv.number,"c"),"b"),"a")).validateType({a:{b:{c:1n}}},"test").message)
+      console.log(tv.or(tv.key(tv.key(tv.key(tv.number,"c"),"b"),"a")).validateType({a:{b:{c:1n}}},"test").message)
+      console.log(tv.or(tv.and(tv.object,tv.instance(Test),tv.key1)).validateType({a:1},"test").message)
+      console.log((tv.typedarray(tv.or(tv.number,tv.undefined))).validateType([1,2,3,"x",4],"test").message)
+      console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateType([1,2,3,"x",4],"test").message)
+      console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateType(1,"test").message)
 
       // TODO: range 1,"<=","<",2
       // TODO: set

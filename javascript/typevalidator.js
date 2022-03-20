@@ -183,13 +183,13 @@ class ValidationError {
       this._msg=err.msg
       this.child=err.child
    }
-   // A true value means validation of argument failed (not a nested property). It does not mean that the validator is the top most (i.e a UnionValidator validates at the same depth as its childs)
-   get isRoot() { return this.context.parent === null }
+   // Returns true in case error occurred in child context.
+   get isProp() { return this.context.parent !== null }
    get key() { return this.context.name }
    get msg() { return this._msg ?? `of type '${stripBrackets(this.expect)}' not '${stripBrackets(this.found)}'` }
    get value() { return strValue(this.context.arg,Math.max(1,this.depth)) }
    get path() { return this.context.accessPath() }
-   get message() { return `Expect argument${this.isRoot?"":" property"} '${this.path}' ${this.msg} (value: ${this.value})` }
+   get message() { return `Expect argument${this.isProp?" property":""} '${this.path}' ${this.msg} (value: ${this.value})` }
 }
 
 /** Stores information about current argument, namely its value and name or property key.
@@ -399,19 +399,18 @@ class InstanceValidator extends TypeValidator {
 class KeyValidator extends TypeValidator {
    constructor(typeValidator=TVany,keys) { super(); this.typeVal=typeValidator; this.keys=keys; }
    expectKey(key) { return `»having property ${strLiteral(key)}«` }
-   expectErr(error) { return `{${strKey(error.key)}:${error.expect}}` }
-   found(error) { return `{${error.key}:${error.found}}`}
-   missing(key) { return `»missing property ${strLiteral(key)}«` }
+   missingKey(key) { return `»missing property ${strLiteral(key)}«` }
+   expectProp(error) { return `{${strKey(error.key)}:${error.expect}}` }
+   foundProp(error) { return `{${error.key}:${error.found}}`}
    msg(key) { return `»to have property ${strLiteral(key)}«` }
    wrapError(context,error) {
-      return (error.isRoot ? error
-         : context.error({expect:this.expectErr(error), found:this.found(error), depth:error.depth, child:error}))
+      return context.error({expect:this.expectProp(error), found:this.foundProp(error), depth:error.depth, child:error})
    }
    validate(context) {
       const arg=Object(context.arg)
       for (const key of (this.keys.length>0 ? this.keys : ownKeys(arg))) {
          if (! (key in arg))
-            return context.error({expect:this.expectKey(key),found:this.missing(key),msg:this.msg(key) })
+            return context.error({expect:this.expectKey(key),found:this.missingKey(key),msg:this.msg(key) })
          if (this.typeVal.validateProperty(context,key) !== undefined)
             return this.wrapError(context,this.typeVal.validateProperty(context,key))
       }

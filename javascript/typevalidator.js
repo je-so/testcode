@@ -1,9 +1,34 @@
 /* Validate argument values to be of correct type.
    (c) 2022 Jörg Seebohn */
 
+/* The module consists of functions to represent types and values as strings.
+ * The class Stringifier does the conversion to a value.
+ * The class TypeStringifier overwrites some methods to stringify a value into its type.
+ *
+ * Then there is class ValidationError which describes any found type error.
+ * ValidationError reads error information from ValidationContext and an additional
+ * argument object describing {expect: "expected type", found:"(unexpected) found type" }.
+ * The generated error message is always the same.
+ * Use {msg: "own message"} to overwrite the second half of the message.
+ * See ValidationError.message for the generated error message.
+ *
+ * Why this stringent error template?
+ * The reason is that a UnionValidator uses A LIST OF TypeValidator to select a matching one.
+ * If all validators fail the union validators merges the error messages into one.
+ * To be able to do that the format must always be the same.
+ * The union validator shows for example the error message
+ * > "Expect argument 'test' of type 'string|number' not 'bigint' (value: 1n)""
+ * if called with TVunion(TVstring,TVnumber).assertType(1n,"test")
+ *
+ * TypeValidator offers the method assertType to test a value for obeying a certain type structure.
+ * It throws a TypeError exception in case of an error.
+ * To get only the error object use method validateArg.
+ * In case of no validation error value undefined is returned.
+ */
+
 /** Returns own properties as array (numbers in ascending order, string properties, and then symbol properties in defined order.) */
 const ownKeys=Reflect.ownKeys
-/** Returns string representation of access of object property whose name is stored in argument key. */
+/** Returns string representation of access of object property [key]. */
 const strIndex=(key) => {
    return (typeof key === "symbol" || /^([1-9][0-9]*|0)$/.test(key)
           ? "[" + String(key) + "]"

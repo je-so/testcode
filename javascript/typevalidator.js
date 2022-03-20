@@ -42,14 +42,11 @@ const strValue=(value,maxdepth=1,maxlen=130) => {
 }
 /** Removes leading and trailing brackets */
 const stripBrackets=(str) => {
-   if (str === undefined)
-      debugger
    let nr=0, end=str.length-1
    while (str[nr]==='(' && str[end-nr]===')')
       ++nr
    return nr ? str.substring(nr,str.length-nr) : str
 }
-
 
 
 class Stringifier {
@@ -222,6 +219,8 @@ class ValidationContext {
    }
 
    get name() { return (typeof this._name === "function" ? this._name() : this._name) }
+
+   error(err) { return new ValidationError(this,err) }
 }
 
 class TypeValidator {
@@ -241,26 +240,19 @@ class TypeValidator {
    }
 
    /** Returns undefined | ValidationError */
-   validateType(arg,argName) { return this.originalError(this.validateWith(new ValidationContext(arg,argName))) }
+   validateType(arg,argName) { return this.originalError(this.validate(new ValidationContext(arg,argName))) }
 
    /** Validates property i of argument context.arg. */
-   validateProperty(context,i) { return this.validateWith(context.childContext(i)) }
+   validateProperty(context,i) { return this.validate(context.childContext(i)) }
 
    /** Returns undefined | ValidationError
-     * You could add a debug function to typeValidator for testing.
-     * This template function calls _validate which must be implemented in a derived subtype. */
-   validateWith(context) {
-      const validationResult=this._validate(context)
-      this.debug?.(validationResult)
-      if (validationResult !== undefined && validationResult !== true) {
-         if (validationResult === false)
-            return this.error(context,{expect:this.expect,found:strType(context.arg,0)})
-         else
-            return validationResult
-      }
-      /* OK */
+     * This function must be implemented in a derived subtype. */
+   validate(context) {
+      return context.error({expect:"»implementation in subtype",found:"»not implemented«"})
    }
 
+   /** Ensures that top level errors like "expect argument A of type '{a:{b:{c:number}}}'"
+     * are shown as "expect argument property A.a.b.c of type 'number'" (if possible). */
    originalError(error) {
       if (error) {
          while (error.child)
@@ -293,7 +285,10 @@ class TypeValidator {
       return lp + list + rp
    }
 
-   error(context,err) { return new ValidationError(context,err) }
+   errorIfNot(context,condition) {
+      if (!condition)
+         return context.error({expect:this.expect,found:strType(context.arg,0)})
+   }
 
    // merge errors
    mergeErrors(context,lp,delim,rp,errors) {
@@ -310,79 +305,79 @@ class TypeValidator {
 
 class AnyValidator extends TypeValidator {
    get expect() { return "any" }
-   _validate() { } // validates everything
+   validate() { } // validates everything
 }
 class ArrayValidator extends TypeValidator {
    get expect() { return "Array" }
-   _validate({arg}) { return Array.isArray(arg) }
+   validate(context) { return this.errorIfNot(context,Array.isArray(context.arg)) }
 }
 class BigintValidator extends TypeValidator {
    get expect() { return "bigint" }
-   _validate({arg}) { return typeof arg === "bigint" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "bigint") }
 }
 class BooleanValidator extends TypeValidator {
    get expect() { return "boolean" }
-   _validate({arg}) { return typeof arg === "boolean" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "boolean") }
 }
 class ConstructorValidator extends TypeValidator {
    get expect() { return "constructor" }
-   _validate({arg}) {
+   validate(context) {
       // Reflect.construct expects 3rd arg of type newTarget (== constructor)
-      try { Reflect.construct(Object, [], arg) } catch(e) { return false }
+      try { Reflect.construct(Object, [], context.arg) } catch(e) { return this.errorIfNot(context,false) }
    }
 }
 class FunctionValidator extends TypeValidator {
    get expect() { return "function" }
-   _validate({arg}) { return typeof arg === "function" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "function") }
 }
 class NullValidator extends TypeValidator {
    get expect() { return "null" }
-   _validate({arg}) { return arg === null }
+   validate(context) { return this.errorIfNot(context,context.arg === null) }
 }
 class NumberValidator extends TypeValidator {
    get expect() { return "number" }
-   _validate({arg}) { return typeof arg === "number" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "number") }
 }
 class ObjectValidator extends TypeValidator {
    get expect() { return "object" }
-   _validate({arg}) { return typeof arg === "object" && arg !== null }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "object" && context.arg !== null) }
 }
 class KeyCount1Validator extends TypeValidator {
    get expect() { return "ownKeys(@)==1" }
-   _validate(context) {
+   validate(context) {
       const nrOfKeys=ownKeys(Object(context.arg)).length
       if (nrOfKeys !== 1)
-         return this.error(context,{expect:this.expect,found:`ownKeys(@)==${ownKeys(Object(context.arg))}`,msg:`to have 1 property not ${nrOfKeys}`})
+         return context.error({expect:this.expect,found:`ownKeys(@)==${ownKeys(Object(context.arg))}`,msg:`to have 1 property not ${nrOfKeys}`})
    }
 }
 class KeyStringValidator extends TypeValidator {
    get expect() { return "{[string]:any}" }
-   _validate(context) {
+   validate(context) {
       if (Object.getOwnPropertySymbols(Object(context.arg)).length !== 0)
-         return this.error(context,{expect:this.expect,found:"{[symbol]:any}"})
+         return context.error({expect:this.expect,found:"{[symbol]:any}"})
    }
 }
 /** Reference types or complex types are usually mutable (null is excluded). */
 class ReferenceValidator extends TypeValidator {
    get expect() { return "»reference«" }
-   _validate({arg}) { return arg != null && (typeof arg === "object" || typeof arg === "function") }
+   validate(context) { return this.errorIfNot(context,context.arg!=null && (typeof context.arg==="object" || typeof context.arg==="function")) }
 }
 class StringValidator extends TypeValidator {
    get expect() { return "string" }
-   _validate({arg}) { return typeof arg === "string" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "string") }
 }
 class SymbolValidator extends TypeValidator {
    get expect() { return "symbol" }
-   _validate({arg}) { return typeof arg === "symbol" }
+   validate(context) { return this.errorIfNot(context,typeof context.arg === "symbol") }
 }
 class UndefinedValidator extends TypeValidator {
    get expect() { return "undefined" }
-   _validate({arg}) { return arg === undefined }
+   validate(context) { return this.errorIfNot(context,context.arg === undefined) }
 }
 /** Value types or primitive types are always immutable (excluding null and undefined). */
 class ValueValidator extends TypeValidator {
    get expect() { return "»value«" }
-   _validate({arg}) { return arg != null && typeof arg !== "object" && typeof arg !== "function" }
+   validate(context) { return this.errorIfNot(context,context.arg!=null && typeof context.arg!=="object" && typeof context.arg!=="function") }
 }
 
 /////////////////
@@ -390,32 +385,33 @@ class ValueValidator extends TypeValidator {
 
 class AndValidator extends TypeValidator {
    constructor(typeValidators) { super(); this.typeVals=typeValidators }
-   get expect() { return this.typeList("(","&",")",this.typeVals) }
-   _validate(context) {
-      const error=this.typeVals.reduce((err,v) => err?err:v.validateWith(context), undefined)
+   // get expect() { return this.typeList("(","&",")",this.typeVals) }
+   validate(context) {
+      const error=this.typeVals.reduce((err,v) => err?err:v.validate(context), undefined)
       return error
    }
 }
 class InstanceValidator extends TypeValidator {
    constructor(newTarget) { super(); this.newTarget=newTarget; }
    get expect() { return `class ${this.newTarget.name}` }
-   _validate({arg}) { return arg instanceof this.newTarget }
+   validate(context) { return this.errorIfNot(context,context.arg instanceof this.newTarget) }
 }
 class KeyValidator extends TypeValidator {
    constructor(typeValidator=TVany,keys) { super(); this.typeVal=typeValidator; this.keys=keys; }
-   expect(key) { return `{${key}:${this.typeVal.expect}}` }
+   expectKey(key) { return `»having property ${strLiteral(key)}«` }
+   expectErr(error) { return `{${strKey(error.key)}:${error.expect}}` }
    found(error) { return `{${error.key}:${error.found}}`}
    missing(key) { return `»missing property ${strLiteral(key)}«` }
    msg(key) { return `»to have property ${strLiteral(key)}«` }
    wrapError(context,error) {
       return (error.isRoot ? error
-         : this.error(context, {expect:this.expect(error.key), found:this.found(error), depth:error.depth, child:error}))
+         : context.error({expect:this.expectErr(error), found:this.found(error), depth:error.depth, child:error}))
    }
-   _validate(context) {
+   validate(context) {
       const arg=Object(context.arg)
       for (const key of (this.keys.length>0 ? this.keys : ownKeys(arg))) {
          if (! (key in arg))
-            return this.error(context,{expect:this.expect(key),found:this.missing(key),msg:this.msg(key) })
+            return context.error({expect:this.expectKey(key),found:this.missing(key),msg:this.msg(key) })
          if (this.typeVal.validateProperty(context,key) !== undefined)
             return this.wrapError(context,this.typeVal.validateProperty(context,key))
       }
@@ -424,47 +420,48 @@ class KeyValidator extends TypeValidator {
 class SwitchValidator {
    // filterAndTypeValidators: [ [filterTypeValidator,typeValidator|undefined], [filter, type|undefined], ... ]
    constructor(filterAndTypeValidators) { this.typeVals=filterAndTypeValidators }
-   get expect() { return this.typeList("(","|",")",this.typeVals, ([f,t]) => f.expect) }
-   _validate(context) {
-      const matching=this.typeVals.find( ([filter]) => filter.validateWith(context) === undefined)
+   validate(context) {
+      const matching=this.typeVals.find( ([filter]) => filter.validate(context) === undefined)
       if (matching === undefined)
-         return this.mergeErrors(context,"(","|",")",this.typeVals.map( ([filter]) => filter.validateWith(context)))
+         return this.mergeErrors(context,"(","|",")",this.typeVals.map( ([filter]) => filter.validate(context)))
       // if filter matches but detailed validator is undefined then skip detailed validator
       if (matching[1] !== undefined)
-         return matching[1].validateWith(context)
+         return matching[1].validate(context)
    }
 }
 class UnionValidator extends TypeValidator {
    constructor(typeValidators) { super(); this.typeVals=typeValidators }
-   get expect() { return this.typeList("(","|",")",this.typeVals) }
-   _validate(context) {
-      const matching=this.typeVals.find( (v) => v.validateWith(context) === undefined)
+   validate(context) {
+      const matching=this.typeVals.find( (v) => v.validate(context) === undefined)
       if (matching === undefined)
-         return this.mergeErrors(context,"(","|",")",this.typeVals.map( (v) => v.validateWith(context)))
+         return this.mergeErrors(context,"(","|",")",this.typeVals.map( (v) => v.validate(context)))
    }
 }
 class TypedArrayValidator extends TypeValidator {
    constructor(typeValidator) { super(); this.typeVal=typeValidator }
-   get expect() { return "["+stripBrackets(this.typeVal.expect)+",...]" }
-   _validate(context) {
-      if (TVarray.validateWith(context))
-         return TVarray.validateWith(context)
+   expect(error) { return "["+stripBrackets(error.expect)+",...]" }
+   found(error) { return "["+error.key+":"+stripBrackets(error.found)+"]" }
+   validate(context) {
+      if (TVarray.validate(context))
+         return TVarray.validate(context)
       for (let i=0; i<context.arg.length; ++i) {
          const error=this.typeVal.validateProperty(context,i)
          if (error !== undefined)
-            return this.error(context,{expect:this.expect, found:"["+error.key+":"+stripBrackets(error.found)+"]", depth:error.depth, child:error})
+            return context.error({expect:this.expect(error), found:this.found(error), depth:error.depth, child:error})
       }
    }
 }
 class TupleValidator extends TypeValidator {
    constructor(typeValidators) { super(); this.typeVals=typeValidators }
    get expect() { return this.typeList("[",",","]",this.typeVals) }
-   _validate(context) {
-      if (TVarray.validateWith(context))
-         return TVarray.validateWith(context)
+   found(context) { return `@.length===${context.arg.length}` }
+   msg(context) { return `to have array length ${this.typeVals.length} not ${context.arg.length}`}
+   validate(context) {
+      if (TVarray.validate(context))
+         return TVarray.validate(context)
       if (context.arg.length !== this.typeVals.length)
-         return this.error(context,{expect:this.expect,found:`@.length===${context.arg.length}`,msg: `to have array length ${this.typeVals.length} not ${context.arg.length}`})
-      const error=this.typeVals.reduce((err,v,i) => err?err:this.typeVals[i].validateProperty(context,i), error)
+         return context.error({expect:this.expect,found:this.found(context),msg:this.msg(context) })
+      const error=this.typeVals.reduce((err,v,i) => err?err:v.validateProperty(context,i), undefined)
       return error
    }
 }

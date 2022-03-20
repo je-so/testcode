@@ -13,6 +13,7 @@
       RUN_TEST(tv.unittest)
       class Test { constructor() { this.name="test"; } }
       var test=new Test()
+      // tv.TVunion(tv.TVstring,tv.TVnumber).assertType(1n,"test")
       console.log((tv.number).validateArg(Test,"test").message)
       console.log(tv.or(tv.number).validateArg(Test,"test").message)
       console.log((tv.key(tv.any,"a")).validateArg({[Symbol(1)]:1},"test").message)

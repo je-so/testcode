@@ -234,13 +234,13 @@ class TypeValidator {
     *   The name of the argument. Used in error message.
     */
    assertType(arg,argName) {
-      const error=this.validateType(arg,argName)
+      const error=this.validateArg(arg,argName)
       if (error !== undefined)
          throw new TypeError(error.message)
    }
 
    /** Returns undefined | ValidationError */
-   validateType(arg,argName) { return this.originalError(this.validate(new ValidationContext(arg,argName))) }
+   validateArg(arg,argName) { return this.originalError(this.validate(new ValidationContext(arg,argName))) }
 
    /** Validates property i of argument context.arg. */
    validateProperty(context,i) { return this.validate(context.childContext(i)) }
@@ -248,7 +248,7 @@ class TypeValidator {
    /** Returns undefined | ValidationError
      * This function must be implemented in a derived subtype. */
    validate(context) {
-      return context.error({expect:"»implementation in subtype",found:"»not implemented«"})
+      return context.error({expect:"»implemented in subtype",found:"»not implemented«"})
    }
 
    /** Ensures that top level errors like "expect argument A of type '{a:{b:{c:number}}}'"

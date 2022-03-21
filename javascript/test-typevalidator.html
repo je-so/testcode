@@ -25,12 +25,8 @@
       console.log(tv.or(tv.and(tv.object,tv.instance(Test),tv.key1)).validateArg({a:1},"test").message)
       console.log((tv.typedarray(tv.or(tv.number,tv.undefined))).validateArg([1,2,3,"x",4],"test").message)
       console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateArg([1,2,3,"x",4],"test").message)
-      console.log(tv.or(tv.typedarray(tv.or(tv.number,tv.undefined))).validateArg(1,"test").message)
-
-      // TODO: range 1,"<=","<",2
-      // TODO: set (enum ?)
-      // TODO: predicate (function returning true in case of ok) + expect function + found function
-
+      console.log(tv.or(tv.and(tv.predicate(c=>console.log("debug context=",c)),tv.typedarray(tv.or(tv.number,tv.undefined)))).validateArg(1,"test").message)
+      console.log((tv.enum(1,2,'3')).validateArg(3,"test").message)
    </script>
 </body>
 </html>

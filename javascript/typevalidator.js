@@ -14,7 +14,7 @@
  *
  * Why this stringent error template?
  * The reason is that a UnionValidator uses A LIST OF TypeValidator to select a matching one.
- * If all validators fail the union validators merges the error messages into one.
+ * If all validators fail the union validator merges the error messages into one.
  * To be able to do that the format must always be the same.
  * The union validator shows for example the error message
  * > "Expect argument 'test' of type 'string|number' not 'bigint' (value: 1n)""
@@ -97,34 +97,28 @@ class Stringifier {
    }
 
    toString(value) {
-      if (value === null)
-         this.append("null")
-      else if (value === undefined)
-         this.append("undefined")
-      else {
-         const type=typeof value
-         if (type === "object") {
-            ++ this.depth
-            const isShallow=(this.depth > this.maxdepth)
-            if (Array.isArray(value)) {
-               if (isShallow)
-                  this.strShallowArray(value)
-               else
-                  this.strArray(value)
-            }
-            else {
-               if (isShallow)
-                  this.strShallowObject(value)
-               else
-                  this.strObject(value)
-            }
-            -- this.depth
+      const type=(value===null ? "null":typeof value)
+      if (type === "object") {
+         ++ this.depth
+         const isShallow=(this.depth > this.maxdepth)
+         if (Array.isArray(value)) {
+            if (isShallow)
+               this.strShallowArray(value)
+            else
+               this.strArray(value)
          }
-         else if (type === "function")
-            this.strFunction(value)
-         else
-            this.strPrimitive(type,value)
+         else {
+            if (isShallow)
+               this.strShallowObject(value)
+            else
+               this.strObject(value)
+         }
+         -- this.depth
       }
+      else if (type === "function")
+         this.strFunction(value)
+      else
+         this.strPrimitive(type,value)
       if (this.depth === 0 && this.overflow)
          this.handleOverflow()
       return this.result
@@ -264,13 +258,13 @@ class TypeValidator {
          throw new TypeError(error.message)
    }
 
-   /** Returns undefined | ValidationError */
+   /** Returns undefined | ValidationError. */
    validateArg(arg,argName) { return this.originalError(this.validate(new ValidationContext(arg,argName))) }
 
    /** Validates property i of argument context.arg. */
    validateProperty(context,i) { return this.validate(context.childContext(i)) }
 
-   /** Returns undefined | ValidationError
+   /** Returns undefined | ValidationError.
      * This function must be implemented in a derived subtype. */
    validate(context) {
       return context.error({expect:"»implemented in subtype",found:"»not implemented«"})
@@ -287,7 +281,7 @@ class TypeValidator {
    }
 
    /**
-    * Helper function to build a typename from a list of type validators.
+    * Helper function to build a typename from a list of types originating from validators(or other object types).
     * @param {string} lp
     *   The start prefix of the build typename. Usually "(".
     * @param {string} delim
@@ -298,9 +292,9 @@ class TypeValidator {
     *   The list of type validators.
     * @param {undefined|function} getType
     *   The function to access the expected type name of the validator.
-    *   If getType is not a function it is assumed typeValidator has an "expect" property.
+    *   If getType is undefined a default function is used to access an "expect" property of the object.
     * @returns
-    *   The generated list of expected type names.
+    *   The generated list of (expected or otherwise) type names.
     */
    typeList(lp,delim,rp,typeValidators,getType=(v) => v.expect) {
       const types=new Set()
@@ -310,12 +304,16 @@ class TypeValidator {
       return lp + list + rp
    }
 
+   /** Checks argument condition to be true. If false an error is returned.
+     * The calling validator must have property expect (or implement get expect()).
+     * This kind of error checking is used in mostly all simple validators. */
    errorIfNot(context,condition) {
       if (!condition)
          return context.error({expect:this.expect,found:strType(context.arg,0)})
    }
 
-   // merge errors
+   /** Build a new error with {expect, found} merged from a list of errors.
+     * The depth of the error is set to maximum depth of errors. */
    mergeErrors(context,lp,delim,rp,errors) {
       const depth=errors.reduce((maxDepth,e) => Math.max(maxDepth,e.depth),0)
       const found=this.typeList(lp,delim,rp,errors,e=>e.found)

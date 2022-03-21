@@ -217,8 +217,8 @@ class ValidationContext {
 
    // top level context (parent == null): name must be name of argument(arg)
    constructor(arg,name,parent=null) {
-      this.arg=arg // argument value whose type is validated
-      this._name=name // parameter name
+      this.arg=arg // argument value whose type is validated (or property value in case of child context)
+      this._name=name // name of argument (parameter name) (or name of property in case of child context)
       this.parent=parent
       this.depth=(parent ? parent.depth+1 : 0)
    }
@@ -414,6 +414,15 @@ class AndValidator extends TypeValidator {
       return error
    }
 }
+class EnumValidator extends TypeValidator {
+   constructor(values) { super(); this.values=values }
+   get expect() { return `Enum[${this.values.map((v) => strValue(v)).join(",")}]` }
+   found(value) { return `»unknown enum value ${strValue(value)}«` }
+   validate(context) {
+      if (this.values.findIndex( (v) => v === context.arg ) === -1)
+         return context.error({expect:this.expect,found:this.found(context.arg)})
+   }
+}
 class InstanceValidator extends TypeValidator {
    constructor(newTarget) { super(); this.newTarget=newTarget; }
    get expect() { return `class ${this.newTarget.name}` }
@@ -425,7 +434,7 @@ class KeyValidator extends TypeValidator {
    missingKey(key) { return `»missing property ${strLiteral(key)}«` }
    expectProp(error) { return `{${strKey(error.key)}:${error.expect}}` }
    foundProp(error) { return `{${error.key}:${error.found}}`}
-   msg(key) { return `»to have property ${strLiteral(key)}«` }
+   msg(key) { return `to have property ${strLiteral(key)}` }
    wrapError(context,error) {
       return context.error({expect:this.expectProp(error), found:this.foundProp(error), depth:error.depth, child:error})
    }
@@ -439,9 +448,23 @@ class KeyValidator extends TypeValidator {
       }
    }
 }
-class SwitchValidator {
+class PredicateValidator extends TypeValidator {
+   constructor(predicateFct) { super(); this.predicateFct=predicateFct }
+   validate(context) {
+      const error=this.predicateFct(context)
+      if (error === undefined || error instanceof ValidationError)
+         return error
+      throw Error(`Expect predicate to return type 'ValidationError' not '${strType(error,0)}'`)
+   }
+}
+/** Use SwitchValidator instead of UnionValidator if you want simpler error messages.
+  * For example if you want to validate type '[number,string,boolean]|{a:number,b:string}'
+  * and do not want to show this string as expected type use TVswitch([TVarray,TVtuple],[TVobject,TVand(TVkey(TVnumber,"a"),...)]).
+  * In that case if you want to validate value 1 the expected type in the error message
+  * is shown as "Array|object". */
+class SwitchValidator extends TypeValidator {
    // filterAndTypeValidators: [ [filterTypeValidator,typeValidator|undefined], [filter, type|undefined], ... ]
-   constructor(filterAndTypeValidators) { this.typeVals=filterAndTypeValidators }
+   constructor(filterAndTypeValidators) { super(); this.typeVals=filterAndTypeValidators }
    validate(context) {
       const matching=this.typeVals.find( ([filter]) => filter.validate(context) === undefined)
       if (matching === undefined)
@@ -475,16 +498,19 @@ class TypedArrayValidator extends TypeValidator {
 }
 class TupleValidator extends TypeValidator {
    constructor(typeValidators) { super(); this.typeVals=typeValidators }
-   get expect() { return this.typeList("[",",","]",this.typeVals) }
-   found(context) { return `@.length===${context.arg.length}` }
+   expectLen() { return `[].length==${this.typeVals.length}` }
+   foundLen(context) { return `[].length==${context.arg.length}` }
    msg(context) { return `to have array length ${this.typeVals.length} not ${context.arg.length}`}
+   expect(error) { return "["+error.key+":"+stripBrackets(error.expect)+"]" }
+   found(error) { return "["+error.key+":"+stripBrackets(error.found)+"]" }
    validate(context) {
       if (TVarray.validate(context))
          return TVarray.validate(context)
       if (context.arg.length !== this.typeVals.length)
-         return context.error({expect:this.expect,found:this.found(context),msg:this.msg(context) })
+         return context.error({expect:this.expectLen(),found:this.foundLen(context),msg:this.msg(context) })
       const error=this.typeVals.reduce((err,v,i) => err?err:v.validateProperty(context,i), undefined)
-      return error
+      if (error)
+         return context.error({expect:this.expect(error), found:this.found(error), depth:error.depth, child:error})
    }
 }
 
@@ -723,28 +749,230 @@ function unittest_typevalidator(TEST) {
             TEST( () => TVvalue.assertType(v,"param1"), "==", undefined, "ValueValidator validates only primitive types")
          else
             TEST( () => TVvalue.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»value«' not '${t}' (value: ${str})`, `ValueValidator does not validate ${str}`)
+
       }
    } // testSimpleValidators
 
    function testComplexValidators() {
+      function TT(value,type,strValue) { return { value, type, strValue:strValue||type }; }
+      function DummyType(name) { this.name=name }
 
-      // TEST TVand
-      // TODO:
+      const testTypes=[
+         TT(null,"null"), TT(undefined,"undefined"),
+         TT(true,"boolean","true"), TT(false,"boolean","false"),
+         TT(10,"number","10"), TT(1_000_000_000_000n,"bigint",1_000_000_000_000+"n"),
+         TT("abc","string","'abc'"), TT(Symbol("symbol"),"symbol","Symbol(symbol)"),
+         TT([],"Array","[]"),
+         TT([1],"Array","[1]"),
+         TT([1,'2',true],"Array","[1,'2',true]"),
+         TT([1,2,3,4],"Array","[1,2,3,4]"),
+         TT([1,2,3,'x',4],"Array","[1,2,3,'x',4]"),
+         TT({},"Object","{}"), TT({ a:1 },"Object","{a:1}"), TT({ a:1,b:'2' },"Object","{a:1,b:'2'}"),
+         TT({ s1:{s2:{s3:4}} },"Object","{s1:{...}}"),
+         TT({ [Symbol("sym")]:1 },"Object","{[Symbol(sym)]:1}"),
+         TT(() => true,"function","()=>{}"),
+         TT(DummyType,"function","function DummyType"),
+         TT(new DummyType("test"),"DummyType","{name:'test'}"),
+         TT(new String(123),"String","{0:'1',1:'2',2:'3',length:3}")
+      ]
+      const allValues=testTypes.map( t => t.value )
 
-      // TEST TVinstance
-      // TODO:
+      for (var i=0; i<testTypes.length; ++i) {
+         const { value: v, type: t, strValue: str }=testTypes[i]
+         const wrappers=[TVand,TVswitch,TVunion]
 
-      // TEST TVkey
-      // TODO:
+         // === COMPLEX validator as wrapper for exactly one simple one ===
+         // same behaviour as simple one
 
-      // TEST TVswitch
-      // TODO:
+         const wrapTV=(tvComplex,tvSimple) => {
+            if (tvComplex === TVswitch)
+               return tvComplex([tvSimple])
+            else
+               return tvComplex(tvSimple)
+         }
 
-      // TEST TVtuple
-      // TODO:
+         wrappers.forEach( tvComplex => {
 
-      // TEST TVunion
-      // TODO:
+            const name=tvComplex.name
+
+            // TEST TVnumber
+            if (typeof v === "number")
+               TEST( () => wrapTV(tvComplex,TVnumber).assertType(v,"param1"), "==", undefined, "NumberValidator validates number")
+            else
+               TEST( () => wrapTV(tvComplex,TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number' not '${t}' (value: ${str})`, `NumberValidator does not validate ${str}`)
+
+            // TEST TVobject
+            if (v != null && typeof v === "object")
+               TEST( () => wrapTV(tvComplex,TVobject).assertType(v,"param1"), "==", undefined, "ObjectValidator validates {}")
+            else
+               TEST( () => wrapTV(tvComplex,TVobject).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'object' not '${t}' (value: ${str})`, `ObjectValidator does not validate ${str}`)
+
+            // TEST TVref
+            if (v !== null && (typeof v === "object" || typeof v === "function"))
+               TEST( () => wrapTV(tvComplex,TVref).assertType(v,"param1"), "==", undefined, "ReferenceValidator validates only function or object types")
+            else
+               TEST( () => wrapTV(tvComplex,TVref).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»reference«' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
+
+         })
+
+         // TEST TVand
+         const tvand=TVand(TVref,TVobject,TVkey1)
+         if (typeof v === "object" && ownKeys(Object(v)).length===1)
+            TEST( () => tvand.assertType(v,"p"), "==", undefined, "AndValidator validates {key:any}")
+         else if (v === null || (typeof v !== "object" && typeof v !== "function"))
+            TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»reference«' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
+         else if (typeof v !== "object")
+            TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'object' not '${t}' (value: ${str})`, `ObjectValidator does not validate ${str}`)
+         else
+            TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have 1 property not ${Object.getOwnPropertyNames(Object(v)).length} (value: ${str})`, "KeyCount1Validator does only validate {a:1}")
+
+         // TEST TVenum
+         TEST( () => TVenum(v).assertType(v,"p"), "==", undefined, "EnumValidator validates same value")
+         TEST( () => TVenum(...allValues).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
+         const withoutV=allValues.slice()
+         withoutV.splice(i,1)
+         const strWithout=withoutV.map( v => strValue(v) ).join(",")
+         TEST( () => TVenum(...withoutV).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
+         if ("a" in Object(v)) {
+            TEST( () => TVkey(TVenum(1),"a").assertType(v,`p${i}`), "==", undefined, "EnumValidator validates {a:1}")
+            TEST( () => TVkey(TVenum(2),"a").assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}.a' of type 'Enum[2]' not '»unknown enum value 1«' (value: 1)`, "EnumValidator does not validate {a:1}")
+         }
+         // wrapped form
+         TEST( () => TVor(TVenum(v)).assertType(v,"p"), "==", undefined, "EnumValidator validates same value")
+         TEST( () => TVor(TVenum(...allValues)).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
+         TEST( () => TVor(TVenum(...withoutV)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
+         if ("a" in Object(v)) {
+            TEST( () => TVor(TVkey(TVenum(1),"a")).assertType(v,`p${i}`), "==", undefined, "EnumValidator validates {a:1}")
+            TEST( () => TVor(TVkey(TVenum(2),"a")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '{a:Enum[2]}' not '{a:»unknown enum value 1«}' (value: ${str})`, "EnumValidator does not validate {a:1}")
+         }
+
+         // TEST InstanceValidator
+         if (v instanceof DummyType)
+            TEST( () => TVinstance(DummyType).assertType(v,"p"), "==", undefined, "InstanceValidator validates instanceof")
+         else
+            TEST( () => TVinstance(DummyType).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'class DummyType' not '${t}' (value: ${str})`, "This InstanceValidator does only validate DummyType")
+         if (v instanceof String)
+            TEST( () => TVinstance(String).assertType(v,"p"), "==", undefined, "InstanceValidator validates instanceof")
+
+         // TEST TVkey
+         if ("a" in Object(v))
+            TEST( () => TVkey(TVnumber,"a").assertType(v,"p"), "==", undefined, "KeyValidator validates {a:any}")
+         else
+            TEST( () => TVkey(TVnumber,"a").assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have property 'a' (value: ${str})`, "KeyValidator validates no other than {a:any}")
+         if ("a" in Object(v) && "b" in v)
+            TEST( () => TVkey(TVany,"a","b").assertType(v,"p"), "==", undefined, "KeyValidator validates {a:any,b:any}")
+         else if ("a" in Object(v))
+            TEST( () => TVkey(TVany,"a","b").assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have property 'b' (value: ${str})`, "KeyValidator does not validate other than {a:any,b:any}")
+         if ("a" in Object(v) && "b" in v)
+            TEST( () => TVkey(TVnumber,"a","b").assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}.b' of type 'number' not 'string' (value: ${strLiteral(v.b)})`, "KeyValidator does not validate {a:number,b:string}")
+         if ("s1" in Object(v)) {
+            TEST( () => TVkey(TVkey(TVkey(TVnumber,"s3"),"s2"),"s1").assertType(v,"p"), "==", undefined, "KeyValidator validates {s1:{s2:{s3:number}}}")
+            TEST( () => TVkey(TVkey(TVkey(TVstring,"s3"),"s2"),"s1").assertType(v,"p"), "throw", `Expect argument property 'p.s1.s2.s3' of type 'string' not 'number' (value: 4)`, "KeyValidator does not validate {s1:{s2:{s3:number}}}")
+         }
+         // wrapped form
+         if ("a" in Object(v))
+            TEST( () => TVunion(TVkey(TVnumber,"a")).assertType(v,"p"), "==", undefined, "KeyValidator validates {a:any}")
+         else
+            TEST( () => TVunion(TVkey(TVnumber,"a")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»having property 'a'«' not '»missing property 'a'«' (value: ${str})`, "KeyValidator validates no other than {a:any}")
+         if ("a" in Object(v) && "b" in v)
+            TEST( () => TVunion(TVkey(TVany,"a","b")).assertType(v,"p"), "==", undefined, "KeyValidator validates {a:any,b:any}")
+         else if ("a" in Object(v))
+            TEST( () => TVunion(TVkey(TVany,"a","b")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»having property 'b'«' not '»missing property 'b'«' (value: ${str})`, "KeyValidator does not validate other than {a:any,b:any}")
+         if ("a" in Object(v) && "b" in v)
+            TEST( () => TVunion(TVkey(TVnumber,"a","b")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '{b:number}' not '{b:string}' (value: ${str})`, "KeyValidator does not validate {a:number,b:string}")
+         if ("s1" in Object(v)) {
+            TEST( () => TVunion(TVkey(TVkey(TVkey(TVnumber,"s3"),"s2"),"s1")).assertType(v,"p"), "==", undefined, "KeyValidator validates {s1:{s2:{s3:number}}}")
+            TEST( () => TVunion(TVkey(TVkey(TVkey(TVstring,"s3"),"s2"),"s1")).assertType(v,"p"), "throw", `Expect argument 'p' of type '{s1:{s2:{s3:string}}}' not '{s1:{s2:{s3:number}}}' (value: {s1:{s2:{s3:4}}})`, "KeyValidator does not validate {s1:{s2:{s3:number}}}")
+         }
+
+         // TEST TVpredicate
+         TEST( () => TVpredicate(() => undefined).assertType(v,"p"), "==", undefined, "PredicateValidator validates any")
+         TEST( () => TVpredicate((c) => c.error({expect:"???",found:"!!!"})).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '???' not '!!!' (value: ${str})`, "PredicateValidator fails all values")
+         TEST( () => TVpredicate((c) => c.error({expect:"???",found:"!!!",msg:"MSG"})).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' MSG (value: ${str})`, "PredicateValidator fails all values with message MSG")
+
+         // TEST TVswitch
+         if (v !== null && typeof v === "object")
+            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "==", undefined, "TVswitch validates only Array|object")
+         else {
+            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array|object' not '${t}' (value: ${str})`, "TVswitch does not validate primitives or functions")
+            TEST( () => TVswitch([TVarray,TVkey(TVnumber,0)],[TVobject,TVkey(TVnumber,"a")]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array|object' not '${t}' (value: ${str})`, "TVswitch does not validate primitives or functions")
+         }
+         if ("a" in Object(v) || (Array.isArray(v) && v[0] === 1))
+            TEST( () => TVswitch([TVarray,TVkey(TVnumber,0)],[TVobject,TVkey(TVnumber,"a")]).assertType(v,`p${i}`), "==", undefined, "TVswitch validates [number]|{a:number}")
+         else if (v !== null && typeof v === "object" && !Array.isArray(v))
+            TEST( () => TVswitch([TVarray,TVkey(TVnumber,0)],[TVobject,TVkey(TVnumber,"a")]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have property 'a' (value: ${str})`, "TVswitch does not validate {}")
+         else if (Array.isArray(v))
+            TEST( () => TVswitch([TVarray,TVkey(TVnumber,0)],[TVobject,TVkey(TVnumber,"a")]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have property '0' (value: ${str})`, "TVswitch does not validate []")
+
+         // TEST TVtypedarray
+         if (Array.isArray(v) && (v.length <= 1 || v.length === 4))
+            TEST( () => TVtypedarray(TVnumber).assertType(v,`p${i}`), "==", undefined, "TVtypedarray does [number,...]")
+         else if (Array.isArray(v) && v.length === 3)
+            TEST( () => TVtypedarray(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}[1]' of type 'number' not 'string' (value: '2')`, "TVtypedarray does not validate other than [number,...]")
+         else if (Array.isArray(v) && v.length === 5)
+            TEST( () => TVtypedarray(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}[3]' of type 'number' not 'string' (value: 'x')`, "TVtypedarray does not validate other than [number,...]")
+         else
+            TEST( () => TVtypedarray(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtypedarray does not validate other than [number,...]")
+         // wrapped form
+         if (Array.isArray(v) && (v.length <= 1 || v.length === 4))
+            TEST( () => TVor(TVtypedarray(TVnumber)).assertType(v,`p${i}`), "==", undefined, "TVtypedarray does [number,...]")
+         else if (Array.isArray(v) && v.length === 3)
+            TEST( () => TVor(TVtypedarray(TVnumber)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[number,...]' not '[1:string]' (value: ${str})`, "TVtypedarray does not validate other than [number,...]")
+         else if (Array.isArray(v) && v.length === 5)
+            TEST( () => TVor(TVtypedarray(TVnumber)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[number,...]' not '[3:string]' (value: ${str})`, "TVtypedarray does not validate other than [number,...]")
+         else
+            TEST( () => TVor(TVtypedarray(TVnumber)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtypedarray does not validate other than [number,...]")
+
+         // TEST TVtuple
+         if (Array.isArray(v) && v.length === 1) {
+            TEST( () => TVtuple(TVnumber).assertType(v,`p${i}`), "==", undefined, "TVtuple validates [number]")
+            TEST( () => TVtuple(TVstring).assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}[0]' of type 'string' not 'number' (value: ${v[0]})`, "TVtuple does not validate [number]")
+         }
+         else if (Array.isArray(v) && v.length !== 1)
+            TEST( () => TVtuple(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have array length 1 not ${v.length} (value: ${str})`, "TVtuple does not validate [].length!=1")
+         else
+            TEST( () => TVtuple(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtuple does not validate other than []")
+         if (Array.isArray(v) && v.length === 3) {
+            TEST( () => TVtuple(TVnumber,TVstring,TVboolean).assertType(v,`p${i}`), "==", undefined, "TVtuple validates [number,string,boolean]")
+            TEST( () => TVtuple(TVnumber,TVstring,TVor(TVnull,TVstring)).assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}[2]' of type 'null|string' not 'boolean' (value: true)`, "TVtuple does not validate [number,string,boolean]")
+         }
+         else if (Array.isArray(v) && v.length !== 3)
+            TEST( () => TVtuple(TVnumber,TVstring,TVboolean).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have array length 3 not ${v.length} (value: ${str})`, "TVtuple does not validate [].length!=3")
+         else
+            TEST( () => TVtuple(TVnumber,TVstring,TVboolean).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtuple does not validate other than []")
+         // wrapped form
+         if (Array.isArray(v) && v.length === 1) {
+            TEST( () => TVunion(TVtuple(TVnumber)).assertType(v,`p${i}`), "==", undefined, "TVtuple validates [number]")
+            TEST( () => TVunion(TVtuple(TVstring)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[0:string]' not '[0:number]' (value: ${str})`, "TVtuple does not validate [number]")
+         }
+         else if (Array.isArray(v) && v.length !== 1)
+            TEST( () => TVunion(TVtuple(TVnumber)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[].length==1' not '[].length==${v.length}' (value: ${str})`, "TVtuple does not validate [].length!=1")
+         else
+            TEST( () => TVunion(TVtuple(TVnumber)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtuple does not validate other than []")
+         if (Array.isArray(v) && v.length === 3) {
+            TEST( () => TVunion(TVtuple(TVnumber,TVstring,TVboolean)).assertType(v,`p${i}`), "==", undefined, "TVtuple validates [number,string,boolean]")
+            TEST( () => TVunion(TVtuple(TVnumber,TVstring,TVor(TVnull,TVstring))).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[2:null|string]' not '[2:boolean]' (value: ${str})`, "TVtuple does not validate [number,string,boolean]")
+         }
+         else if (Array.isArray(v) && v.length !== 3)
+            TEST( () => TVunion(TVtuple(TVnumber,TVstring,TVboolean)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '[].length==3' not '[].length==${v.length}' (value: ${str})`, "TVtuple does not validate [].length!=3")
+         else
+            TEST( () => TVunion(TVtuple(TVnumber,TVstring,TVboolean)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array' not '${t}' (value: ${str})`, "TVtuple does not validate other than []")
+
+         // TEST TVunion
+         if (typeof v === "number")
+            TEST( () => TVunion(TVnumber).assertType(v,`p${i}`), "==", undefined, "TVunion validates number")
+         else
+            TEST( () => TVunion(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number' not '${t}' (value: ${str})`, "TVunion does not validate other than number")
+         if (v === null || typeof v === "number")
+            TEST( () => TVunion(TVnumber,TVnull).assertType(v,`p${i}`), "==", undefined, "TVunion validates number|null")
+         else
+            TEST( () => TVunion(TVnumber,TVnull).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number|null' not '${t}' (value: ${str})`, "TVunion does not validate other than number|null")
+         if (v === null || typeof v === "number" || typeof v === "string")
+            TEST( () => TVunion(TVnumber,TVnull,TVstring).assertType(v,`p${i}`), "==", undefined, "TVunion validates number|null|string")
+         else
+            TEST( () => TVunion(TVnumber,TVnull,TVstring).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number|null|string' not '${t}' (value: ${str})`, "TVunion does not validate other than number|null|string")
+
+      }
 
    } // testComplexValidators
 }
@@ -799,10 +1027,14 @@ export { TVvalue as value } // value type (without null and undefined)
 // complex type validators
 export const TVand=((...typeValidators) => new AndValidator(typeValidators))
 export { TVand as and }
+export const TVenum=((...values) => new EnumValidator(values))
+export { TVenum as enum }
 export const TVinstance=((newTarget) => new InstanceValidator(newTarget))
 export { TVinstance as instance }
 export const TVkey=((typeValidator,...keys) => new KeyValidator(typeValidator,keys))
 export { TVkey as key }
+export const TVpredicate=((predicateFct) => new PredicateValidator(predicateFct))
+export { TVpredicate as predicate }
 export const TVswitch=((...filterAndtypeValidators) => new SwitchValidator(filterAndtypeValidators))
 export { TVswitch as switch }
 export const TVtypedarray=((typeValidator) => new TypedArrayValidator(typeValidator))
@@ -810,4 +1042,6 @@ export { TVtypedarray as typedarray }
 export const TVtuple=((...typeValidators) => new TupleValidator(typeValidators))
 export { TVtuple as tuple }
 export const TVunion=((...typeValidators) => new UnionValidator(typeValidators))
-export { TVunion as union, TVunion as or }
+export { TVunion as union }
+export const TVor=TVunion // TVor alias of TVunion
+export { TVor as or }

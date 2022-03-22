@@ -382,7 +382,7 @@ class KeyStringValidator extends TypeValidator {
 }
 /** Reference types or complex types are usually mutable (null is excluded). */
 class ReferenceValidator extends TypeValidator {
-   get expect() { return "»reference«" }
+   get expect() { return "function|object" }
    validate(context) { return this.errorIfNot(context,context.arg!=null && (typeof context.arg==="object" || typeof context.arg==="function")) }
 }
 class StringValidator extends TypeValidator {
@@ -399,7 +399,7 @@ class UndefinedValidator extends TypeValidator {
 }
 /** Value types or primitive types are always immutable (excluding null and undefined). */
 class ValueValidator extends TypeValidator {
-   get expect() { return "»value«" }
+   get expect() { return "boolean|bigint|number|string|symbol" }
    validate(context) { return this.errorIfNot(context,context.arg!=null && typeof context.arg!=="object" && typeof context.arg!=="function") }
 }
 
@@ -516,26 +516,58 @@ class TupleValidator extends TypeValidator {
 
 function unittest_typevalidator(TEST) {
 
+   function DummyType() { this.name="test" }
+   function TestType() { this.test=true }
+   // ensures that function expression has no name (else "value:()=>true" would assign name "value")
+   function anon(fct) { return fct }
+
+   const testStruct=[
+   /*0*/ { value:null, strtype:"null", strval:"null" },
+   /*1*/ { value:undefined, strtype:"undefined", strval:"undefined" },
+   /*2*/ { value:true, strtype:"boolean", strval:"true" },
+   /*3*/ { value:false, strtype:"boolean", strval:"false" },
+   /*4*/ { value:10, strtype:"number", strval:"10"},
+   /*5*/ { value:1_000_000_000_000n, strtype:"bigint", strval:"1000000000000n"},
+   /*6*/ { value:"abc", strtype:"string", strval:"'abc'"},
+   /*7*/ { value:"", strtype:"string", strval:"''"},
+   /*8*/ { value:Symbol("sym"), strtype:"symbol", strval:"Symbol(sym)"},
+   /*9*/ { value:[], strtype:"Array", strval:"[]"},
+   /*10*/ { value:[1], strtype:"Array", strval:"[1]"},
+   /*11*/ { value:[1,'2',true], strtype:"Array", strval:"[1,'2',true]"},
+   /*12*/ { value:[1,2,3,4], strtype:"Array", strval:"[1,2,3,4]"},
+   /*13*/ { value:[1,2,3,'x',4], strtype:"Array", strval:"[1,2,3,'x',4]"},
+   /*14*/ { value:{}, strtype:"Object", strval:"{}"},
+   /*15*/ { value:{a:1}, strtype:"Object", strval:"{a:1}"},
+   /*16*/ { value:{a:1,b:'2'}, strtype:"Object", strval:"{a:1,b:'2'}"},
+   /*17*/ { value:{p1:{p2:{p3:4}}}, strtype:"Object", strval:"{p1:{...}}"},
+   /*18*/ { value:{[Symbol(1)]:1}, strtype:"Object", strval:"{[Symbol(1)]:1}"},
+   /*19*/ { value:anon(()=>true), strtype:"function", strval:"()=>{}"},
+   /*20*/ { value:DummyType, strtype:"function", strval:"function DummyType"},
+   /*21*/ { value:TestType, strtype:"function", strval:"function TestType"},
+   /*22*/ { value:new DummyType(), strtype:"DummyType", strval:"{name:'test'}"},
+   /*23*/ { value:new String(123), strtype:"String", strval:"{0:'1',1:'2',2:'3',length:3}"},
+   /*24*/ { value:new TestType(), strtype:"TestType", strval:"{test:true}"},
+   ]
+   const testValues=testStruct.map( t => t.value )
+
    testFunctions()
    testSimpleValidators()
    testComplexValidators()
 
    function testFunctions() {
-      const syms=[ Symbol(0), Symbol(1), Symbol(2), Symbol(3) ]
-      const o1={[syms[1]]:'s1',[syms[2]]:'s2',b:'b',a:'a',1:1,0:0,'x and y':'xy'}
-      const oinherit=Object.create(o1)
-      function TestType() { this.name="test" }
+      const sym=[Symbol('0'), Symbol('1')]
+      const o1={[sym[0]]:'s1',[sym[1]]:'s2', b:'b',a:'a', 1:1,0:0, 'x and y':'xy'}
 
       // TEST ownKeys
       TEST(ownKeys({}),"==",[],
       "Empty object has no properties")
-      TEST(ownKeys(oinherit),"==",[],
+      TEST(ownKeys(Object.create(o1)),"==",[],
       "Inherited properties are not own properties")
-      TEST(ownKeys(o1),"==",["0","1","b","a","x and y",syms[1],syms[2]],
+      TEST(ownKeys(o1),"==",["0","1","b","a","x and y",sym[0],sym[1]],
       "Returned properties: first the numbers in ascending order then strings and then symbols in defined order")
 
       // TEST strKey (Property key used in object literal)
-      TEST(strKey(syms[0]),"==","[Symbol(0)]","Symbol")
+      TEST(strKey(Symbol(0)),"==","[Symbol(0)]","Symbol")
       TEST(strKey("abc0xyz"),"==","abc0xyz","identifier")
       TEST(strKey("_$abcefghijklmnopqrstuvwxyz0123456789"),"==","_$abcefghijklmnopqrstuvwxyz0123456789","identifier")
       TEST(strKey("_"),"==","_","identifier")
@@ -553,7 +585,7 @@ function unittest_typevalidator(TEST) {
 
       // TEST strIndex (Index used to access object property, either dot operator or array [] brackets)
       TEST(strIndex(""),"==","['']","Symbol")
-      TEST(strIndex(syms[2]),"==","[Symbol(2)]","Symbol")
+      TEST(strIndex(Symbol('x')),"==","[Symbol(x)]","Symbol")
       TEST(strIndex("'\\'"),"==","['\\'\\\\\\'']","String with \\ and \'")
       TEST(strIndex(null),"==",".null","null")
       TEST(strIndex(undefined),"==",".undefined","undefined")
@@ -580,11 +612,11 @@ function unittest_typevalidator(TEST) {
       TEST(strIndices([]),"==","","Empty access path")
       TEST(strIndices(["o1"]),"==",".o1","Single index")
       TEST(strIndices(1),"==","[1]","Single index")
-      TEST(strIndices([Symbol(1)]),"==","[Symbol(1)]","Single index")
+      TEST(strIndices([Symbol('_')]),"==","[Symbol(_)]","Single index")
       TEST(strIndices(1,2,3),"==","[1][2][3]","3d array access")
       TEST(strIndices([1],2,3),"==","[1]","If first arg is Array other args are ignored")
-      TEST(strIndices(["o",1,",''","id",syms[1]]),"==",".o[1][',\\'\\''].id[Symbol(1)]","multiple properties")
-      TEST(strIndices("id_",2,"\\","ty",syms[2]),"==",".id_[2]['\\\\'].ty[Symbol(2)]","multiple properties")
+      TEST(strIndices(["o",1,",''","id",Symbol()]),"==",".o[1][',\\'\\''].id[Symbol()]","multiple properties")
+      TEST(strIndices("id_",2,"\\","ty",Symbol(2)),"==",".id_[2]['\\\\'].ty[Symbol(2)]","multiple properties")
 
       // TEST strLiteral
       TEST(strLiteral(""),"==","''","Empty string literal")
@@ -613,9 +645,12 @@ function unittest_typevalidator(TEST) {
       TEST(strType(TestType),"==","function","type of named function")
       TEST(strType(()=>true),"==","function","type of function expression")
       TEST(strType({a:1,b:"2",[Symbol(1)]:[]}),"==","Object{a:number,b:string,[Symbol(1)]:Array}","deep type of object")
-      TEST(strType(new TestType()),"==","TestType{name:string}","deep type of object")
+      TEST(strType(new DummyType()),"==","DummyType{name:string}","deep type of object")
+      TEST(strType(new TestType()),"==","TestType{test:boolean}","deep type of object")
       TEST(strType([1,"2",true,[]]),"==","[number,string,boolean,Array]","deep type of array is tuple")
       TEST(strType([[1,null]],2),"==","[[number,null]]","deep type (depth:2) of array")
+      for (const ts of testStruct)
+         TEST(strType(ts.value,0),"==",ts.strtype,"shallow type (depth:0) equals")
 
       // TEST strValue
       TEST(strValue(undefined),"==","undefined","undefined value")
@@ -632,30 +667,19 @@ function unittest_typevalidator(TEST) {
       TEST(strValue(TestType),"==","function TestType","value of named function")
       TEST(strValue(()=>true),"==","()=>{}","value of function expression")
       TEST(strValue({a:1,b:"2",[Symbol(1)]:[]}),"==","{a:1,b:'2',[Symbol(1)]:[]}","deep value of object")
-      TEST(strValue(new TestType()),"==","{name:'test'}","deep value of object")
+      TEST(strValue(new DummyType()),"==","{name:'test'}","deep type of object")
+      TEST(strValue(new TestType()),"==","{test:true}","deep value of object")
       TEST(strValue([1],0),"==","[...]","shallow value of array")
       TEST(strValue([1,"2",true,[],[1]],1),"==","[1,'2',true,[],[...]]","deep value 2 of array")
       TEST(strValue([[1,null,[],[1]]],2),"==","[[1,null,[],[...]]]","deep value 3 of array")
+      for (const ts of testStruct)
+         TEST(strValue(ts.value,1),"==",ts.strval,"deep value (depth:1) equals")
    }
 
    function testSimpleValidators() {
-      function TT(value,type,strValue) { return { value, type, strValue:strValue||type }; }
-      function DummyType(name) { this.name=name }
 
-      const testTypes=[
-         TT(null,"null"), TT(undefined,"undefined"),
-         TT(true,"boolean","true"), TT(false,"boolean","false"),
-         TT(10,"number","10"), TT(1_000_000_000_000n,"bigint",1_000_000_000_000+"n"),
-         TT("abc","string","'abc'"), TT(Symbol("symbol"),"symbol","Symbol(symbol)"),
-         TT([],"Array","[]"),
-         TT({},"Object","{}"), TT({ a:1 },"Object","{a:1}"), TT({ a:1,b:2 },"Object","{a:1,b:2}"),
-         TT({ [Symbol("sym")]:1 },"Object","{[Symbol(sym)]:1}"),
-         TT(() => true,"function","()=>{}"),
-         TT(DummyType,"function","function DummyType")
-      ]
-
-      for (var i=0; i<testTypes.length; ++i) {
-         const { value: v, type: t, strValue: str }=testTypes[i]
+      for (var i=0; i<testStruct.length; ++i) {
+         const { value: v, strtype: t, strval: str }=testStruct[i]
 
          // TEST TVany
          TEST( () => TVany.assertType(v,"param1"), "==", undefined, "AnyValidator validates everything even null and undefined")
@@ -679,10 +703,10 @@ function unittest_typevalidator(TEST) {
             TEST( () => TVboolean.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'boolean' not '${t}' (value: ${str})`, `BooleanValidator does not validate ${str}`)
 
          // TEST TVconstr
-         if (v === DummyType)
-            TEST( () => TVconstr.assertType(v,"param1"), "==", undefined, "ConstructorValidator validates function which serves as constructor")
+         if (v === DummyType || v === TestType)
+            TEST( () => TVconstr.assertType(v,"param1"), "==", undefined, "Should validate constructor function")
          else
-            TEST( () => TVconstr.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'constructor' not '${t}' (value: ${str})`, `ConstructorValidator does only validate DummyType`)
+            TEST( () => TVconstr.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'constructor' not '${t}' (value: ${str})`, `Should not validate other types than constructor functions`)
 
          // TEST TVfunction
          if (v !== null && typeof v === "function")
@@ -724,7 +748,7 @@ function unittest_typevalidator(TEST) {
          if (v !== null && (typeof v === "object" || typeof v === "function"))
             TEST( () => TVref.assertType(v,"param1"), "==", undefined, "ReferenceValidator validates only function or object types")
          else
-            TEST( () => TVref.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»reference«' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
+            TEST( () => TVref.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'function|object' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
 
          // TVstring
          if (typeof v === "string")
@@ -748,70 +772,60 @@ function unittest_typevalidator(TEST) {
          if (v !== null && v !== undefined && typeof v !== "object" && typeof v !== "function")
             TEST( () => TVvalue.assertType(v,"param1"), "==", undefined, "ValueValidator validates only primitive types")
          else
-            TEST( () => TVvalue.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»value«' not '${t}' (value: ${str})`, `ValueValidator does not validate ${str}`)
+            TEST( () => TVvalue.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'boolean|bigint|number|string|symbol' not '${t}' (value: ${str})`, `ValueValidator does not validate ${str}`)
 
       }
    } // testSimpleValidators
 
    function testComplexValidators() {
-      function TT(value,type,strValue) { return { value, type, strValue:strValue||type }; }
-      function DummyType(name) { this.name=name }
 
-      const testTypes=[
-         TT(null,"null"), TT(undefined,"undefined"),
-         TT(true,"boolean","true"), TT(false,"boolean","false"),
-         TT(10,"number","10"), TT(1_000_000_000_000n,"bigint",1_000_000_000_000+"n"),
-         TT("abc","string","'abc'"), TT(Symbol("symbol"),"symbol","Symbol(symbol)"),
-         TT([],"Array","[]"),
-         TT([1],"Array","[1]"),
-         TT([1,'2',true],"Array","[1,'2',true]"),
-         TT([1,2,3,4],"Array","[1,2,3,4]"),
-         TT([1,2,3,'x',4],"Array","[1,2,3,'x',4]"),
-         TT({},"Object","{}"), TT({ a:1 },"Object","{a:1}"), TT({ a:1,b:'2' },"Object","{a:1,b:'2'}"),
-         TT({ s1:{s2:{s3:4}} },"Object","{s1:{...}}"),
-         TT({ [Symbol("sym")]:1 },"Object","{[Symbol(sym)]:1}"),
-         TT(() => true,"function","()=>{}"),
-         TT(DummyType,"function","function DummyType"),
-         TT(new DummyType("test"),"DummyType","{name:'test'}"),
-         TT(new String(123),"String","{0:'1',1:'2',2:'3',length:3}")
-      ]
-      const allValues=testTypes.map( t => t.value )
-
-      for (var i=0; i<testTypes.length; ++i) {
-         const { value: v, type: t, strValue: str }=testTypes[i]
+      for (var i=0; i<testStruct.length; ++i) {
+         const { value: v, strtype: t, strval: str }=testStruct[i]
          const wrappers=[TVand,TVswitch,TVunion]
-
-         // === COMPLEX validator as wrapper for exactly one simple one ===
-         // same behaviour as simple one
-
-         const wrapTV=(tvComplex,tvSimple) => {
-            if (tvComplex === TVswitch)
-               return tvComplex([tvSimple])
-            else
-               return tvComplex(tvSimple)
-         }
+         const withoutV=(() => { const without=testValues.slice(); without.splice(i,1); return without })()
+         const strWithout=withoutV.map( v => strValue(v) ).join(",")
 
          wrappers.forEach( tvComplex => {
 
-            const name=tvComplex.name
+            // === COMPLEX validator as wrapper for exactly one simple one ===
+            // same behaviour as simple one (except TVswitch,TVunion in nested case TVkey)
+
+            const wrapTV=(tvSimple) => {
+               if (tvComplex === TVswitch)
+                  return tvComplex([tvSimple])
+               else
+                  return tvComplex(tvSimple)
+            }
+
+            // TEST TVEnum
+            TEST( () => wrapTV(TVenum(v)).assertType(v,"p"), "==", undefined, "Should validate equal value")
+            TEST( () => wrapTV(TVenum(...testValues)).assertType(v,"p"), "==", undefined, "Should validate value from set")
+            TEST( () => wrapTV(TVenum(...withoutV)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
+            if ("a" in Object(v)) {
+               TEST( () => wrapTV(TVkey(TVenum(1),"a")).assertType(v,`p${i}`), "==", undefined, "Should validate {a:1}")
+               if (tvComplex==TVand)
+                  TEST( () => wrapTV(TVkey(TVenum(2),"a")).assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}.a' of type 'Enum[2]' not '»unknown enum value 1«' (value: 1)`, "EnumValidator does not validate {a:1}")
+               else
+                  TEST( () => wrapTV(TVkey(TVenum(2),"a")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '{a:Enum[2]}' not '{a:»unknown enum value 1«}' (value: ${str})`, "Should not validate {a:1}")
+            }
 
             // TEST TVnumber
             if (typeof v === "number")
-               TEST( () => wrapTV(tvComplex,TVnumber).assertType(v,"param1"), "==", undefined, "NumberValidator validates number")
+               TEST( () => wrapTV(TVnumber).assertType(v,"param1"), "==", undefined, "NumberValidator validates number")
             else
-               TEST( () => wrapTV(tvComplex,TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number' not '${t}' (value: ${str})`, `NumberValidator does not validate ${str}`)
+               TEST( () => wrapTV(TVnumber).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'number' not '${t}' (value: ${str})`, `NumberValidator does not validate ${str}`)
 
             // TEST TVobject
             if (v != null && typeof v === "object")
-               TEST( () => wrapTV(tvComplex,TVobject).assertType(v,"param1"), "==", undefined, "ObjectValidator validates {}")
+               TEST( () => wrapTV(TVobject).assertType(v,"param1"), "==", undefined, "ObjectValidator validates {}")
             else
-               TEST( () => wrapTV(tvComplex,TVobject).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'object' not '${t}' (value: ${str})`, `ObjectValidator does not validate ${str}`)
+               TEST( () => wrapTV(TVobject).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'object' not '${t}' (value: ${str})`, `ObjectValidator does not validate ${str}`)
 
             // TEST TVref
             if (v !== null && (typeof v === "object" || typeof v === "function"))
-               TEST( () => wrapTV(tvComplex,TVref).assertType(v,"param1"), "==", undefined, "ReferenceValidator validates only function or object types")
+               TEST( () => wrapTV(TVref).assertType(v,"param1"), "==", undefined, "ReferenceValidator validates only function or object types")
             else
-               TEST( () => wrapTV(tvComplex,TVref).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»reference«' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
+               TEST( () => wrapTV(TVref).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'function|object' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
 
          })
 
@@ -820,7 +834,7 @@ function unittest_typevalidator(TEST) {
          if (typeof v === "object" && ownKeys(Object(v)).length===1)
             TEST( () => tvand.assertType(v,"p"), "==", undefined, "AndValidator validates {key:any}")
          else if (v === null || (typeof v !== "object" && typeof v !== "function"))
-            TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '»reference«' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
+            TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'function|object' not '${t}' (value: ${str})`, `ReferenceValidator does not validate ${str}`)
          else if (typeof v !== "object")
             TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'object' not '${t}' (value: ${str})`, `ObjectValidator does not validate ${str}`)
          else
@@ -828,22 +842,11 @@ function unittest_typevalidator(TEST) {
 
          // TEST TVenum
          TEST( () => TVenum(v).assertType(v,"p"), "==", undefined, "EnumValidator validates same value")
-         TEST( () => TVenum(...allValues).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
-         const withoutV=allValues.slice()
-         withoutV.splice(i,1)
-         const strWithout=withoutV.map( v => strValue(v) ).join(",")
+         TEST( () => TVenum(...testValues).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
          TEST( () => TVenum(...withoutV).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
          if ("a" in Object(v)) {
             TEST( () => TVkey(TVenum(1),"a").assertType(v,`p${i}`), "==", undefined, "EnumValidator validates {a:1}")
             TEST( () => TVkey(TVenum(2),"a").assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}.a' of type 'Enum[2]' not '»unknown enum value 1«' (value: 1)`, "EnumValidator does not validate {a:1}")
-         }
-         // wrapped form
-         TEST( () => TVor(TVenum(v)).assertType(v,"p"), "==", undefined, "EnumValidator validates same value")
-         TEST( () => TVor(TVenum(...allValues)).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
-         TEST( () => TVor(TVenum(...withoutV)).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
-         if ("a" in Object(v)) {
-            TEST( () => TVor(TVkey(TVenum(1),"a")).assertType(v,`p${i}`), "==", undefined, "EnumValidator validates {a:1}")
-            TEST( () => TVor(TVkey(TVenum(2),"a")).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type '{a:Enum[2]}' not '{a:»unknown enum value 1«}' (value: ${str})`, "EnumValidator does not validate {a:1}")
          }
 
          // TEST InstanceValidator

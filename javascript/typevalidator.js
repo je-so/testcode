@@ -415,11 +415,18 @@ class AndValidator extends TypeValidator {
    }
 }
 class EnumValidator extends TypeValidator {
-   constructor(values) { super(); this.values=values }
-   get expect() { return `Enum[${this.values.map((v) => strValue(v)).join(",")}]` }
+   constructor(values) {
+      super()
+      this.valueMap=new Map()
+      if (Array.isArray(values))
+         values.forEach( v => this.valueMap.set(v,strValue(v)) )
+      else // support named values
+         ownKeys(values).forEach( name => this.valueMap.set(values[name],String(name)) )
+   }
+   get expect() { return `Enum[${[...this.valueMap.values()].join(",")}]` }
    found(value) { return `»unknown enum value ${strValue(value)}«` }
    validate(context) {
-      if (this.values.findIndex( (v) => v === context.arg ) === -1)
+      if (! this.valueMap.has(context.arg))
          return context.error({expect:this.expect,found:this.found(context.arg)})
    }
 }
@@ -549,6 +556,7 @@ function unittest_typevalidator(TEST) {
    /*24*/ { value:new TestType(), strtype:"TestType", strval:"{test:true}"},
    ]
    const testValues=testStruct.map( t => t.value )
+   const namedTestValues=testStruct.reduce((obj,t,i) => ({...obj, ['E-'+i]:t.value}), {})
 
    testFunctions()
    testSimpleValidators()
@@ -784,6 +792,8 @@ function unittest_typevalidator(TEST) {
          const wrappers=[TVand,TVswitch,TVunion]
          const withoutV=(() => { const without=testValues.slice(); without.splice(i,1); return without })()
          const strWithout=withoutV.map( v => strValue(v) ).join(",")
+         const withoutNamedV=(() => { const without=Object.assign({},namedTestValues); delete without["E-"+i]; return without })()
+         const strWithoutNamed=ownKeys(withoutNamedV).join(",")
 
          wrappers.forEach( tvComplex => {
 
@@ -840,7 +850,7 @@ function unittest_typevalidator(TEST) {
          else
             TEST( () => tvand.assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' to have 1 property not ${Object.getOwnPropertyNames(Object(v)).length} (value: ${str})`, "KeyCount1Validator does only validate {a:1}")
 
-         // TEST TVenum
+         // TEST TVenum (values array)
          TEST( () => TVenum(v).assertType(v,"p"), "==", undefined, "EnumValidator validates same value")
          TEST( () => TVenum(...testValues).assertType(v,"p"), "==", undefined, "EnumValidator validates value from set")
          TEST( () => TVenum(...withoutV).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithout}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
@@ -848,6 +858,12 @@ function unittest_typevalidator(TEST) {
             TEST( () => TVkey(TVenum(1),"a").assertType(v,`p${i}`), "==", undefined, "EnumValidator validates {a:1}")
             TEST( () => TVkey(TVenum(2),"a").assertType(v,`p${i}`), "throw", `Expect argument property 'p${i}.a' of type 'Enum[2]' not '»unknown enum value 1«' (value: 1)`, "EnumValidator does not validate {a:1}")
          }
+
+         // TEST TVnamedenum (named values are listed in Enum[name1,name2,name3])
+         TEST( () => TVnamedenum({name:v}).assertType(v,"p"), "==", undefined, "EnumValidator should validate same named value")
+         TEST( () => TVnamedenum({name:!v}).assertType(v,"p"), "throw", `Expect argument 'p' of type 'Enum[name]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator should throw if named value is not equal")
+         TEST( () => TVnamedenum(namedTestValues).assertType(v,"p"), "==", undefined, "EnumValidator should validate value from named set")
+         TEST( () => TVnamedenum(withoutNamedV).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Enum[${strWithoutNamed}]' not '»unknown enum value ${str}«' (value: ${str})`, "EnumValidator throws if value is not in set")
 
          // TEST InstanceValidator
          if (v instanceof DummyType)
@@ -895,9 +911,9 @@ function unittest_typevalidator(TEST) {
 
          // TEST TVswitch
          if (v !== null && typeof v === "object")
-            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "==", undefined, "TVswitch validates only Array|object")
+            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "==", undefined, "Should validate Array|object")
          else {
-            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array|object' not '${t}' (value: ${str})`, "TVswitch does not validate primitives or functions")
+            TEST( () => TVswitch([TVarray],[TVobject]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array|object' not '${t}' (value: ${str})`, "Should not validate primitives or functions")
             TEST( () => TVswitch([TVarray,TVkey(TVnumber,0)],[TVobject,TVkey(TVnumber,"a")]).assertType(v,`p${i}`), "throw", `Expect argument 'p${i}' of type 'Array|object' not '${t}' (value: ${str})`, "TVswitch does not validate primitives or functions")
          }
          if ("a" in Object(v) || (Array.isArray(v) && v[0] === 1))
@@ -1032,6 +1048,8 @@ export const TVand=((...typeValidators) => new AndValidator(typeValidators))
 export { TVand as and }
 export const TVenum=((...values) => new EnumValidator(values))
 export { TVenum as enum }
+export const TVnamedenum=((namedValues) => new EnumValidator(namedValues))
+export { TVnamedenum as namedenum }
 export const TVinstance=((newTarget) => new InstanceValidator(newTarget))
 export { TVinstance as instance }
 export const TVkey=((typeValidator,...keys) => new KeyValidator(typeValidator,keys))

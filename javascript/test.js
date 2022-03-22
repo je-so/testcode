@@ -1,51 +1,56 @@
 /* Test module which implements TEST function and RUN_TEST.
    (c) 2022 Jörg Seebohn */
 
-const testContext=[]
 /** All supported comparison functions. ok holds the value which is returned from cmp in case of success. */
 const cmpMap=new Map([
-   ["==",{ cmp:(v,e)=>(v===e), ok:true }], ["!=",{ cmp:(v,e)=>(v!==e), ok:true }],
-   ["<=",{ cmp:(v,e)=>(v<= e), ok:true }], [">=",{ cmp:(v,e)=>(v>= e), ok:true }],
-   ["<", { cmp:(v,e)=>(v < e), ok:true }], [">", { cmp:(v,e)=>(v > e), ok:true }],
+   ["==",{ cmp:(v,e)=>(v===e), ok:true, name:"==" }], ["!=",{ cmp:(v,e)=>(v!==e), ok:true, name: "!="}],
+   ["<=",{ cmp:(v,e)=>(v<= e), ok:true, name:"<=" }], [">=",{ cmp:(v,e)=>(v>= e), ok:true, name: ">="}],
+   ["<", { cmp:(v,e)=>(v < e), ok:true, name:"<"  }], [">", { cmp:(v,e)=>(v > e), ok:true, name: ">" }],
 ])
+const testContext=[] // every RUN_TEST runs within its own context (see runWithinContext)
+const currentContext=() => { if (testContext.length) return testContext.at(-1); THROW("no test context - call RUN_TEST first"); }
 /** In case of failure adds a named value which is logged before the error describing exception. */
 const addFailedValue=(name,value) => currentContext().values.push({name, value})
-const currentContext=() => { if (testContext.length) return testContext.at(-1); THROW("no test context - call RUN_TEST first"); }
+/** Adds multiple failed values provided as key value pairs of an object. */
+const addFailedValues=(failedValues={}) => { for (const key of Object.keys(failedValues)) addFailedValue(key,failedValues[key]) }
 const log=(...args) => currentContext().log(...args)
-/** Adds customized test comparison functions. */
-const setCompare=(name,cmp,ok=true) => currentContext().cmpMap.set(name, {cmp, ok})
-const runWithinContext=(name,logFct,runTestFct) => {
-   testContext.push({ name, values:[], cmpMap: new Map(cmpMap), passedCount:0, failedCount:0, log:(logFct??console.log) })
+/** Adds customized test comparison function. Exported as TEST.setCompare. */
+const setCompare=(name,cmp,ok=true) => currentContext().cmpMap.set(name, {cmp, ok, name})
+const getCompare=(cmp) => {
+   if (typeof cmp === "function") return ({cmp,ok:true,name:cmp.name})
+   const cmpok=currentContext().cmpMap.get(cmp)
+   return (cmpok ? cmpok : THROW(`comparison function '${String(cmp)}' unsupported`))
+}
+const runWithinContext=(name,log=console.log,runTestFct) => {
+   testContext.push({ name, log, values:[], cmpMap: new Map(cmpMap), passedCount:0, failedCount:0 })
    runTestFct(currentContext())
    testContext.pop()
 }
 
 /** Throws an Error exception and adds key,value pairs of failedValues to the log. */
-function THROW(failedCmp,failedValues={}) {
-   for (const key of Object.keys(failedValues))
-      addFailedValue(key,failedValues[key])
+function THROW(failedCmp,failedValues) {
+   addFailedValues(failedValues)
    throw new Error(failedCmp)
 }
 
 /** Counts failure of a single TEST call, logs errormsg and also key,value pairs of failedValues (called from within TEST). */
-function FAILED(failedCmp,errormsg,failedValues={}) {
+function FAILED(failedCmp,errormsg,failedValues) {
    const context=currentContext()
-   for (const key of Object.keys(failedValues))
-      addFailedValue(key,failedValues[key])
+   addFailedValues(failedValues)
    log(`${context.name}: TEST failed: ${failedCmp}`)
    context.values.forEach( v => log(v.name+":","{",v.value,"}"))
    try { throw new Error(errormsg) } catch(e) { log(e) }
    context.failedCount ++
    context.values.length=0
+   return false
 }
 
 /** Counts success of a single TEST call any failed values added for logging in case of failure are cleared (called from within TEST). */
-const PASSED=() => { const context=currentContext(); context.passedCount ++; context.values.length=0; }
+const PASSED=() => { const context=currentContext(); context.passedCount ++; context.values.length=0; return true }
 
 /** Runs a complete test unit (i.e. unittest_of_module_A) and logs the number of TEST calls which passed or failed. */
 const RUN_TEST=(testFct,logFct) => runWithinContext(testFct.name,logFct, (context) => {
    try { testFct(TEST) } catch(e) { FAILED("unexpected exception","RUN_TEST aborted",{unexpected_exception:e}) }
-   // log test result
    if (context.failedCount === 0)
       log(`${context.name}: all ${context.passedCount} tests PASSED`)
    else if (context.passedCount === 0)
@@ -70,16 +75,14 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
       }
    }
    catch(e) {
-      if (cmp !== "throw") {
+      if (cmp !== "throw")
          return FAILED("unexpected exception", errormsg, { [`expect${eindex}`]:expect, unexpected_exception:e })
-      }
-      else if (e.message !== expect) {
+      else if (e.message !== expect)
          return FAILED("exception.message == expect", errormsg, { "exception.message":e.message, [`expect${eindex}`]:expect, exception:e })
-      }
       return PASSED()
    }
 
-   try { doTest(value,expect,vindex,eindex); PASSED(); } catch(e) { FAILED(e.message,errormsg) }
+   try { doTest(value,expect,vindex,eindex); return PASSED(); } catch(e) { return FAILED(e.message,errormsg) }
 
    function doTest(value,expect,vindex,eindex) { // vindex and eindex reflect comparison of sub-elements
       const failedValues=() => ({ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
@@ -90,15 +93,12 @@ function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
             doTest(value[i],expect[i],vindex+`[${i}]`,eindex+`[${i}]`)
       }
       else {
-         const isCmpFct=(typeof cmp === "function")
-         if (!(isCmpFct || currentContext().cmpMap.has(cmp)))
-            THROW(`TEST argument cmp '${String(cmp)}' unsupported`,failedValues())
-         const {cmp: cmpFct,ok: SUCCESS}=(isCmpFct ? {cmp,ok:true} : currentContext().cmpMap.get(cmp))
+         const {cmp:cmpFct, ok:SUCCESS, name:cmpName}=getCompare(cmp)
          let cmpResult=!SUCCESS
          try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
          if (cmpResult !== SUCCESS) {
             const failedCmp=( typeof cmpResult === "string" ? cmpResult
-                            : `${isCmpFct?cmpFct.name||"==":String(cmp)}(value${vindex},expect${eindex})`)
+                            : `${String(cmpName)}(value${vindex},expect${eindex})`)
             THROW(failedCmp,failedValues())
          }
       }

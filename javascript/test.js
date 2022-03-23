@@ -3,9 +3,9 @@
 
 /** All supported comparison functions. ok holds the value which is returned from cmp in case of success. */
 const cmpMap=new Map([
-   ["==",{ cmp:(v,e)=>(v===e), ok:true, name:"==" }], ["!=",{ cmp:(v,e)=>(v!==e), ok:true, name: "!="}],
-   ["<=",{ cmp:(v,e)=>(v<= e), ok:true, name:"<=" }], [">=",{ cmp:(v,e)=>(v>= e), ok:true, name: ">="}],
-   ["<", { cmp:(v,e)=>(v < e), ok:true, name:"<"  }], [">", { cmp:(v,e)=>(v > e), ok:true, name: ">" }],
+   ["==",{ cmp:(v,e)=>(v===e), ok:true}], ["!=",{ cmp:(v,e)=>(v!==e), ok:true}],
+   ["<=",{ cmp:(v,e)=>(v<= e), ok:true}], [">=",{ cmp:(v,e)=>(v>= e), ok:true}],
+   ["<", { cmp:(v,e)=>(v < e), ok:true}], [">", { cmp:(v,e)=>(v > e), ok:true}],
 ])
 const testContext=[] // every RUN_TEST runs within its own context (see runWithinContext)
 const currentContext=() => { if (testContext.length) return testContext.at(-1); THROW("no test context - call RUN_TEST first"); }
@@ -15,9 +15,8 @@ const addFailedValue=(name,value) => currentContext().values.push({name, value})
 const addFailedValues=(failedValues={}) => { for (const key of Object.keys(failedValues)) addFailedValue(key,failedValues[key]) }
 const log=(...args) => currentContext().log(...args)
 /** Adds customized test comparison function. Exported as TEST.setCompare. */
-const setCompare=(name,cmp,ok=true) => currentContext().cmpMap.set(name, {cmp, ok, name})
+const setCompare=(name,cmp,ok=true) => currentContext().cmpMap.set(name, {cmp, ok})
 const getCompare=(cmp) => {
-   if (typeof cmp === "function") return ({cmp,ok:true,name:cmp.name})
    const cmpok=currentContext().cmpMap.get(cmp)
    return (cmpok ? cmpok : THROW(`comparison function '${String(cmp)}' unsupported`))
 }
@@ -65,43 +64,44 @@ const RUN_TEST=(testFct,logFct) => runWithinContext(testFct.name,logFct, (contex
  * To test for exceptions value should be set to a function, cmp to "throw", and expect to the expected message string of the exception.
  * Argument cmp is either a value out of ["==","<=",">=","<",">","throw"] or a function
  * with arguments (value,expect) returning true in case of success or false in case of failure. */
-function TEST(value,cmp,expect,errormsg,vindex="",eindex="") {
+function TEST(value,cmp,expect,errormsg,index="") {
    try {
       if (typeof value === "function") {
          value=value()
       }
       if (cmp === "throw") {
-         return FAILED("expected exception", errormsg, { [`expect${eindex}`]: expect })
+         return FAILED("expected exception", errormsg, { [`expect${index}`]: expect })
       }
    }
    catch(e) {
       if (cmp !== "throw")
-         return FAILED("unexpected exception", errormsg, { [`expect${eindex}`]:expect, unexpected_exception:e })
+         return FAILED("unexpected exception", errormsg, { [`expect${index}`]:expect, unexpected_exception:e })
       else if (e.message !== expect)
-         return FAILED("exception.message == expect", errormsg, { "exception.message":e.message, [`expect${eindex}`]:expect, exception:e })
+         return FAILED(`exception.message == expect${index}`, errormsg, { "exception.message":e.message, [`expect${index}`]:expect, exception:e })
       return PASSED()
    }
 
-   try { doTest(value,expect,vindex,eindex); return PASSED(); } catch(e) { return FAILED(e.message,errormsg) }
+   try { doTest(); return PASSED(); } catch(e) { return FAILED(e.message,errormsg) }
 
-   function doTest(value,expect,vindex,eindex) { // vindex and eindex reflect comparison of sub-elements
-      const failedValues=() => ({ [`value${vindex}`]:value, [`expect${eindex}`]:expect })
-      if (Array.isArray(value) && Array.isArray(expect)) {
-         if (value.length !== expect.length)
-            THROW(`==(value${vindex}.length,expect${eindex}.length)`,failedValues())
-         for (var i=0; i<value.length; ++i)
-            doTest(value[i],expect[i],vindex+`[${i}]`,eindex+`[${i}]`)
-      }
-      else {
-         const {cmp:cmpFct, ok:SUCCESS, name:cmpName}=getCompare(cmp)
-         let cmpResult=!SUCCESS
-         try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
-         if (cmpResult !== SUCCESS) {
-            const failedCmp=( typeof cmpResult === "string" ? cmpResult
-                            : `${String(cmpName)}(value${vindex},expect${eindex})`)
-            THROW(failedCmp,failedValues())
+   function doTest() {
+      const {cmp:cmpFct, ok:SUCCESS}=(typeof cmp === "function" ? ({cmp,ok:true}) : getCompare(cmp))
+      ;(function compare(value,expect,index) { // index reflects comparison of sub-elements
+         const failedValues=() => ({ [`value${index}`]:value, [`expect${index}`]:expect })
+         if (Array.isArray(value) && Array.isArray(expect)) {
+            if (value.length !== expect.length)
+               THROW(`==(value${index}.length,expect${index}.length)`,failedValues())
+            for (var i=0; i<value.length; ++i)
+               compare(value[i],expect[i],index+`[${i}]`)
          }
-      }
+         else {
+            let cmpResult=!SUCCESS
+            try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
+            if (cmpResult !== SUCCESS) {
+               const comparisonName=(typeof cmp === "function" ? cmp.name : cmp)
+               THROW(`${String(comparisonName)}(value${index},expect${index})`,failedValues())
+            }
+         }
+      }) (value,expect,index)
    }
 }
 // < additional TEST features >

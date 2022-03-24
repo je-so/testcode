@@ -25,6 +25,7 @@ const runWithinContext=(name,log=console.log,runTestFct) => {
    runTestFct(currentContext())
    testContext.pop()
 }
+const failedValues=(value,expect,index) => ({ [`value${index}`]:value, [`expect${index}`]:expect })
 
 /** Throws an Error exception and adds key,value pairs of failedValues to the log. */
 function THROW(failedCmp,failedValues) {
@@ -70,12 +71,12 @@ function TEST(value,cmp,expect,errormsg,index="") {
          value=value()
       }
       if (cmp === "throw") {
-         return FAILED("expected exception", errormsg, { [`expect${index}`]: expect })
+         return FAILED("expected exception", errormsg, failedValues(value,expect,index))
       }
    }
    catch(e) {
       if (cmp !== "throw")
-         return FAILED("unexpected exception", errormsg, { [`expect${index}`]:expect, unexpected_exception:e })
+         return FAILED("unexpected exception", errormsg, { unexpected_exception:e, ...failedValues(value,expect,index) })
       else if (e.message !== expect)
          return FAILED(`exception.message == expect${index}`, errormsg, { "exception.message":e.message, [`expect${index}`]:expect, exception:e })
       return PASSED()
@@ -86,10 +87,9 @@ function TEST(value,cmp,expect,errormsg,index="") {
    function doTest() {
       const {cmp:cmpFct, ok:SUCCESS}=(typeof cmp === "function" ? ({cmp,ok:true}) : getCompare(cmp))
       ;(function compare(value,expect,index) { // index reflects comparison of sub-elements
-         const failedValues=() => ({ [`value${index}`]:value, [`expect${index}`]:expect })
          if (Array.isArray(value) && Array.isArray(expect)) {
             if (value.length !== expect.length)
-               THROW(`==(value${index}.length,expect${index}.length)`,failedValues())
+               THROW(`==(value${index}.length,expect${index}.length)`,failedValues(value,expect,index))
             for (var i=0; i<value.length; ++i)
                compare(value[i],expect[i],index+`[${i}]`)
          }
@@ -97,8 +97,8 @@ function TEST(value,cmp,expect,errormsg,index="") {
             let cmpResult=!SUCCESS
             try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
             if (cmpResult !== SUCCESS) {
-               const comparisonName=(typeof cmp === "function" ? cmp.name : cmp)
-               THROW(`${String(comparisonName)}(value${index},expect${index})`,failedValues())
+               const comparisonName=String(typeof cmp === "function" ? cmp.name : cmp)
+               THROW(`${comparisonName}(value${index},expect${index})`,failedValues(value,expect,index))
             }
          }
       }) (value,expect,index)

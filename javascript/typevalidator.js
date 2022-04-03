@@ -417,11 +417,10 @@ class AndValidator extends TypeValidator {
 class EnumValidator extends TypeValidator {
    constructor(values) {
       super()
-      this.valueMap=new Map()
-      if (Array.isArray(values))
-         values.forEach( v => this.valueMap.set(v,strValue(v)) )
-      else // support named values
-         ownKeys(values).forEach( name => this.valueMap.set(values[name],String(name)) )
+      this.valueMap=new Map( Array.isArray(values)
+         ? values.map( v => [v,strValue(v)] )
+         : ownKeys(values).map( key => [values[key],String(key)])
+      )
    }
    get expect() { return `Enum[${[...this.valueMap.values()].join(",")}]` }
    found(value) { return `»unknown enum value ${strValue(value)}«` }

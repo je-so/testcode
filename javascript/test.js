@@ -23,9 +23,9 @@ const getCompare=(cmp) => {
 const runWithinContext=(name,log=console.log,runTestFct) => {
    testContext.push({ name, log, values:[], cmpMap: new Map(cmpMap), passedCount:0, failedCount:0 })
    runTestFct(currentContext())
-   testContext.pop()
+   return testContext.pop().failedCount === 0
 }
-const failedValues=(value,expect,index) => ({ [`value${index}`]:value, [`expect${index}`]:expect })
+const failedTESTparams=(value,expect,index) => ({ [`value${index}`]:value, [`expect${index}`]:expect })
 
 /** Throws an Error exception and adds key,value pairs of failedValues to the log. */
 function THROW(failedCmp,failedValues) {
@@ -62,21 +62,21 @@ const RUN_TEST=(testFct,logFct) => runWithinContext(testFct.name,logFct, (contex
 })
 
 /** Compares value with expect and logs errormsg in case of inequality/failure.
- * To test for exceptions value should be set to a function, cmp to "throw", and expect to the expected message string of the exception.
- * Argument cmp is either a value out of ["==","<=",">=","<",">","throw"] or a function
- * with arguments (value,expect) returning true in case of success or false in case of failure. */
+ * To test for exceptions value should be set to a function, cmp to "throw", and expect message property of expected exception.
+ * Argument cmp is either a value out of ["==","!=","<=",">=","<",">","throw"] or a function
+ * with parameters (value,expect) returning true in case of success or false in case of failure. */
 function TEST(value,cmp,expect,errormsg,index="") {
    try {
       if (typeof value === "function") {
          value=value()
       }
       if (cmp === "throw") {
-         return FAILED("expected exception", errormsg, failedValues(value,expect,index))
+         return FAILED("expected exception", errormsg, failedTESTparams(value,expect,index))
       }
    }
    catch(e) {
       if (cmp !== "throw")
-         return FAILED("unexpected exception", errormsg, { unexpected_exception:e, ...failedValues(value,expect,index) })
+         return FAILED("unexpected exception", errormsg, { unexpected_exception:e, ...failedTESTparams(value,expect,index) })
       else if (e.message !== expect)
          return FAILED(`exception.message == expect${index}`, errormsg, { "exception.message":e.message, [`expect${index}`]:expect, exception:e })
       return PASSED()
@@ -89,7 +89,7 @@ function TEST(value,cmp,expect,errormsg,index="") {
       ;(function compare(value,expect,index) { // index reflects comparison of sub-elements
          if (Array.isArray(value) && Array.isArray(expect)) {
             if (value.length !== expect.length)
-               THROW(`==(value${index}.length,expect${index}.length)`,failedValues(value,expect,index))
+               THROW(`==(value${index}.length,expect${index}.length)`,failedTESTparams(value,expect,index))
             for (var i=0; i<value.length; ++i)
                compare(value[i],expect[i],index+`[${i}]`)
          }
@@ -98,7 +98,7 @@ function TEST(value,cmp,expect,errormsg,index="") {
             try { cmpResult=cmpFct(value,expect) } catch(e) { addFailedValue("unexpected_exception",e) }
             if (cmpResult !== SUCCESS) {
                const comparisonName=String(typeof cmp === "function" ? cmp.name : cmp)
-               THROW(`${comparisonName}(value${index},expect${index})`,failedValues(value,expect,index))
+               THROW(`${comparisonName}(value${index},expect${index})`,failedTESTparams(value,expect,index))
             }
          }
       }) (value,expect,index)

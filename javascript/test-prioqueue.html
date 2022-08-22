@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <style>
+  </style>
+</head>
+<body>
+   <h5>Running PrioQueue Unit-Test ...</h5>
+   <p id="RESULT"></p>
+   <script>
+      function SHOW_TEST_RESULT(OK) {
+         var p = document.getElementById("RESULT")
+         p.innerText = OK ? "Unit-Test passed"
+                          : "See Console for a list of failed tests"
+      }
+   </script>
+   <script type="module">
+      import * as queue from "./prioqueue.js"
+      import { RUN_TEST } from "./test.js"
+      const OK=RUN_TEST(queue.unittest)
+      SHOW_TEST_RESULT(OK)
+   </script>
+</body>
+</html>

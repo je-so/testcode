@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+   <style>
+      html { margin:0; padding:0; width:500px; }
+   </style>
+</head>
+<body style="margin:0;padding:10px">
+<script>
+   setTimeout( () => {
+      console.log("bigger")
+      document.getElementById("absdiv").style.height="100px";
+      setTimeout( () => {
+         console.log("smaller")
+         document.getElementById("absdiv").style.height="50px";
+      }, 1000)
+   }, 1000)
+   setTimeout( () => document.documentElement.style.width="auto", 3000)
+   setTimeout( () => window.parent.postMessage({type:"iframe-scroll-y",value:-10},"*"), 4000)
+</script>
+<script src="iframeresize.js"></script>
+<div>Hello from iframe_content.html</div>
+<div id="absdiv" style="position:absolute;height:50px;border: 10px solid black;">very high div</div>
+</body>
+</html>

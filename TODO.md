@@ -22,4 +22,21 @@ Types
      `setTimeout(number'ns)`, `setTimeout(number'µs)`
      or more generic `setTimeout(number'@unit) { setTimeout(number as int'ns); }`
    
-       
+Multi Dimensional
+=================
+
+Sometimes functions need to return more than one data channel.
+The most prominent is the error channel.
+
+But we - as programmers - need only a single deterministic value. We need to collapse 
+*multidimensional* information back to a single value.
+
+```
+var value = (function (tuple) { if (tuple.error) return defaultValue; else tuple.result }) (parse(strValue));
+```
+
+Flow of error and valid data information are two dimensions. There are more...
+The *Time* to measure the max. duration of an operation (and to coordinate concurrent behaviour) is another one.
+
+And - as you know - if you intermix dimensions in any non orthogonal way you get into trouble cause of side effects lurking in one dimension to effect another one cause of non  orthogonal combination of behaviour.
+

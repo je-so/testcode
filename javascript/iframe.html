@@ -8,16 +8,17 @@
 </head>
 <body>
 <div style="height:100px;"></div>
-<div style="_display:inline-block;width:200px;height:100px;border: 1px solid black;">
+<div style="width:200px;height:100px;border: 1px solid black;">
    hello
    <div style="height:20px;">1</div>
    <div style="height:20px;" id="inner">2</div>
 </div>
 
+<script src="iframeresize.js"></script>
+
 <iframe data-config-resize="log:true;scrollyoffset:0;" src="iframe_content.html" id="content"></iframe>
 <div style="height:1000px;"></div>
 
-<script src="iframeresize.js"></script>
 <script>window.scrollTo(0,0)</script>
 
 <div>Hello2</div>

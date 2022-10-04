@@ -16,7 +16,7 @@
    // handling iframe content
    //////////////////////////
    if (window.parent !== window.self) {
-      var setHeight=0,sbarHeight=0,oldTimeout;
+      var setHeight=0,setHeightDiff=0,oldTimeout
       function startTimer(timeout) {
          if (oldTimeout !== undefined) clearTimeout(oldTimeout)
          oldTimeout=setTimeout(updateHeight,timeout)
@@ -26,20 +26,19 @@
          return ymargin+document.documentElement.offsetHeight-document.body.offsetHeight+document.body.scrollHeight
       }
       function onResizeContent() {
-         // the difference between the set height and the client height which does not contain height of scrollbar results in height of scrollbar
-         const sbarHeight2=Math.max(setHeight-document.documentElement.clientHeight+1,0)
-         sbarHeight=(sbarHeight2<sbarHeight-2 || sbarHeight<sbarHeight2 ? sbarHeight2 : sbarHeight)
-         log(config,"onResizeContent:",{setHeight,clientHeight:document.documentElement.clientHeight,sbarHeight})
+         const setHeightDiff2=Math.max(setHeight-document.documentElement.clientHeight+(document.documentElement.scrollHeight!=document.documentElement.clientHeight),0)
+         setHeightDiff=(setHeightDiff2<setHeightDiff-2 || setHeightDiff<setHeightDiff2 ? setHeightDiff2 : setHeightDiff)
+         log(config,"onResizeContent:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
          startTimer(0)
       }
       function updateHeight() {
-         const scrollX=(document.documentElement.clientWidth !== document.documentElement.scrollWidth)
-         const height=getContentHeight()+(scrollX?sbarHeight:0)
+         const height=getContentHeight()
          const tooSmall=(document.documentElement.clientHeight !== document.documentElement.scrollHeight)
          const tooBig=document.documentElement.scrollHeight>height+2
          if (tooSmall || tooBig) {
-            setHeight=height
-            log(config,"updateHeight:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,sbarHeight,scrollX})
+            const adaptedHeight=height + setHeightDiff
+            setHeight=adaptedHeight + (adaptedHeight != setHeight ? 0 : tooSmall ? +1 : -1)
+            log(config,"updateHeight:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
             window.parent.postMessage({type:"iframe-height",value:setHeight},"*")
          } else
             startTimer(50)

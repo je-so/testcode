@@ -4,10 +4,10 @@
    <meta charset="utf-8">
    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
    <style>
-      html { margin:0; padding:0; width:500px; }
+      html { border-top: 19px solid black; margin:0px; padding:0px; }
    </style>
 </head>
-<body style="margin:0;padding:10px">
+<body style="margin:0px;padding-top:0px">
 <script>
    setTimeout( () => {
       console.log("bigger")
@@ -17,11 +17,12 @@
          document.getElementById("absdiv").style.height="50px";
       }, 1000)
    }, 1000)
-   setTimeout( () => document.documentElement.style.width="auto", 3000)
-   setTimeout( () => window.parent.postMessage({type:"iframe-scroll-y",value:-10},"*"), 4000)
+   setTimeout( () => { console.log("SCROLLBAR"); document.documentElement.style.width="500px"}, 3000)
+   setTimeout( () => { console.log("NO SCROLLBAR"); document.documentElement.style.width="auto"}, 7000)
+   setTimeout( () => window.parent.postMessage({type:"iframe-scroll-y",value:-10},"*"), 8000)
 </script>
 <script src="iframeresize.js"></script>
 <div>Hello from iframe_content.html</div>
-<div id="absdiv" style="position:absolute;height:50px;border: 10px solid black;">very high div</div>
+<div id="absdiv" style="position:absolute;height:40px;border: 10px solid black;">very high div</div>
 </body>
 </html>

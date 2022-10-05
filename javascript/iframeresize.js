@@ -5,18 +5,17 @@
    const config={log:true,scrollyoffset:0}, configAttr=Symbol("iframe")
    function parseConfig(str) {
       const config={}
-      str=typeof str === "string" ? str.replaceAll(" ","") : ""
+      str=typeof str === "string" ? str.replaceAll(" ","") + ";" : ""
       config.log=str.indexOf("log:") >= 0 && str.substr(str.indexOf("log:")+4).startsWith("true;")
-      config.scrollyoffset=str.indexOf("scrollyoffset:") >= 0 && parseInt(str.substr(str.indexOf("scrollyoffset:")+14))
-      config.scrollyoffset=((nr)=>Number.isInteger(nr) && nr || 0)(config.scrollyoffset)
+      config.scrollyoffset=str.indexOf("scrollyoffset:") >= 0 && parseInt(str.substr(str.indexOf("scrollyoffset:")+14)) || 0
       return config
    }
-   function log(config,...values) { if (!config || config.log) console.log("iframe",...values) }
+   function log(config,...values) { if (!config || config.log) console.log("iframe",`(ms:${(""+(new Date().valueOf()%10000)).padStart(4,"0")})`,...values) }
    //////////////////////////
    // handling iframe content
    //////////////////////////
    if (window.parent !== window.self) {
-      var setHeight=0,setHeightDiff=0,oldTimeout
+      var contentHeightDiff=0,setHeight=0,setHeightDiff=0,updateInProgress=false,oldTimeout
       function startTimer(timeout) {
          if (oldTimeout !== undefined) clearTimeout(oldTimeout)
          oldTimeout=setTimeout(updateHeight,timeout)
@@ -25,33 +24,36 @@
          const ymargin=((cstyle)=>parseInt(cstyle.marginTop) + parseInt(cstyle.marginBottom))(getComputedStyle(document.documentElement))
          return ymargin+document.documentElement.offsetHeight-document.body.offsetHeight+document.body.scrollHeight
       }
+      function getTooSmall() { return document.documentElement.clientHeight !== document.documentElement.scrollHeight }
       function onResizeContent() {
-         const setHeightDiff2=Math.max(setHeight-document.documentElement.clientHeight+(document.documentElement.scrollHeight!=document.documentElement.clientHeight),0)
+         const setHeightDiff2=Math.max(setHeight-document.documentElement.clientHeight+getTooSmall(),0)
          setHeightDiff=(setHeightDiff2<setHeightDiff-2 || setHeightDiff<setHeightDiff2 ? setHeightDiff2 : setHeightDiff)
          log(config,"onResizeContent:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
-         startTimer(0)
+         startTimer(0); updateInProgress=false;
       }
       function updateHeight() {
-         const height=getContentHeight()
-         const tooSmall=(document.documentElement.clientHeight !== document.documentElement.scrollHeight)
+         if (updateInProgress) return
+         const height=getContentHeight()+contentHeightDiff
+         const tooSmall=getTooSmall()
          const tooBig=document.documentElement.scrollHeight>height+2
          if (tooSmall || tooBig) {
-            const adaptedHeight=height + setHeightDiff
-            setHeight=adaptedHeight + (adaptedHeight != setHeight ? 0 : tooSmall ? +1 : -1)
+            updateInProgress=true
+            setHeight=height + setHeightDiff
             log(config,"updateHeight:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
             window.parent.postMessage({type:"iframe-height",value:setHeight},"*")
-         } else
+         }
+         else
             startTimer(50)
       }
       function init() {
-         // body style ensures that body.scrollHeight returns height also of absolute positioned elements within body
-         document.body.style.overflow="visible";document.body.style.height="20px";document.body.style.position="relative"
+         // body style ensures that body.scrollHeight returns height also for position:absolute elements within body
+         document.body.style.position="relative"
          window.addEventListener("resize", onResizeContent)
          window.addEventListener("message", (event) => {
             if (typeof event.data.type === "string" && event.data.type.startsWith("iframe-")) {
                log(config,"message:",event.data)
                switch (event.data.type) {
-               case "iframe-resize": onResizeContent(); break
+               case "iframe-resize": onResizeContent(); if(getTooSmall()) contentHeightDiff=Math.max(document.documentElement.scrollHeight-getContentHeight()+1,0); break
                case "iframe-set-config": startTimer(0); Object.assign(config,parseConfig(event.data.value)); break
                default: log("error:","unknown message"); break
                }

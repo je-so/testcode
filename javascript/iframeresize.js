@@ -1,6 +1,6 @@
 // (c) 2022 Jörg Seebohn
 // Supports automatically resizing of height of embedded iframe
-// Must be included in parent html and iframe html
+// Must be included in iframe container and iframe content html
 (function() {
    const config={log:true,scrollyoffset:0}, configAttr=Symbol("iframe")
    function parseConfig(str) {
@@ -29,7 +29,7 @@
          const setHeightDiff2=Math.max(setHeight-document.documentElement.clientHeight+getTooSmall(),0)
          setHeightDiff=(setHeightDiff2<setHeightDiff-2 || setHeightDiff<setHeightDiff2 ? setHeightDiff2 : setHeightDiff)
          log(config,"onResizeContent:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
-         startTimer(0); updateInProgress=false;
+         updateInProgress=false; startTimer(0);
       }
       function updateHeight() {
          if (updateInProgress) return
@@ -50,7 +50,7 @@
          document.body.style.position="relative"
          window.addEventListener("resize", onResizeContent)
          window.addEventListener("message", (event) => {
-            if (typeof event.data.type === "string" && event.data.type.startsWith("iframe-")) {
+            if (window.parent===event.source && typeof event.data.type === "string" && event.data.type.startsWith("iframe-")) {
                log(config,"message:",event.data)
                switch (event.data.type) {
                case "iframe-resize": onResizeContent(); if(getTooSmall()) contentHeightDiff=Math.max(document.documentElement.scrollHeight-getContentHeight()+1,0); break

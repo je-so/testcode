@@ -83,8 +83,19 @@
                   else
                      iframe.style.height=event.data.value+"px" // height change -> generates "resize" event
                   break;
-               case "iframe-get-config": iframe[configAttr]=parseConfig(iframe.dataset["configResize"]); event.source.postMessage({type: "iframe-set-config", value:iframe.dataset["configResize"]}, "*"); break
-               case "iframe-scroll-y": window.scrollTo(document.documentElement.scrollLeft,iframe.getBoundingClientRect().top+event.data.value+document.documentElement.scrollTop+iframe[configAttr].scrollyoffset); break
+               case "iframe-get-config":
+                  iframe[configAttr] = parseConfig(iframe.dataset["configResize"])
+                  event.source.postMessage({type: "iframe-set-config", value:iframe.dataset["configResize"]}, "*")
+                  break
+               case "iframe-scrollto": // { x: 0 /* left */ | undefined /* unchanged */, y: 0 /* top */, smooth: true|false|undefined }
+                  const cstyle=getComputedStyle(iframe)
+                  if ("x" in event.data) event.data.x+=iframe.getBoundingClientRect().left + parseInt(cstyle.borderLeftWidth) + parseInt(cstyle.paddingLeft)
+                  if ("y" in event.data) event.data.y+=iframe.getBoundingClientRect().top + iframe[configAttr].scrollyoffset + parseInt(cstyle.borderTopWidth) + parseInt(cstyle.paddingTop)
+                  if (window.parent != window.self)
+                     window.parent.postMessage(event.data, "*") // route to next parent
+                  else
+                     window.scrollTo({left:document.documentElement.scrollLeft + (event.data.x || 0), top: document.documentElement.scrollTop + (event.data.y || 0), behavior: event.data.smooth ? "smooth" : "auto" });
+                  break
                default: log(iframe[configAttr],"error:","unknown message"); break
                }
             }

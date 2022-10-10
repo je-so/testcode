@@ -17,12 +17,22 @@
          document.getElementById("absdiv").style.height="50px";
       }, 1000)
    }, 1000)
+   setTimeout( () => window.parent.postMessage({type:"iframe-scrollto",y:document.getElementById("absdiv").getBoundingClientRect().top,smooth:true},"*"), 100)
+   setTimeout( () => window.parent.postMessage({type:"iframe-scrollto",y:0,smooth:true},"*"), 1200)
+   setTimeout( () => window.parent.postMessage({type:"iframe-scrollto",y:-100,smooth:true},"*"), 2300)
    setTimeout( () => { console.log("SCROLLBAR"); document.documentElement.style.width="500px"}, 3000)
    setTimeout( () => { console.log("NO SCROLLBAR"); document.documentElement.style.width="auto"}, 7000)
-   setTimeout( () => window.parent.postMessage({type:"iframe-scroll-y",value:-10},"*"), 8000)
+   if (window.top === window.parent)
+      setTimeout( () => {
+         document.getElementById("absdiv").style.display="none"
+         document.getElementById("inner").style.display=""
+         document.getElementById("inner").setAttribute("src","iframe_content.html")
+      }, 8000)
 </script>
 <script src="iframeresize.js"></script>
 <div>Hello from iframe_content.html</div>
-<div id="absdiv" style="position:absolute;height:40px;border: 10px solid black;">very high div</div>
+<div id="absdiv" style="position:absolute;left:40px;height:40px;border: 10px solid black;">very high div</div>
+
+<iframe data-config-resize="log:true;" id="inner" width="280" height="10" style="display:none;border:2px solid blue;padding:10px;box-sizing: border-box;"></iframe>
 </body>
 </html>

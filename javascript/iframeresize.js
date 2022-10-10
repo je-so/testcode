@@ -16,46 +16,51 @@
    //////////////////////////
    if (window.parent !== window.self) {
       var contentHeightDiff=0,setHeight=0,setHeightDiff=0,updateInProgress=false,oldTimeout
-      function startTimer(timeout) {
-         if (oldTimeout !== undefined) clearTimeout(oldTimeout)
-         oldTimeout=setTimeout(updateHeight,timeout)
-      }
       function getContentHeight() {
          const ymargin=((cstyle)=>parseInt(cstyle.marginTop) + parseInt(cstyle.marginBottom))(getComputedStyle(document.documentElement))
          return ymargin+document.documentElement.offsetHeight-document.body.offsetHeight+document.body.scrollHeight
       }
       function getTooSmall() { return document.documentElement.clientHeight !== document.documentElement.scrollHeight }
+      function needUpdate(height) {
+         const tooBig=document.documentElement.scrollHeight>height+2
+         return tooBig || getTooSmall()
+      }
       function onResizeContent() {
          const setHeightDiff2=Math.max(setHeight-document.documentElement.clientHeight+getTooSmall(),0)
          setHeightDiff=(setHeightDiff2<setHeightDiff-2 || setHeightDiff<setHeightDiff2 ? setHeightDiff2 : setHeightDiff)
          log(config,"onResizeContent:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
+         // Even if startTimer clears any running timer and starts a new one
+         // it is possible that the cleared timer had already fired and its event is waiting for processing in the global event queue
+         // => state updateInProgress is used to prevent any new onTimer/send "iframe-height" cycle during an already running cycle
          updateInProgress=false; startTimer(0);
       }
-      function updateHeight() {
+      function onTimer() {
          if (updateInProgress) return
          const height=getContentHeight()+contentHeightDiff
-         const tooSmall=getTooSmall()
-         const tooBig=document.documentElement.scrollHeight>height+2
-         if (tooSmall || tooBig) {
-            updateInProgress=true
+         if (needUpdate(height)) {
+            updateInProgress=true // wait for onResizeContent
             setHeight=height + setHeightDiff
             log(config,"updateHeight:",{setHeight,clientHeight:document.documentElement.clientHeight,scrollHeight:document.documentElement.scrollHeight,setHeightDiff})
-            window.parent.postMessage({type:"iframe-height",value:setHeight},"*")
+            window.parent.postMessage({type:"iframe-height",value:setHeight},"*") // trigger onResizeContent
          }
          else
             startTimer(50)
       }
+      function startTimer(timeout) {
+         if (oldTimeout !== undefined) clearTimeout(oldTimeout)
+         oldTimeout=setTimeout(onTimer,timeout)
+      }
       function init() {
-         // body style ensures that body.scrollHeight returns height also for position:absolute elements within body
+         // body style ensures that body.scrollHeight returns height also for position:absolute child elements of body
          document.body.style.position="relative"
          window.addEventListener("resize", onResizeContent)
          window.addEventListener("message", (event) => {
-            if (window.parent===event.source && typeof event.data.type === "string" && event.data.type.startsWith("iframe-")) {
+            if (window.parent === event.source && typeof event.data.type === "string" && event.data.type.startsWith("iframe-")) {
                log(config,"message:",event.data)
                switch (event.data.type) {
                case "iframe-resize": onResizeContent(); if(getTooSmall()) contentHeightDiff=Math.max(document.documentElement.scrollHeight-getContentHeight()+1,0); break
                case "iframe-set-config": startTimer(0); Object.assign(config,parseConfig(event.data.value)); break
-               default: log("error:","unknown message"); break
+               default: log(config,"error:","unknown message"); break
                }
             }
          })
@@ -72,15 +77,15 @@
             if (iframe.contentWindow === event.source) {
                log(iframe[configAttr],"message:",event.data)
                switch (event.data.type) {
-               case "iframe-height": // simulates or generates resize event -> onResizeContent
+               case "iframe-height": // generates real or simulated resize event -> onResizeContent
                   if(getComputedStyle(iframe).height === event.data.value+"px")
-                     event.source.postMessage({type: "iframe-resize"}, "*") // simulates event
+                     event.source.postMessage({type: "iframe-resize"}, "*") // simulated event
                   else
-                     iframe.style.height=event.data.value+"px" // height change -> event generation
+                     iframe.style.height=event.data.value+"px" // height change -> generates "resize" event
                   break;
                case "iframe-get-config": iframe[configAttr]=parseConfig(iframe.dataset["configResize"]); event.source.postMessage({type: "iframe-set-config", value:iframe.dataset["configResize"]}, "*"); break
                case "iframe-scroll-y": window.scrollTo(document.documentElement.scrollLeft,iframe.getBoundingClientRect().top+event.data.value+document.documentElement.scrollTop+iframe[configAttr].scrollyoffset); break
-               default: log("error:","unknown message"); break
+               default: log(iframe[configAttr],"error:","unknown message"); break
                }
             }
          })

@@ -51,7 +51,8 @@
          oldTimeout=setTimeout(onTimer,timeout)
       }
       function init() {
-         // body style ensures that body.scrollHeight returns height also for position:absolute child elements of body
+         // Floating elements: Add an invisible <div style="clear:both;height:0;"></div> before closing </body> if floating elements stick out body container
+         // Absolute elements: position:relative ensures that body.scrollHeight returns height for any absolute positioned elements within body
          document.body.style.position="relative"
          window.addEventListener("resize", onResizeContent)
          window.addEventListener("message", (event) => {

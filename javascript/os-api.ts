@@ -5,6 +5,7 @@ import { FilePathMatcher } from "./filepathmatcher.ts";
 async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<string[]> {
     try {
       let result: string[] = []
+      let subdirResult: Promise<string[]>[] = []
       for await (const dirEntry of Deno.readDir(dirpath)) {
         const filename = dirEntry.name
         const filepath = path.join(dirpath, filename)
@@ -21,10 +22,12 @@ async function scanDir(dirpath: string, matchers: FilePathMatcher[]): Promise<st
             }
           }
           if (subdirMatchers.length) {
-            result=result.concat(await scanDir(filepath, subdirMatchers))
+            subdirResult.push(scanDir(filepath, subdirMatchers))
           }
         }
       }
+      for await (const result2 of subdirResult)
+        result=result.concat(result2)
       return result
     } catch (e) {
       throw new Error(`Unable to scan directory '${dirpath}': ${e}`)

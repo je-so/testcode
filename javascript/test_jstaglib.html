@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+   <link href="bootstrap/bootstrap.css" rel="stylesheet">
+   <script src="bootstrap/bootstrap.bundle.js"></script>
+   <script src="./jstaglib.js"></script>
+</head>
+<body>
+
+<script>
+   var tags=null
+
+   jstl.onload( () => {
+      tags=jstl.parseTags({url:"tags.html",exportPrefix:"",text:TEST_TAGS.innerHTML})
+      console.log("tag-Nodes",tags)
+   })
+</script>
+
+<div ID="TEST_TAGS" style="display:none">
+
+<tags url="" export-prefix="" taglib-prefix="t-" local-prefix="">
+   <!-- <t-import prefix="" url=""></t-import> -->
+
+   <t-view name="checkbox2">
+      <t-vdata>{name:true,id:true,label:true}</t-vdata>
+      <t-attr name="nr" required></t-attr>
+      <t-attr name="last">false</t-attr>
+      <t-attr name="header" type="nodes"></t-attr>
+      <t-attr name="content" type="nodes"></t-attr>
+      <t-attr name="footer" type="nodes"></t-attr>
+
+      <t-html>
+         <div show="true">
+            &:nr
+            <div class="form-check-inline">
+               <input class="form-check-input ms-2 me-1" type="checkbox" id="&:id" name="&:name" value="&:value">
+               <label class="form-check-label" for="&:id">&:label</label>
+            </div>
+         </div>
+         <div show="&:last" header="&:header">&:footer</div>
+      </t-html>
+   </t-view>
+
+   <t-view name="checkboxes">
+      <t-vdata>{checkboxes:true}</t-vdata>
+      <t-html>
+         <div class="row">
+            <div class="col-2">Hobbies ?</div>
+            <div class="col-10">
+               <t-set var="viewname">checkbox2</t-set>
+               <t-for in="&:checkboxes" var="checkbox" index="i" length="length">
+                  <checkbox nr="&:`${1+d.i}. `" last="&:d.length===d.i+1" vdata="&:checkbox">
+                     <header><b>HEADER</b>&:i</header>
+                     <footer><hr></footer>
+                     <content></content>
+                  </checkbox>
+               </t-for>
+               <t-set name="c">&:checkboxes.2.label</t-set>
+               <div>checkboxes[0].label = <span>&:c</span></div>
+            </div>
+         </div>
+         xxx
+      </t-html>
+   </t-view>
+
+</div>
+</body>
+</html>

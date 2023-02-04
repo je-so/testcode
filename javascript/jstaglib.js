@@ -8,13 +8,15 @@ const jstl=(() => {
    ///////////////
    const INIT_ATTR_PROPERTIES={ name:true, isEnum:false, isEmpty:false, isModelAccess:false, isRequired:false, pattern:false, reservedPattern:false }
    const TAGS_CONTAINER=document.createDocumentFragment()
+   /** Maps view names(all uppercase) to view objects. */
+   const KNOWN_VIEWS={}
    const ONLOAD_QUEUE=new Promise( (resolve) => {
       if ("complete" === document.readyState)
          resolve(new Event("load")) // event already occurred
       else
          window.addEventListener("load", resolve, {once:true}) // wait
    })
-   /** Contains all additional loaded extensions indexed by their name. */
+   /** Contains loaded extensions indexed by name. */
    const EXTENSIONS={}
 
    /////////////////////////
@@ -22,7 +24,6 @@ const jstl=(() => {
    /////////////////////////
    const PREFIX_PATTERN=/^([A-Za-z][-_.:a-zA-Z0-9]*[-:]|)$/
    const NONEMPTY_PREFIX_PATTERN=/^[A-Za-z][-_.:a-zA-Z0-9]*[-:]$/
-   const NEWLINE=/\n/g
    const TAGNAME_PATTERN=/^[a-zA-Z][_.a-zA-Z0-9]*$/
    const ONLY_WHITE_SPACE=/^[ \n\t]*$/
    const VARNAME_PATTERN=/^[_$A-Za-z][_$A-Za-z0-9]*/
@@ -58,9 +59,17 @@ const jstl=(() => {
       ignoreException(ParseError,callback)
    }
 
-   ///////////////////////////
-   // Some Helper Functions //
-   ///////////////////////////
+   const strLocation=(node) => `Location: ${nodeHierarchy(node)}`
+   const strSelector=(node) => `Selector: ${nodeSelector(node)}`
+   const logErrorForNode=(node,attrName,message,prevNode) =>
+   {
+      const previous=(prevNode ? `\nPrevious ${strLocation(prevNode)}\nPrevious ${strSelector(prevNode)}` : "")
+      return new ParseError(`<${nodeName(node)}${attrName?' '+attrName:''}>: ${message}\n${strLocation(node)}\n${strSelector(node)}${previous}`,{logArgs: ["\nLocation:",...parentChain(node)]})
+   }
+
+   //////////////////////////
+   // string & DOM support //
+   //////////////////////////
 
    function endWithDot(msg)
    {
@@ -89,48 +98,60 @@ const jstl=(() => {
    const isEmptyNode=(node) => (isEmptyTextNode(node) || isCommentNode(node))
    const nodeName=(node) => node ? node.nodeName.toLowerCase() : null
 
-   function buildDataAccessFunction(expr)
+   function buildDataAccessFunction(expr,visitingContext,attrName)
    {
-      if (expr.length == 0)
-         throw Error(`Expression '' is empty.`)
-      const isPath=(expr.match(ACCESSPATH_PATTERN) !== null)
-      const functionBody=`"use strict"; return (${isPath?"d['":""}${expr}${isPath?"']":""})`
       try {
-         return new Function("d","vd",functionBody)
+         if (expr.length == 0)
+            throw Error(`Expression '' is empty.`)
+         const isPath=(expr.match(ACCESSPATH_PATTERN) !== null)
+         const functionBody=`"use strict"; return (${isPath?"d['":""}${expr}${isPath?"']":""})`
+         try {
+            return new Function("d","vd",functionBody)
+         } catch(e) {
+            throw Error(`${isPath?'':'Use chars only from [_$.A-Za-z0-9] to make expression an access path. '}Compilation of »${functionBody}« fails with: ${endWithDot(e.message)}`, {cause:e})
+         }
       } catch(e) {
-         throw Error(`${isPath?'':'Use only characters from [_$.A-Za-z0-9] to mark expression as access path. '}Compilation of »${functionBody}« fails with: ${endWithDot(e.message)}`, {cause:e})
+         if (attrName)
+            visitingContext.throwError(`Attribute '${attrName}' contains invalid expression. ${e.message}`,attrName)
+         else
+            visitingContext.throwError(`Text node contains invalid expression. ${e.message}`)
       }
    }
 
-   function tryDataAccessFunction(value)
+   function tryDataAccessFunction(value,visitingContext,attrName)
    {
-      if (value.indexOf("&:")<0)
-         return null
+      if (value.indexOf("&:")<0) return null
       const expr=value.trim()
-      if (!expr.startsWith("&:"))
-         throw Error(`'${expr.substring(0,10)}${expr.length>10?"...":""}' does not start with '&:'.`)
-      return buildDataAccessFunction(expr.substring(2))
+      try {
+         if (!expr.startsWith("&:"))
+            throw Error(`'${expr.substring(0,10)}${expr.length>10?"...":""}' does not start with '&:'.`)
+         if (expr.length == 2)
+            throw Error(`Expression '${expr}' is empty.`)
+      } catch(e) {
+         if (attrName)
+            visitingContext.throwError(`Attribute '${attrName}' contains invalid expression. ${e.message}`,attrName)
+         else
+            visitingContext.throwError(`Text node contains invalid expression. ${e.message}`)
+      }
+      return buildDataAccessFunction(expr.substring(2),visitingContext,attrName)
    }
 
    function nodeHierarchy(node)
    {
       if (! node) return ""
-      const parent=node.parentNode?.parentNode ? nodeHierarchy(node.parentNode) + " \u25b8 ": ""
+      const parent=nodeHierarchy(node.parentElement)
       const attributes=([...(node.attributes??[])])
                         .map(attr => ` ${attr.name}="${escapeString(attr.value)}"`)
                         .join()
-      return parent + (isTextNode(node)
+      return parent +(parent ? " \u25b6 " : "") +
+                     (isTextNode(node)
                         ? `${nodeName(node)} "${escapeString(node.nodeValue)}"`
                         : `<${nodeName(node)}${attributes}>`)
    }
 
    function parentChain(node)
    {
-      if (! node) return []
-      if (node.parentNode?.parentNode)
-         return [...parentChain(node.parentNode),node]
-      else
-         return [node]
+      return (node && node.parentNode) ? [...parentChain(node.parentNode),node] : []
    }
 
    function skipNodes(node,isSkipableNode,getSibling=(node)=>node.nextSibling)
@@ -139,6 +160,10 @@ const jstl=(() => {
          node=getSibling(node)
       return node
    }
+
+   ///////////////////////
+   // load & parse tags //
+   ///////////////////////
 
    function nodeSelector(node,attrName)
    {
@@ -167,7 +192,17 @@ const jstl=(() => {
       return [...nodes].map(node => selectText ? node.childNodes[selectText[1]-1] : node)
    }
 
-   function loadTags({url,exportPrefix/*'e:' or 'form-'*/})
+   function knownViewNames()
+   {
+      return Object.keys(KNOWN_VIEWS)
+   }
+
+   function removeView(name)
+   {
+      delete KNOWN_VIEWS[name]
+   }
+
+   async function loadTags({url,exportPrefix})
    {
       return fetch(url).then( response => {
          if (! response.ok)
@@ -196,9 +231,49 @@ const jstl=(() => {
       return tags
    }
 
+   /** Parses childnodes of all known views and generates controller nodes.
+    * If a node matches the name of view it is considered a view reference.
+    * If required attributes of a view are not set an error is generated. */
+   function parseViewContent()
+   {
+      var i=0
+      for (const view of Object.values(KNOWN_VIEWS)) {
+         console.log((++i) + ". view",view)
+      }
+      // TODO: 2.1 validate view names and attributes
+      // TODO: 2.2 build view controller
+   }
+
    ////////////////////
    // Helper Classes //
    ////////////////////
+   class ChildNodes
+   {
+      #childNodes=[]
+      appendChild(node)   { return this.#childNodes.push(node), this }
+      [Symbol.iterator]() { return this.#childNodes[Symbol.iterator]() }
+      toString()          { return this.#childNodes.map(node => node.outerHTML ?? node.nodeValue).join("") }
+
+      static fromVisitingContext(visitingContext)
+      {
+         const childNodes=new ChildNodes()
+         while (visitingContext.node) {
+            childNodes.appendChild(visitingContext.node)
+            visitingContext=visitingContext.newSiblingContext()
+         }
+         return childNodes
+      }
+
+      static fromParentNode(parentNode)
+      {
+         const childNodes=new ChildNodes()
+         for (const node of parentNode.childNodes)
+            childNodes.appendChild(node)
+         return childNodes
+      }
+   }
+
+   /** TODO: Either support import&prefixes or remove this class */
    class Prefixer
    {
       static ALLOWEDCHARS=/^[-_.:a-zA-Z0-9]*/
@@ -209,13 +284,13 @@ const jstl=(() => {
       set(prefix,value)
       {
          if (typeof prefix !== "string")
-            throw Error(`Expected string not ${typeof prefix}.`)
+            throw Error(`Prefix is not of type string but ${typeof prefix}.`)
          if (! Prefixer.ALLOWEDCHARS.test(prefix)) {
             const pos=prefix.match(Prefixer.ALLOWEDCHARS)[0].length
-            throw Error(`contains unsupported character '${prefix.substring(0,pos-1)}»${prefix[pos]}«'.`)
+            throw Error(`Prefix contains unsupported character '${prefix.substring(0,pos-1)}»${prefix[pos]}«'.`)
          }
          if (prefix in this.#knownPrefixes)
-            throw Error(`»${String(prefix)}« is not unique.`)
+            throw Error(`Prefix »${String(prefix)}« is not unique.`)
          this.#knownPrefixes[prefix]=value
          this.buildMatcher()
       }
@@ -254,6 +329,10 @@ const jstl=(() => {
       modelAccessFct() { return this.#modelAccessFct }
    }
 
+   //////////////////////////////
+   // generic DOM node visitor //
+   //////////////////////////////
+
    /**
     * Context referencing DOM node which is visited.
     * A root context is created with newContext and subsequent context
@@ -268,99 +347,65 @@ const jstl=(() => {
        * @param {HTMLNode} node
        *  The node which is visited.
        */
-      constructor(parent,node)
+      constructor(parent,node,config)
       {
-         this.errorCount=0
          this.node=node
          this.parent=parent
-         this.config=parent?.config ?? ({ taglibPrefix:"", localPrefix:"" })
-         this.useParentNode=false
+         this.config=config
       }
 
       get nodeName() { return nodeName(this.node) }
-      localPrefix()  { return this.config.localPrefix }
       taglibPrefix() { return this.config.taglibPrefix }
+      setTaglibPrefix(prefix) { this.config.taglibPrefix=prefix.toUpperCase() }
+      taglibNodeName() { return this.node.nodeName.startsWith(this.config.taglibPrefix) ? this.node.nodeName.substring(this.config.taglibPrefix.length) : null }
+      isTextNode()     { return this.node.nodeType === this.node.TEXT_NODE }
 
       static newContext(node)
       {
-         return new DOMVisitingContext(null,node)
+         return new DOMVisitingContext(null,node,{ taglibPrefix: "" })
       }
 
       newChildContext(isSkipableNode=isEmptyNode)
       {
          const childNode=skipNodes(this.node.firstChild,isSkipableNode)
-         return new DOMVisitingContext(this,childNode)
+         return new DOMVisitingContext(this,childNode,this.config)
       }
 
       newSiblingContext(isSkipableNode=isEmptyNode)
       {
          const siblingNode=skipNodes(this.node.nextSibling,isSkipableNode)
-         return new DOMVisitingContext(this.parent,siblingNode)
+         return new DOMVisitingContext(this.parent,siblingNode,this.config)
       }
 
       newPreviousSiblingContext(isSkipableNode=isEmptyNode)
       {
          const siblingNode=skipNodes(this.node.previousSibling,isSkipableNode, (node) => node.previousSibling)
-         return new DOMVisitingContext(this.parent,siblingNode)
-      }
-
-      setTaglibPrefix(prefix) { this.config.taglibPrefix=prefix.toUpperCase() }
-      setLocalPrefix(prefix)  { this.config.localPrefix=prefix.toUpperCase() }
-
-      switchToParentNode()
-      {
-         this.useParentNode=(this.parent!=null)
-         return this
-      }
-
-      logErrorForNode(node,attrName,message,locationNode)
-      {
-         locationNode??=node
-         const hierarchy=nodeHierarchy(locationNode)
-         const selector=nodeSelector(locationNode)
-         return new ParseError(`<${nodeName(node)}${attrName?' '+attrName:''}>: ${message}\nLocation: ${hierarchy}\nSelector: ${selector}`,{logArgs: ["\nLocation:",...parentChain(locationNode)]})
+         return new DOMVisitingContext(this.parent,siblingNode,this.config)
       }
 
       logError(message,attrName)
       {
-         const noNode=this.node==null
-         const node=this.useParentNode || noNode ? (this.parent.errorCount++, this.parent.node) : this.node
-         this.useParentNode=false // TODO: remove useParentNode + switchToParentNode
-         this.errorCount++
-         return this.logErrorForNode(node,attrName,message,this.node??node)
+         const useParentNode=(this.node==null)
+         const node= useParentNode ? this.parent.node : this.node
+         return logErrorForNode(node,attrName,message)
       }
 
-      buildFunction(attr)
+      execFunction(fct,expr,attrName)
       {
-         try {
-            return buildDataAccessFunction(attr?.value ?? this.node.nodeValue)
-         } catch(e) {
-            this.throwError(e.message,attr?.name)
-         }
-      }
-
-      execFunction(fct,attr)
-      {
-         try { return fct() } catch(e) { this.throwError(`Evaluating '${attr?.value??this.node.nodeValue}' failed: ${endWithDot(e.message)}`,attr?.name) }
+         try { return fct() } catch(e) { this.throwError(`Evaluating '${expr}' failed: ${endWithDot(e.message)}`,attrName) }
       }
 
       throwError(message,attrName)
       {
          throw this.logError(message,attrName)
       }
-
-      onErrorThrow()
-      {
-         if (this.errorCount) throw new ParseError()
-      }
-
-      isTextNode()
-      {
-         return this.node.nodeType === this.node.TEXT_NODE
-      }
-
    }
 
+   /**
+    * Visits a single DOM node.
+    * Subclasses overwrite methods visitAttributes, visitTextNode or visitChilds.
+    * To start the visiting process call visitNode.
+    * */
    class DOMVisitor
    {
       /** Called from subclass to initialize static Attributes property. */
@@ -424,8 +469,7 @@ const jstl=(() => {
       constructor()
       {
          this.#subClass=new.target
-         this.attributes=new.target.Attributes
-         // TODO: remove ??
+         this.nodeContext=null
          this.validatedAttributes={}
          this.dynamicAttributes={}
          this.textNodeFct=null // in case of text node containing expression: points to evaluating function
@@ -440,11 +484,11 @@ const jstl=(() => {
       visitAttributes(visitingContext)
       {
          const node=visitingContext.node
-         const anyAttr=this.attributes["*"]
+         const attributes=this.#subClass.Attributes
+         const anyAttr=attributes["*"]
          // check all attributes are allowed and valid
-         const dynamicAttributes={}
          for (const na of node.attributes) {
-            const name=na.name, value=na.value, attr=this.attributes[name] ?? anyAttr
+            const name=na.name, value=na.value, attr=attributes[name] ?? anyAttr
             if (! attr)
                visitingContext.throwError(`Attribute '${name}' not supported.`,name)
             else if (attr.isEmpty!==undefined && attr.isEmpty !== (value==""))
@@ -456,43 +500,31 @@ const jstl=(() => {
                if (match[0].length != value.length) {
                   const enumMatch=String(attr.pattern).match(VALIDENUM_PATTERN)
                   if (enumMatch)
-                     visitingContext.throwError(`Attribute '${name}' should be set to a value out of ${enumMatch[1]}. Value '${value}' is invalid.`)
+                     visitingContext.throwError(`Attribute '${name}' should be set to a value out of ${enumMatch[1]}. Value '${value}' is invalid.`,name)
                   else
-                     visitingContext.throwError(`Attribute '${name}' contains invalid character '${value[match[0].length]}' at offset ${match[0].length}`)
+                     visitingContext.throwError(`Attribute '${name}' contains invalid character '${value[match[0].length]}' at offset ${match[0].length}.`,name)
                }
             }
             // validate attribute value for expressions
-            try {
-               const fct=tryDataAccessFunction(value)
-               if (attr.isModelAccess === true && !fct)
-                  throw Error(`must contain expression beginning with '&:' or '&)'.`)
-               else if (attr.isModelAccess === false && fct)
-                  throw Error(`does not support expressions like '${value.trim()}'.`)
-               if (fct)
-                  this.validatedAttributes[name]=this.dynamicAttributes[name]=fct
-               else
-                  this.validatedAttributes[name]=value
-            }
-            catch(e) {
-               visitingContext.throwError(`Attribute '${name}' ${e.message}`)
-            }
+            const fct=tryDataAccessFunction(value,visitingContext,name)
+            if (attr.isModelAccess === true && !fct)
+               throw ParseError(`Attribute '${name}' must contain expression beginning with '&:'.`,name)
+            else if (attr.isModelAccess === false && fct)
+               throw ParseError(`Attribute '${name}' does not support expressions like '${value.trim()}'.`,name)
+            if (fct)
+               this.validatedAttributes[name]=this.dynamicAttributes[name]=fct
+            else
+               this.validatedAttributes[name]=value
          }
          // check for required attributes
-         for (const name in this.attributes)
-            if (this.attributes[name].isRequired && !(name in node.attributes))
-               visitingContext.throwError(`Attribute '${name}' required`)
+         for (const attr of Object.values(attributes))
+            if (attr.isRequired && !(attr.name in node.attributes))
+               visitingContext.throwError(`Attribute '${attr.name}' required`)
       }
 
       visitTextNode(visitingContext)
       {
-         try {
-            const node=visitingContext.node
-            const text=node.nodeValue
-            tryDataAccessFunction(text)
-         }
-         catch(e) {
-            visitingContext.throwError(`Text node contains invalid expression. ${e.message}`)
-         }
+         tryDataAccessFunction(visitingContext.node.nodeValue,visitingContext)
       }
 
       visitChilds(visitingContext)
@@ -508,6 +540,7 @@ const jstl=(() => {
       {
          if (!this.isMatchingNodeName(visitingContext))
             visitingContext.throwError(`Expect node <${this.nodeName}>${!visitingContext.parent?' as root':!visitingContext.node?` instead of </${visitingContext.parent.nodeName}>`:visitingContext.newPreviousSiblingContext().node?` after previous sibling <${visitingContext.newPreviousSiblingContext().nodeName}>`:` as first child of <${visitingContext.parent.nodeName}>`}.`)
+         this.nodeContext=visitingContext
          if (visitingContext.isTextNode())
             this.visitTextNode(visitingContext)
          else {
@@ -541,15 +574,20 @@ const jstl=(() => {
          }
          return visitingContext
       }
+
+      visitOneOrMore(visitingContext,visitorClass,results)
+      {
+         const result=new visitorClass().visitNode(visitingContext).result
+         if (results) results.push(result)
+         return this.visitZeroOrMore(visitingContext.newSiblingContext(),visitorClass,results)
+      }
    }
 
-
-
-   ////////////////////////////////////////////////////////
-   // Visitors parsing HTML nodes for defining an x:view //
-   ////////////////////////////////////////////////////////
-   // These visitors are the "model checkers" and transform
-   // to a resulting data structure.
+   ///////////////////////////////////////////////////////
+   // Visitors parsing DOM nodes for defining View Tags //
+   ///////////////////////////////////////////////////////
+   // These visitors are the "model checkers" and
+   // transform DOM tree to a javascript data structure.
 
    class xSetVisitor extends DOMVisitor
    {
@@ -560,9 +598,8 @@ const jstl=(() => {
 
       visitChilds(visitingContext)
       {
-         this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
+         this.visitZeroOrMore(visitingContext,xGenericVisitor)
       }
-
    }
 
    class xForVisitor extends DOMVisitor
@@ -577,7 +614,7 @@ const jstl=(() => {
 
       visitChilds(visitingContext)
       {
-         this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
+         this.visitZeroOrMore(visitingContext,xGenericVisitor)
       }
 
    }
@@ -602,17 +639,16 @@ const jstl=(() => {
 
       visitChilds(visitingContext)
       {
-         this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
+         this.visitZeroOrMore(visitingContext,xGenericVisitor)
          visitingContext.parent.builder.addReferencedAttribute(this.#attrName,ChildNodes.fromVisitingContext(visitingContext))
       }
-
    }
 
    class xViewReferenceVisitor extends DOMVisitor
    {
       static NodeName=this.validateNodeName("*")
       static Attributes=this.initAttributesFromArray(
-         [{name:"viewdata",isRequired:false,isEmpty:false,isModelAccess:true},
+         [{name:"vdata",isRequired:false,isEmpty:false,isModelAccess:true},
           {name:"*",isRequired:false},
          ])
 
@@ -630,47 +666,9 @@ const jstl=(() => {
       {
          const visitingContext2=this.visitZeroOrMore(visitingContext,xAttrReferenceVisitor)
          if (visitingContext === visitingContext2)
-            this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
+            this.visitZeroOrMore(visitingContext,xGenericVisitor)
          else
             this.validateNoChild(visitingContext2)
-      }
-
-   }
-
-   class xHtmlChildVisitor extends DOMVisitor
-   {
-      static NodeName=this.validateNodeName("*")
-      static Attributes=this.initAttributesFromArray([
-         {name:"*",isRequired:false},
-      ])
-      static SupportedVisitors={
-         [xSetVisitor.NodeName]: xSetVisitor,
-         [xForVisitor.NodeName]: xForVisitor,
-         [xAttrReferenceVisitor.NodeName]: xAttrReferenceVisitor,
-         [xViewReferenceVisitor.NodeName]: xViewReferenceVisitor,
-      }
-      #matchingVisitor;
-
-      visitAttributes(visitingContext)
-      {
-         // call specific visitor for nodes of type <x:...>
-         if (visitingContext.nodeName.startsWith("x:")) {
-            const isPrefix=(visitingContext.nodeName[3] === "-")
-            const nodeName=(isPrefix ? visitingContext.nodeName.substring(0,4) : visitingContext.nodeName)
-            const visitorConstructor=xHtmlChildVisitor.SupportedVisitors[nodeName]
-            if (!visitorConstructor)
-               visitingContext.builder.throwErrorAtNode(visitingContext.node,`Unsupported node <${visitingContext.nodeName}>.`)
-            this.#matchingVisitor=new visitorConstructor()
-            this.#matchingVisitor.visitNode(visitingContext)
-         }
-         else
-            super.visitAttributes(visitingContext)
-      }
-
-      visitChilds(visitingContext)
-      {
-         if (! this.#matchingVisitor)
-            this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
       }
    }
 
@@ -680,10 +678,26 @@ const jstl=(() => {
       static Attributes=this.initAttributesFromArray([
          {name:"*",isRequired:false},
       ])
+      static TaglibVisitors={
+         [xSetVisitor.NodeName]: xSetVisitor,
+         [xForVisitor.NodeName]: xForVisitor,
+         /* TODO:
+         [xAttrReferenceVisitor.NodeName]: xAttrReferenceVisitor,
+         [xViewReferenceVisitor.NodeName]: xViewReferenceVisitor,
+         */
+      }
 
       visitChilds(visitingContext)
       {
-         this.visitZeroOrMore(visitingContext,xGenericVisitor)
+         const taglibName=this.nodeContext.taglibNodeName()
+         if (taglibName) { // call specific visitor for taglib nodes
+            const taglibVisitor=xGenericVisitor.TaglibVisitors[taglibName]
+            if (!taglibVisitor)
+               this.nodeContext.throwError(`Unsupported taglib node.`)
+            new taglibVisitor().visitNode(this.nodeContext)
+         }
+         else
+            this.visitZeroOrMore(visitingContext,xGenericVisitor)
       }
 
    }
@@ -693,13 +707,13 @@ const jstl=(() => {
       static NodeName=this.validateNodeName("html")
       static Attributes=this.initAttributesFromArray([])
 
+      #childNodes;
+      get result() { return this.#childNodes }
+
       visitChilds(visitingContext)
       {
          this.visitZeroOrMore(visitingContext,xGenericVisitor)
-         // TODO:
-         // visitingContext.builder.setxHtmlContext(visitingContext.parent)
-         // this.visitZeroOrMore(visitingContext,xHtmlChildVisitor)
-         // visitingContext.parent.builder.setHTML(ChildNodes.fromVisitingContext(visitingContext))
+         this.#childNodes=ChildNodes.fromVisitingContext(visitingContext)
       }
    }
 
@@ -713,10 +727,11 @@ const jstl=(() => {
 
       visitTextNode(visitingContext)
       {
-         const fct=visitingContext.buildFunction()
-         this.#vdata=visitingContext.execFunction(fct)
+         const expr=visitingContext.node.nodeValue
+         const fct=buildDataAccessFunction(expr,visitingContext)
+         this.#vdata=visitingContext.execFunction(fct,expr)
          if (typeof this.#vdata !== "object")
-            visitingContext.throwError(`Expression '${visitingContext.node.nodeValue}' should result in a value of type object not '${typeof this.#vdata}'.`)
+            visitingContext.throwError(`Expression '${expr}' should result in a value of type object not '${typeof this.#vdata}'.`)
       }
    }
 
@@ -745,18 +760,14 @@ const jstl=(() => {
                         ,{name:"type",isRequired:false,isEmpty:false,pattern:this.ATTRTYPE,isEnum:true}
                         ])
 
-      #attrValue
-
-      get result() { return ({ name: this.validatedAttributes.name, childNodes: this.#attrValue, required: ("required" in this.validatedAttributes) }) }
+      #attrValue;
+      get result() { return ({ name: this.validatedAttributes.name, value: this.#attrValue, required: ("required" in this.validatedAttributes) }) }
 
       visitChilds(visitingContext)
       {
-         // generic checks of default value
          this.visitZeroOrMore(visitingContext,xGenericVisitor)
-         // TODO: use ChildNodes class !!!
-         this.#attrValue=visitingContext.parent.node.childNodes
+         this.#attrValue=ChildNodes.fromVisitingContext(visitingContext)
       }
-
    }
 
    class xViewVisitor extends DOMVisitor
@@ -768,16 +779,19 @@ const jstl=(() => {
                         ,{name:"id",isRequired:false}
                         ])
 
-      #attribs; #vdata;
-
-      get result() { return ({ vdata: this.#vdata, attribs: this.#attribs }) }
+      #attribs=[]; #childNodes; #vdata;
+      get result()
+      {
+         return ({ attributes: this.#attribs, childNodes: this.#childNodes,
+                  name: this.validatedAttributes.name, vdata: this.#vdata,
+                  viewNode: this.nodeContext.node, taglibPrefix: this.nodeContext.taglibPrefix(), tags: null })
+      }
 
       visitChilds(visitingContext)
       {
          this.#vdata=new xVDataVisitor().visitNode(visitingContext).result
-         this.#attribs=[]
          const visitingContext2=this.visitZeroOrMore(visitingContext.newSiblingContext(),xAttrVisitor,this.#attribs)
-         new xHtmlVisitor().visitNode(visitingContext2)
+         this.#childNodes=new xHtmlVisitor().visitNode(visitingContext2).result
          this.validateNoChild(visitingContext2.newSiblingContext())
       }
    }
@@ -789,23 +803,34 @@ const jstl=(() => {
                         [{name:"url",isRequired:true,isEmpty:false}
                         ,{name:"export-prefix",isRequired:true,pattern:PREFIX_PATTERN}
                         ,{name:"taglib-prefix",isRequired:true,pattern:NONEMPTY_PREFIX_PATTERN}
-                        ,{name:"local-prefix",isRequired:true,pattern:PREFIX_PATTERN}
                         ])
 
       #views=[];
+      get result() { return ({ tagsNode: this.nodeContext.node, views: this.#views, exportPrefix: this.validatedAttributes["export-prefix"], taglibPrefix: this.validatedAttributes["taglib-prefix"] }) }
 
       visitChilds(visitingContext)
       {
          visitingContext.setTaglibPrefix(this.validatedAttributes["taglib-prefix"])
-         const visitingContext2=this.visitZeroOrMore(visitingContext,xViewVisitor,this.#views)
+         const visitingContext2=this.visitOneOrMore(visitingContext,xViewVisitor,this.#views)
          this.validateNoChild(visitingContext2)
-         console.log("views",this.#views)
       }
 
+      /** Parses view tags and makes them known (KNOWN_VIEWS).
+       * No controlling function is generated.*/
       static parseTags(tags)
       {
-         new TagsVisitor().visitNode(DOMVisitingContext.newContext(tags))
+         const result=new TagsVisitor().visitNode(DOMVisitingContext.newContext(tags)).result
+         for (const view of result.views) {
+            const prefixedName=result.exportPrefix+view.name
+            view.tags=result
+            if (KNOWN_VIEWS[prefixedName])
+               throw logErrorForNode(view.viewNode,"name",`View '${prefixedName}' not unique.`,KNOWN_VIEWS[prefixedName].viewNode)
+            KNOWN_VIEWS[prefixedName]=view
+         }
+         return result
       }
+
+
    }
 
 
@@ -866,7 +891,8 @@ const jstl=(() => {
       ////////////////////
 
       ParseError=ParseError
-      Prefixer=Prefixer
+      Prefixer=Prefixer // TODO: remove
+      ChildNodes=ChildNodes
       ControlNode=ControlNode
       DOMVisitingContext=DOMVisitingContext
       DOMVisitor=DOMVisitor
@@ -899,8 +925,11 @@ const jstl=(() => {
       queryNode=queryNode              // handling of nodes in TAGS_CONTAINER //
       queryNodes=queryNodes            /////////////////////////////////////////
       tryDataAccessFunction=tryDataAccessFunction
+      knownViewNames=knownViewNames
+      removeView=removeView
       loadTags=loadTags
       parseTags=parseTags
+      parseViewContent=parseViewContent
    }
 
    return new JSTagLibrary()

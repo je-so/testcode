@@ -10,20 +10,59 @@
 <body>
 
 <script>
-   var tags=null
+   var tags1=null
+   var tags2=null
+
+   /*
+   TODO: (?)too complicated(?) ; remove and also Prefixer class
+   jstl.onImportTag( ({fromTags,importNode,oldHandler}) => {
+      console.log("fromTags",fromTags,"importNode",importNode,"oldHandler",oldHandler)
+      return new Promise.resolve(importNode.url).then( url => {
+         if (url === "tags1.html")
+            tags1=jstl.parseTags({url,exportPrefix:"form-",text:TEST_TAGS1.innerHTML})
+         else
+            throw Error(`Importing tags from ${url} not supported.`)
+      })
+   })
+   */
 
    jstl.onload( () => {
-      tags=jstl.parseTags({url:"tags.html",exportPrefix:"",text:TEST_TAGS.innerHTML})
-      console.log("tag-Nodes",tags)
+      tags1=jstl.parseTags({url:"tags1.html",exportPrefix:"form-",text:TEST_TAGS1.innerHTML})
+      console.log("tags1",tags1)
+      tags2=jstl.parseTags({url:"tags2.html",exportPrefix:"",text:TEST_TAGS2.innerHTML})
+      console.log("tags2",tags2)
+      console.log("known views",jstl.knownViewNames())
+      jstl.parseViewContent()
    })
+
 </script>
 
-<div ID="TEST_TAGS" style="display:none">
+<div ID="TEST_TAGS1" style="display:none">
+<tags url="" export-prefix="form-" taglib-prefix="t-">
+   <t-view name="checkbox">
+      <t-vdata>{name:true,id:true,label:true}</t-vdata>
+      <t-attr name="nr" required></t-attr>
+      <t-attr name="last">false</t-attr>
+      <t-attr name="header" type="nodes"></t-attr>
+      <t-attr name="content" type="nodes"></t-attr>
+      <t-attr name="footer" type="nodes"></t-attr>
 
-<tags url="" export-prefix="" taglib-prefix="t-" local-prefix="">
-   <!-- <t-import prefix="" url=""></t-import> -->
+      <t-html>
+         <div show="true">
+            &:nr
+            <div class="form-check-inline">
+               <input class="form-check-input ms-2 me-1" type="checkbox" id="&:id" name="&:name" value="&:value">
+               <label class="form-check-label" for="&:id">&:label</label>
+            </div>
+         </div>
+         <div show="&:last" header="&:header">&:footer</div>
+      </t-html>
+   </t-view>
+</div>
 
-   <t-view name="checkbox2">
+<div ID="TEST_TAGS2" style="display:none">
+<tags url="" export-prefix="" taglib-prefix="t-">
+   <t-view name="checkbox">
       <t-vdata>{name:true,id:true,label:true}</t-vdata>
       <t-attr name="nr" required></t-attr>
       <t-attr name="last">false</t-attr>
@@ -51,20 +90,19 @@
             <div class="col-10">
                <t-set var="viewname">checkbox2</t-set>
                <t-for in="&:checkboxes" var="checkbox" index="i" length="length">
-                  <checkbox nr="&:`${1+d.i}. `" last="&:d.length===d.i+1" vdata="&:checkbox">
+                  <checkbox nr="&:`${d.i}. `" last="&:d.length===d.i" vdata="&:checkbox">
                      <header><b>HEADER</b>&:i</header>
                      <footer><hr></footer>
                      <content></content>
                   </checkbox>
                </t-for>
-               <t-set name="c">&:checkboxes.2.label</t-set>
+               <t-set var="c">&:checkboxes.2.label</t-set>
                <div>checkboxes[0].label = <span>&:c</span></div>
             </div>
          </div>
          xxx
       </t-html>
    </t-view>
-
 </div>
 </body>
 </html>

@@ -71,9 +71,10 @@ const jstl=(() => {
       const options={logArgs: ["\nLocation:",...parentChain(node)]}
       return new ParseError(`<${nodeName(node)}${attrName?' '+attrName:''}>: ${message}\n${strLocation(node)}\n${strSelector(node)}${previous}`,cause?{...options,cause}:options)
    }
-   const logWarningForNode=(node,message) =>
+   const logWarningForNode=(node,message,{prevNode}={}) =>
    {
-      console.log(`<${nodeName(node)}>: ${message}\n${strLocation(node)}\n${strSelector(node)}`,"\nLocation:",...parentChain(node))
+      const previous=(prevNode ? `\nPrevious ${strLocation(prevNode)}\nPrevious ${strSelector(prevNode)}` : "")
+      console.log(`<${nodeName(node)}>: ${message}\n${strLocation(node)}\n${strSelector(node)}${previous}`,"\nLocation:",...parentChain(node),...(prevNode ? ["\nPrevious Location:",...parentChain(prevNode)] : []))
    }
 
    //////////////////////////
@@ -292,7 +293,7 @@ const jstl=(() => {
       PARSED_TAGS[url]=parsedTags
       ///////////////////
       for (const importTag of parsedTags.imports) {
-         await loadTags(importTag.url).catch( e => {throw logErrorForNode(importTag.importNode,"url",`Importing tags failed with:\n---\n${e.message}\n---`,{cause:e})})
+         importTag.importedTags=await loadTags(importTag.url).catch( e => {throw logErrorForNode(importTag.importNode,"url",`Importing tags failed with:\n---\n${e.message}\n---`,{cause:e})})
       }
       return parsedTags
    }
@@ -305,13 +306,13 @@ const jstl=(() => {
       const prefixes=new Set(Object.values(PARSED_TAGS).map(tags => tags.exportPrefix.toUpperCase()).filter(p => p !== ""))
       const prefixEnd=/[-:](?![^-:]*[-:])/ // searches for the last ':' or '-' in a string
 
-      const resolveView=(view) =>
+      const resolveView=(view,parsed_views) =>
       {
          const resolveNodes=(childNodes) =>
          {
             for (const child of childNodes) {
                if (child.nodeName[0] !== "#" && !child.nodeName.startsWith(view.taglibPrefix)) {
-                  const view=PARSED_VIEWS[child.nodeName]
+                  const view=parsed_views[child.nodeName]
                   if (view) {
                      view.validateViewRef(child)
                      if (! view.hasBody()) {
@@ -340,8 +341,11 @@ const jstl=(() => {
          resolveNodes(view.childNodes)
       }
 
-      for (const view of Object.values(PARSED_VIEWS))
-         resolveView(view)
+      for (const tags of Object.values(PARSED_TAGS)) {
+         const parsed_views=tags.computeImport(PARSED_VIEWS)
+         for (const view of tags.views.filter(v => v===PARSED_VIEWS[v.exportName]))
+            resolveView(view,parsed_views)
+      }
 
       return [...unresolved].map(nodeName => nodeName.toLowerCase()).sort()
    }
@@ -412,31 +416,47 @@ const jstl=(() => {
          }
       }
 
-      /* INFO: ======== TODO: remove
-      get result() { return ({
-         tagsNode: this.node,
-         imports: this.#imports,
-         views: this.#views,
-         exportPrefix: this.attr("export-prefix"),
-         taglibPrefix: this.attr("taglib-prefix"),
-         url: this.attr("url")
-      }) }
-      ======== */
+      computeImport(parsed_views)
+      {
+         if (this.imports.length === 0) return parsed_views
+         const adapted_view_names=Object.assign({},parsed_views)
+         for (const im of this.imports) {
+            im.importedTags.exportViewsForImportTag(adapted_view_names,im.importNode,im.importPrefix)
+         }
+         return adapted_view_names
+      }
+
+      exportViewsForImportTag(parsed_views,importNode,exportPrefix)
+      {
+         const overwrittenViews=[]
+         for (const view of this.views) {
+            const exportName=(exportPrefix+view.name).toUpperCase()
+            const exportedView=parsed_views[exportName]
+            if (exportedView !== view) {
+               if (exportedView)
+                  overwrittenViews.push(exportName.toLowerCase())
+               parsed_views[exportName]=view
+            }
+         }
+         if (overwrittenViews.length)
+            logWarningForNode(importNode,`Adapt import-prefix to prevent imported views overwriting existing views, namely ${overwrittenViews}.`)
+      }
 
       exportViews(parsed_views)
       {
          const unexportedViews=[]
          for (const view of this.views) {
-            if (parsed_views[view.exportName])
-               unexportedViews.push(exportName)
-            else {
-               ++ this.nrExportedViews
-               parsed_views[view.exportName]=view
+            const exportName=view.exportName
+            const exportedView=parsed_views[exportName]
+            if (exportedView !== view) {
+               if (exportedView)
+                  unexportedViews.push(exportName.toLowerCase())
+               else
+                  parsed_views[exportName]=view
             }
          }
          if (unexportedViews.length)
-            // throw logErrorForNode(view.viewNode,"name",`View '${view.exportName.toLowerCase()}' not unique.`,{prevNode:PARSED_VIEWS[view.exportName].viewNode})
-            logWarningForNode(tags,`Existing views are not overwritten, namely ${unexportedViews}.`)
+            logWarningForNode(this.tagsNode,`Some views are *not* exported, namely ${unexportedViews}.`)
       }
    }
 
@@ -963,16 +983,17 @@ const jstl=(() => {
       static NodeName=this.validateNodeName("import")
       static Attributes=this.initAttributesFromArray(
                         [{name:"import-prefix",isRequired:false,pattern:PREFIX_PATTERN}
+                        ,{name:"url",isRequired:true,isEmpty:false}
                         ])
 
       #importPrefix; #url;
-      get result() { return ({ importNode: this.node, importPrefix: this.#importPrefix, url: this.#url }) }
+      get result() { return ({ importNode: this.node, importPrefix: this.#importPrefix, url: this.#url, importedTags: null }) }
 
       visitChilds(visitingContext)
       {
-         this.#url=new xTextVisitor().visitNode(visitingContext).result
-         this.validateNoChild(visitingContext.newSiblingContext())
+         this.validateNoChild(visitingContext)
          this.#importPrefix=this.attr("import-prefix")??null/*use export-prefix*/
+         this.#url=this.attr("url")
       }
    }
 

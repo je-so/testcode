@@ -208,6 +208,26 @@ const jstl=(() => {
    // config support //
    ////////////////////
 
+   /**
+    * TagLoader function is an async function which loads an HTML file from an url.
+    * The file should contain defintions of view tags and have a single
+    * root tag, i.e. &lt;tags export-prefix="e-" taglib-prefix="t-"&gt;.
+    * The returned object contains the loaded HTML file in property "text".
+    * Returning null means the loader is not responsible for the given url.
+    * An undefined exportPrefix means the value of exportPrefix of node tags is used instead.
+    * @typedef {(url:string,exportPrefix?:string) => Promise<null|{text:string, url:string, exportPrefix?:string}>} TagLoader
+    */
+
+   /**
+    * Adds a new tag loader to a chain of command queue as first entry.
+    * If the loader returns null the next in the queue is called.
+    * The default loader (defaultTagLoader) is always stored as last in the queue.
+    * It always tries to load a file from the given URL.
+    * @param {TagLoader} tagLoader
+    * An async callback which returns either null or an object which contains
+    * an HTML string describing view tags.
+    * @returns {number} Size of the queue after adding the new loader.
+    */
    const addTagsLoader=(tagLoader) => CONFIG.tagLoaders.unshift(tagLoader)
 
    ///////////////////////
@@ -215,7 +235,7 @@ const jstl=(() => {
    ///////////////////////
 
    // !! returned values are not cloned deeply so do not mess with returned values !!
-   const getViews=() => Object.values(PARSED_VIEWS).map( view => ({...view}))
+   const getViews=() => Object.values(PARSED_VIEWS).map( view => new ParsedViewTag(view))
    const getViewNames=() => Object.keys(PARSED_VIEWS).map( name => name.toLowerCase())
    const getParsedTags=() => Object.values(PARSED_TAGS).map( tag => ({...tag}))
 
@@ -231,10 +251,10 @@ const jstl=(() => {
 
    function removeParsedTags(...tagURLs)
    {
-      return tagURLs.flat().map(url => PARSED_TAGS[url]).filter(tags => tags!=undefined)
+      return tagURLs.flat().map(url => PARSED_TAGS[url]).filter(tags => tags!==undefined)
          .map( tags => {
-            removeViews( tags.views.filter(view => tags===PARSED_VIEWS[view.exportName].tags).map(view => view.exportName) )
-            if (tags.nrExportedViews !== 0) console.log(Error("INTERNAL ERROR"))
+            removeViews( tags.views.filter(view => tags===PARSED_VIEWS[view.exportName]?.tags).map(view => view.exportName) )
+            if (tags.nrExportedViews !== 0) console.log(Error(`INTERNAL ERROR tags.nrExportedViews!=0 (${tags.nrExportedViews}).`))
             delete PARSED_TAGS[tags.url]
             tags.tagsNode.remove()
             return tags
@@ -257,7 +277,7 @@ const jstl=(() => {
       if (typeof url !== "string")
          throw Error(`Argument url should be of type string not ${typeof url}.`)
       if (typeof exportPrefix !== "string" && exportPrefix != null)
-         throw Error(`Argument exportPrefix should be of type string|null not ${typeof exportPrefix}.`)
+         throw Error(`Argument exportPrefix should be of type string|undefined not ${typeof exportPrefix}.`)
       const canonicalURL=adaptException(() => new URL(url,document.documentURI),()=>`Argument url '${url}' is invalid.`)
       for (const loader of CONFIG.tagLoaders) {
          const loadedTags=await loader(canonicalURL.href,exportPrefix)
@@ -273,12 +293,12 @@ const jstl=(() => {
       if (typeof text !== "string")
          throw Error(`Argument text should be of type string not ${typeof text}.`)
       if (typeof exportPrefix !== "string" && exportPrefix != null)
-         throw Error(`Argument exportPrefix should be of type string|null not ${typeof exportPrefix}.`)
+         throw Error(`Argument exportPrefix should be of type string|undefined not ${typeof exportPrefix}.`)
       const childNodes=parseHTML(text.trim())
       if (childNodes.length === 0)
          throw new ParseError(`Tags loaded from '${url}' are empty.`)
       if (childNodes.length !== 1)
-         throw new ParseError(`Tags loaded from '${url}' has not a single root node but two: <${nodeName(childNodes[0])}> followed by <${nodeName(childNodes[1])}>.`)
+         throw new ParseError(`Tags loaded from '${url}' has more than a single root node: <${nodeName(childNodes[0])}> followed by <${nodeName(childNodes[1])}>.`)
       // already parsed ?
       if (PARSED_TAGS[url])
          return PARSED_TAGS[url] // ! do not generate an error even if value of exportPrefix is different
@@ -288,13 +308,12 @@ const jstl=(() => {
          tags.setAttribute("export-prefix",exportPrefix)
       TAGS_CONTAINER.appendChild(tags)
       const parsedTags=new TagsVisitor().visitNode(DOMVisitingContext.newContext(tags)).result
-      // Register-Tags //
-      parsedTags.exportViews(PARSED_VIEWS)
+      // Register-Tags (no exception) //
       PARSED_TAGS[url]=parsedTags
+      parsedTags.exportViews(PARSED_VIEWS)
+      // (with exception) //
+      await parsedTags.resolveImports()
       ///////////////////
-      for (const importTag of parsedTags.imports) {
-         importTag.importedTags=await loadTags(importTag.url).catch( e => {throw logErrorForNode(importTag.importNode,"url",`Importing tags failed with:\n---\n${e.message}\n---`,{cause:e})})
-      }
       return parsedTags
    }
 
@@ -303,16 +322,15 @@ const jstl=(() => {
    function resolveViews()
    {
       const unresolved=new Set()
-      const prefixes=new Set(Object.values(PARSED_TAGS).map(tags => tags.exportPrefix.toUpperCase()).filter(p => p !== ""))
       const prefixEnd=/[-:](?![^-:]*[-:])/ // searches for the last ':' or '-' in a string
 
-      const resolveView=(view,parsed_views) =>
+      const resolveView=(view,imported_views,imported_prefixes) =>
       {
          const resolveNodes=(childNodes) =>
          {
             for (const child of childNodes) {
                if (child.nodeName[0] !== "#" && !child.nodeName.startsWith(view.taglibPrefix)) {
-                  const view=parsed_views[child.nodeName]
+                  const view=imported_views[child.nodeName]
                   if (view) {
                      view.validateViewRef(child)
                      if (! view.hasBody()) {
@@ -326,7 +344,7 @@ const jstl=(() => {
                      unresolved.add(child.nodeName)
                      const prefix=child.nodeName.substring(0,child.nodeName.search(prefixEnd)+1)
                      if (prefix.length > 0) {
-                        const addition=prefixes.has(prefix) ? "" : " and prefix '"+prefix.toLowerCase()+"'"
+                        const addition=imported_prefixes.has(prefix) ? "" : " and prefix '"+prefix.toLowerCase()+"'"
                         throw logErrorForNode(child,undefined,`Unknown view${addition}.`)
                      }
                   }
@@ -341,10 +359,13 @@ const jstl=(() => {
          resolveNodes(view.childNodes)
       }
 
+      const prefixes=new Set(Object.values(PARSED_TAGS).map(tags => tags.exportPrefix.toUpperCase()).filter(p => p !== ""))
+
       for (const tags of Object.values(PARSED_TAGS)) {
-         const parsed_views=tags.computeImport(PARSED_VIEWS)
+         const imported_views=tags.computeImport(PARSED_VIEWS)
+         const imported_prefixes=tags.computePrefixes(prefixes)
          for (const view of tags.views.filter(v => v===PARSED_VIEWS[v.exportName]))
-            resolveView(view,parsed_views)
+            resolveView(view,imported_views,imported_prefixes)
       }
 
       return [...unresolved].map(nodeName => nodeName.toLowerCase()).sort()
@@ -361,14 +382,53 @@ const jstl=(() => {
       }
       // validate view names and attributes
       console.log("unresolved tags",resolveViews())
-      ///////////
-      // TODO: build view controller
-      ///////////
+      for (const tags of Object.values(PARSED_TAGS)) {
+         const imported_views=tags.computeImport(PARSED_VIEWS)
+         console.log("imported_views=",imported_views)
+         for (const view of tags.views.filter(v => v===PARSED_VIEWS[v.exportName]))
+            ;; // TODO:
+         ///////////
+         // TODO: build view controller
+         ///////////
+      }
+
    }
 
    ////////////////////////////
    // Parsed Data Structures //
    ////////////////////////////
+
+   /** Helper for matching objects stored in an array. All given properties are matched (and).
+    * A (string only) property can be matched with a simple value (bigint,boolean,null,number,string,symbol).
+    * It can also be matched with a RegExp or a value from a Set (or).
+    * For matching even more complex values a predicate function is supported.
+    */
+   class MatchEveryProperty
+   {
+      constructor(props)
+      {
+         const buildMatcher=(key,matchFor) => {
+            if (typeof matchFor === "function")
+               return matchFor // match with predicate function
+            else if (typeof matchFor !== "object" || matchFor === null)
+               return (v => v === matchFor) // match simple type
+            else if (matchFor instanceof RegExp)
+               return (v => matchFor.test(String(v))) // match regular expression
+            else if (matchFor instanceof Set)
+               return (v => matchFor.has(v)) // test Set contains values
+            else
+               throw Error(`INTERNAL ERROR can not match property '${String(key)}' with unsupported type '${matchFor.constructor?.name??"object"}'.`)
+         }
+         this.props=[]
+         for (const [k,v] of Object.entries(props))
+            if (v !== undefined)
+               this.props.push([k,buildMatcher(k,v)])
+      }
+      filter(array)
+      {
+         return array.filter( o => this.props.every( ([k,matcher]) => matcher(o[k]) === true))
+      }
+   }
 
    class ParsedViewTag
    {
@@ -377,11 +437,7 @@ const jstl=(() => {
       hasNoChilds() { return this.attrFilter({type:/body|child/}).length===0 }
       attrFilter({type,required,nameSet})
       {
-         type=(type && new RegExp(type))
-         return this.attributes.filter( a =>
-               (type===undefined     || a.type.match(type))
-            && (required===undefined || a.required === required)
-            && (nameSet===undefined  || nameSet.has(a.name)))
+         return new MatchEveryProperty({type,required,name:nameSet}).filter(this.attributes)
       }
       validateTypedAttributes(refNode,type,subNodes)
       {
@@ -401,6 +457,9 @@ const jstl=(() => {
          this.validateTypedAttributes(refNode,"string",refNode.attributes)
          if (! this.hasBody())
             this.validateTypedAttributes(refNode,"child",[...refNode.childNodes].filter(isNotEmptyNode))
+         else if (this.attrFilter({type:"body",required:true}).length>0
+                  && [...refNode.childNodes].filter(isNotEmptyNode).length===0)
+            throw logErrorForNode(refNode,undefined,`View requires at least one non empty child node.`)
       }
    }
 
@@ -418,28 +477,41 @@ const jstl=(() => {
 
       computeImport(parsed_views)
       {
-         if (this.imports.length === 0) return parsed_views
-         const adapted_view_names=Object.assign({},parsed_views)
+         const imported_views=Object.assign({},parsed_views)
          for (const im of this.imports) {
-            im.importedTags.exportViewsForImportTag(adapted_view_names,im.importNode,im.importPrefix)
+            // !!ignore!! in case import failed
+            im.tags?.exportViewsForImportTag(imported_views,im.importNode,im.importPrefix)
          }
-         return adapted_view_names
+         return imported_views
       }
 
-      exportViewsForImportTag(parsed_views,importNode,exportPrefix)
+      computePrefixes(prefixes)
+      {
+         const imported_prefixes=new Set(prefixes)
+         for (const im of this.imports) {
+            if (im.importPrefix !== "")
+               imported_prefixes.add(im.importPrefix.toUpperCase())
+         }
+         return imported_prefixes
+      }
+
+      exportViewsForImportTag(imported_views,importNode,importPrefix)
       {
          const overwrittenViews=[]
          for (const view of this.views) {
-            const exportName=(exportPrefix+view.name).toUpperCase()
-            const exportedView=parsed_views[exportName]
-            if (exportedView !== view) {
+            const exportName=(importPrefix+view.name).toUpperCase()
+            const exportedView=imported_views[exportName]
+            if (exportedView?.tags !== view.tags) {
+               imported_views[exportName]=new ParsedViewTag({...view,exportName})
                if (exportedView)
-                  overwrittenViews.push(exportName.toLowerCase())
-               parsed_views[exportName]=view
+                  overwrittenViews.push({name:exportName.toLowerCase(),viewNode:exportedView.viewNode})
             }
          }
-         if (overwrittenViews.length)
-            logWarningForNode(importNode,`Adapt import-prefix to prevent imported views overwriting existing views, namely ${overwrittenViews}.`)
+         if (overwrittenViews.length) {
+            logWarningForNode(importNode,`Adapt import-prefix to prevent imported views overwriting existing views, namely ${overwrittenViews.map(view => view.name)}.`)
+            for (const view of overwrittenViews)
+               logWarningForNode(view.viewNode,`Overwritten definition of <${view.name}>.`)
+         }
       }
 
       exportViews(parsed_views)
@@ -450,13 +522,27 @@ const jstl=(() => {
             const exportedView=parsed_views[exportName]
             if (exportedView !== view) {
                if (exportedView)
-                  unexportedViews.push(exportName.toLowerCase())
-               else
-                  parsed_views[exportName]=view
+                  unexportedViews.push(exportName)
+               else {
+                  parsed_views[exportName]=view, ++this.nrExportedViews
+               }
             }
          }
-         if (unexportedViews.length)
-            logWarningForNode(this.tagsNode,`Some views are *not* exported, namely ${unexportedViews}.`)
+         if (unexportedViews.length) {
+            logWarningForNode(this.tagsNode,`Some views are *not* exported, namely ${unexportedViews.map(name => name.toLowerCase())}.`)
+            for (const name of unexportedViews)
+               logWarningForNode(parsed_views[name].viewNode,`Previous defininition of <${name.toLowerCase()}>.`)
+         }
+      }
+
+      async resolveImports()
+      {
+         const importErrors=[]
+         for (const importTag of this.imports)
+            if (! importTag.tags)
+               importTag.tags=await loadTags(importTag.url).catch( e => (importErrors.push(logErrorForNode(importTag.importNode,"url",`Importing tags from '${importTag.url}' failed with:\n---\n${e.message}\n---`,{cause:e})),null))
+         if (importErrors.length)
+            throw importErrors[0]
       }
    }
 
@@ -486,35 +572,6 @@ const jstl=(() => {
          for (const node of parentNode.childNodes)
             childNodes.appendChild(node)
          return childNodes
-      }
-   }
-
-   // TODO: removes
-   class Prefixer
-   {
-      static ALLOWEDCHARS=/^[-_.:a-zA-Z0-9]*/
-      #knownPrefixes=new Set(); #matcher
-
-      add(prefix)
-      {
-         if (typeof prefix !== "string")
-            throw Error(`Prefix is not of type string but ${typeof prefix}.`)
-         const allowedLen=prefix.match(Prefixer.ALLOWEDCHARS)[0].length
-         if (allowedLen !== prefix.length)
-            throw Error(`Prefix contains unsupported character '${prefix.substring(0,allowedLen-1)}»${prefix[allowedLen]}«'.`)
-         this.#knownPrefixes.add(prefix.toUpperCase())
-      }
-
-      prepareMatch()
-      {
-         const matcher=[...this.#knownPrefixes].reduce( (matcher,key) => matcher+"|"+key.replace(".","\\."),"[*]")
-         this.#matcher=new RegExp(`^(${matcher})`)
-      }
-
-      match(value)
-      {
-         const match=value.match(this.#matcher)
-         return match
       }
    }
 
@@ -922,18 +979,17 @@ const jstl=(() => {
             let attr1,attr2;
             const attributesByName={}
             const unique=(attr) => {
-               if (attr.name in attributesByName) logErrorForNode(attr.attrNode,"name",`Attribute value '${attr.name}' is not unique.`,{prevNode:attributesByName[attr.name].attrNode})
+               if (attr.name in attributesByName)
+                  throw logErrorForNode(attr.attrNode,"name",`Attribute name '${attr.name}' is not unique.`,{prevNode:attributesByName[attr.name].attrNode})
                attributesByName[attr.name]=attr
             }
             do { attr1=yield; unique(attr1) } while (attr1.type !== "body" && attr1.type !== "child")
             for (;;) {
                do { attr2=yield; unique(attr2) } while (attr2.type !== "body" && attr2.type !== "child")
                if (attr1.type !== attr2.type)
-                  throw logErrorForNode(attr2.attrNode,"type",`Attribute value '${attr2.type}' excludes previous attribute with type '${attr1.type}'.`,{prevNode:attr1.attrNode})
+                  throw logErrorForNode(attr2.attrNode,"type",`Attribute type '${attr2.type}' is not allowed together with attribute of type '${attr1.type}'.`,{prevNode:attr1.attrNode})
                else if (attr2.type === "body")
-                  throw logErrorForNode(attr2.attrNode,"type",`Attribute value 'body' is not allowed more than once.`,{prevNode:attr1.attrNode})
-               // attr1.type==attr2.type=="child"
-               attr1=attr2
+                  throw logErrorForNode(attr2.attrNode,"type",`Attribute type 'body' is not allowed more than once.`,{prevNode:attr1.attrNode})
             }
          })()
          validator.next() // execute validator until first yield (waiting for input)
@@ -987,7 +1043,7 @@ const jstl=(() => {
                         ])
 
       #importPrefix; #url;
-      get result() { return ({ importNode: this.node, importPrefix: this.#importPrefix, url: this.#url, importedTags: null }) }
+      get result() { return ({ importNode: this.node, importPrefix: this.#importPrefix, tags: null, url: this.#url }) }
 
       visitChilds(visitingContext)
       {
@@ -1086,11 +1142,11 @@ const jstl=(() => {
       // Exported Types //
       ////////////////////
       ParseError=ParseError
-      Prefixer=Prefixer
       ChildNodes=ChildNodes
       ControlNode=ControlNode
       DOMVisitingContext=DOMVisitingContext
       DOMVisitor=DOMVisitor
+      MatchEveryProperty=MatchEveryProperty
 
       ////////////////////////
       // Exported Constants //

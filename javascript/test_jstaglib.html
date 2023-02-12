@@ -28,6 +28,9 @@
          console.log("parsed views",jstl.getViewNames())
          jstl.parseViewContent()
       })
+
+      // uncomment to test warnings
+      // jstl.parseTags({text:TEST_TAGS1.innerHTML, url:"tags1.html"})
    })
 
 </script>
@@ -57,10 +60,11 @@
 
 <div ID="TEST_TAGS2" style="display:none">
 <tags export-prefix="" taglib-prefix="t-">
-   <t-import import-prefix="form-" url="tags1.html"></t-import>
+   <t-import import-prefix="form2-" url="tags1.html"></t-import>
+   <t-import import-prefix="form3-" url="tags1.html"></t-import>
    <t-view name="dummy">
       <t-vdata>{name:true,id:true,label:true}</t-vdata>
-      <t-attr name="nr" type="body"></t-attr>
+      <t-attr name="childs" type="body" required></t-attr>
       <t-html></t-html>
    </t-view>
    <t-view name="checkbox">
@@ -91,11 +95,16 @@
             <div class="col-10">
                <t-set var="viewname">checkbox2</t-set>
                <t-for in="&:checkboxes" var="checkbox" index="i" length="length">
-                  <checkbox nr="&:`${d.i}. `" last="&:d.length===d.i" vdata="&:checkbox">
+                  <form2-checkbox nr="&:`${d.i}. `" last="&:d.length===d.i" vdata="&:checkbox">
                      <header><b>HEADER</b>&:i</header>
                      <footer><hr></footer>
                      <content></content>
-                  </checkbox>
+                  </form2-checkbox>
+                  <form3-checkbox nr="&:`${d.i}. `" last="&:d.length===d.i" vdata="&:checkbox">
+                     <header><b>HEADER</b>&:i</header>
+                     <footer><hr></footer>
+                     <content></content>
+                  </form3-checkbox>
                </t-for>
                <dummy><x></x></dummy>
                <t-set var="c">&:checkboxes.2.label</t-set>

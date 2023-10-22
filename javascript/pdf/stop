@@ -1,0 +1,6 @@
+# replace joerg with your username and 
+# python3... with name of your http-server
+id=`pgrep -fu joerg "python3.*http\.server"`
+if [ "$id" != "" ]; then
+   kill "$id"
+fi

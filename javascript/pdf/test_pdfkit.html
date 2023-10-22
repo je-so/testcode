@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="utf-8">
+   <title>
+      pdk-kit - Create PDFs with HTML5 JavaScript Library
+   </title>
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="description" content="">
+	<meta name="author" content="">
+   <script type="importmap">
+      {
+        "imports": {
+         "jsm-pdf": "/jsm/pdf.js",
+         "pdflib": "/ext-libs/pdf-lib.esm.js",
+         "pdfkit": "/ext-libs/pdfkit.standalone.js",
+         "blob-stream": "/ext-libs/blob-stream.js",
+         "fontkit": "/ext-libs/fontkit.es.js",
+         "pako": "/ext-libs/pako-esm2015.js"
+        }
+      }
+    </script>
+</head>
+
+<body>
+   <iframe id="pdf" style="width: 100%; height: 400px;"></iframe>
+   <script type="module">
+      import pdf from "jsm-pdf"
+
+      const iframe=document.getElementById("pdf")
+
+      pdf.FontData.load("UbuntuMono","/UbuntuMono-R.ttf") // async op
+      pdf.FontData.load("URWBookman-Light","/URWBookman-Light.otf") // async op
+      pdf.FontData.load("Lexend-Light","/Lexend-Light.ttf") // async op
+
+      const doc=new pdf.Document("a4","p", { pdfVersion:"1.7", compress: false,
+         keywords: "hello world",
+         language: "de-DE",
+         creationDate: new Date("2019-12-13"),
+         modificationDate: new Date("2019-12-13"),
+         margin: new pdf.Margin(10,20,30,40)
+      })
+      console.log("pdfkitDoc",doc.pdfkitDoc)
+      doc.addPage()
+      doc.forPages( (doc,current,nrPages,margin) => console.log("doc",doc,"current",current,"nrPages",nrPages,"margin",margin))
+
+      const font1 = doc.addFont("UbuntuMono")
+      const font2 = doc.addFont("URWBookman-Light")
+      const font3 = doc.addFont("Lexend-Light")
+
+      await font1.asyncOperation
+      await font2.asyncOperation
+      await font3.asyncOperation
+
+      console.log("font1",font1)
+      console.log("font1.isError",font1.isError)
+      console.log("font2",font2)
+      console.log("font2.isError",font1.isError)
+      console.log("font3",font3)
+
+      /*
+      console.log("capHeight",font1.capHeight)
+      console.log("xHeight",font1.xHeight)
+      console.log("ascent",font1.ascent)
+      console.log("descent",font1.descent)
+      console.log("bbox",font1.bbox)
+      console.log("unitsPerEm",font1.unitsPerEm)
+      console.log("postscriptName",font1.postscriptName);
+      console.log("name",font1.name);
+      */
+
+      console.log("pdfkitDoc",doc.pdfkitDoc)
+
+      console.log("start drawing")
+      // Embed a font, set the font size, and render some text
+      doc.pdfkitDoc
+      // .font("UbuntuMono")
+      .font("Lexend-Light")
+      .fontSize(25)
+      .text('ÄÖÜ Hello World Some text with an embedded font!', 100, 10);
+
+      console.log("end drawing")
+
+      // doc.close().toDataURL() // get a data url when you're done
+      doc.close().toBlob() // get a blob when you're done
+      // merge the pdf data two times (doubles page one) and get result as data url
+      .then( blob => pdf.merge(blob,blob).toDataURL())
+      .then( dataURL => { // show data url containing pdf in iframe
+         console.log("dataURL.length",dataURL.length)
+         iframe.src=dataURL
+         // in case of toObjectURL call URL.revokeObjectURL(dataURL)
+      }).catch( e => console.log("error in doc.close()"))
+   </script>
+
+</body>
+</html>
+

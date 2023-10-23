@@ -23,7 +23,7 @@ const pdfkit={}
 pdfkit.PDFDocument = _pdfkit.PDFDocument ?? window.PDFDocument
 pdfkit.PageSizes = pdfkit.PDFDocument.SIZES
 const blobstream={}
-blobstream.BlobStream = _blobstream.blobStream ?? window.blobStream
+blobstream.blobStream = _blobstream.blobStream ?? window.blobStream
 
 const module = {
    name: "jsm-pdf",
@@ -52,7 +52,7 @@ const assertType=(Type,value,argName) => { if (!(value instanceof Type)) throw n
 
 if (!pdfkit.PDFDocument) throw newError("could not import PDFDocument from pdfkit")
 if (!pdfkit.PageSizes) throw newError("could not import PageSizes from pdfkit")
-if (!blobstream.BlobStream) throw newError("could not import BlobStream from blobstream")
+if (!blobstream.blobStream) throw newError("could not import blobStream from blobstream")
 
 
 ///////////////////////////
@@ -481,7 +481,7 @@ class Document
     */
    close() {
       const doc = this.#pdf
-      const stream = doc.pipe(blobstream.BlobStream())
+      const stream = doc.pipe(blobstream.blobStream())
       const data = new PDFData()
       doc.end()
       stream.on('finish', () => data.set(stream.toBlob('application/pdf')))
@@ -699,17 +699,21 @@ class TextArea
    }
 }
 
-async function pdflibMerge(blobs) {
+async function pdflibMerge(fromPdfData) {
    const mergedPdf = await pdflib.PDFDocument.create()
    let copyMetadata = true
 
-   async function copyPages(toPDF, fromData) {
+   async function copyPages(toPDF, fromData, pages) {
       if (fromData instanceof Blob)
          fromData = await fromData.arrayBuffer()
-      else if (!fromData instanceof ArrayBuffer)
-         throw newError("unsupported data type, expect either Blob or ArrayBuffer")
+      else if (!(fromData instanceof ArrayBuffer))
+         throw newError(`expect PDF data of type (Blob|ArrayBuffer) not ${_typeof(fromData)}`)
       const fromPDF = await pdflib.PDFDocument.load(fromData)
-      const copiedPages = await toPDF.copyPages(fromPDF, fromPDF.getPageIndices())
+      const allPages = fromPDF.getPageIndices()
+      const fromPages = (pages && pages.length
+                        ? pages.map(pnr => pnr-1/*page index starting from 0*/).filter(pi => allPages.includes(pi))
+                        : allPages)
+      const copiedPages = await toPDF.copyPages(fromPDF, fromPages)
       copiedPages.forEach( page => toPDF.addPage(page))
       if (copyMetadata) {
          copyMetadata = false
@@ -721,24 +725,53 @@ async function pdflibMerge(blobs) {
       }
    }
 
-   for (const blob of blobs)
-      await copyPages(mergedPdf, blob)
+   for (const fromPdf of fromPdfData) {
+      const isWrapper = typeof fromPdf === "object" && ("blob" in fromPdf)
+      const pdfData = isWrapper ? fromPdf.blob : fromPdf
+      const pages = isWrapper ? fromPdf.pages : undefined
+      if (!(pdfData instanceof Blob) && !(pdfData instanceof ArrayBuffer))
+         throw newError(`expect PDF data of type (Blob|ArrayBuffer|{blob:Blob|ArrayBuffer,pages:undefined|number[]}) not ${isWrapper ? '{blob:'+_typeof(pdfData)+'}':_typeof(pdfData)}`)
+      if (pages !== undefined && !Array.isArray(pages))
+         throw newError(`expect pages property of type (Array|undefined) not ${_typeof(pages)}`)
+      await copyPages(mergedPdf, pdfData, pages)
+   }
 
    return mergedPdf
 }
 
-function merge(...blobs) {
-   if (!blobs.length)
+/**
+ * The function copies pages from one or more PDF documents into a single PDF
+ * document and returns the merged PDF data.
+ * In case a Blob is provided or pages property in the wrapper is either undefined
+ * or an empty array all pages are copied.
+ * The pages array contains page numbers starting from 1.
+ * The pages are copied in order. You could supply page numbers more than once in which case
+ * the page is copied more than once.
+ * @param {(Blob|{blob:Blob,pages:undefined|number[]})[]} fromPdfData - Data content of one or more PDF documents. If they are wrapped in an object set property blob to content of PDF and supply an pages array to select the pages for copy and also their order.
+ * @returns {PDFData} See {@link PDFData} how to access to returned data.
+ */
+function merge(...fromPdfData) {
+   if (!fromPdfData.length)
       return null
 
    const data=new PDFData()
 
-   pdflibMerge(blobs)
+   pdflibMerge(fromPdfData)
    .then( mergedPdf => mergedPdf.save())
    .then( mergedData => data.set(mergedData))
    .catch( e => data.set(e))
 
    return data
+}
+
+async function pageNumbers(fromPdfData) {
+   if (fromPdfData instanceof Blob)
+      fromPdfData = await fromPdfData.arrayBuffer()
+   else if (!(fromPdfData instanceof ArrayBuffer))
+      throw newError(`expect PDF data of type (Blob|ArrayBuffer) not ${_typeof(fromPdfData)}`)
+   const doc = await pdflib.PDFDocument.load(fromPdfData)
+   const pageIndices = doc.getPageIndices()
+   return pageIndices.map(pi => pi+1/*page numbers start from 1*/)
 }
 
 Object.assign(module.exports, {
@@ -747,6 +780,7 @@ Object.assign(module.exports, {
    mm2pt,
    pt2mm,
    merge,
+   pageNumbers,
    FontData,
    Document,
    PDFData,

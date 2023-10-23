@@ -2,12 +2,10 @@
 <html lang="en">
 <head>
    <meta charset="utf-8">
-   <title>
-      pdk-kit - Create PDFs with HTML5 JavaScript Library
-   </title>
+   <title>Create PDF with 'pdfkit' JavaScript Library</title>
    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta name="description" content="">
-	<meta name="author" content="">
+   <meta name="description" content="">
+   <meta name="author" content="">
    <script type="importmap">
       {
         "imports": {
@@ -29,8 +27,8 @@
 
       const iframe=document.getElementById("pdf")
 
-      pdf.FontData.load("UbuntuMono","/UbuntuMono-R.ttf") // async op
-      pdf.FontData.load("URWBookman-Light","/URWBookman-Light.otf") // async op
+      pdf.FontData.load("UbuntuMono","./UbuntuMono-R.ttf") // async op
+      pdf.FontData.load("URWBookman-Light","./URWBookman-Light.otf") // async op
       pdf.FontData.load("Lexend-Light","/Lexend-Light.ttf") // async op
 
       const doc=new pdf.Document("a4","p", { pdfVersion:"1.7", compress: false,
@@ -72,19 +70,30 @@
       console.log("pdfkitDoc",doc.pdfkitDoc)
 
       console.log("start drawing")
+
       // Embed a font, set the font size, and render some text
       doc.pdfkitDoc
       // .font("UbuntuMono")
       .font("Lexend-Light")
-      .fontSize(25)
-      .text('ÄÖÜ Hello World Some text with an embedded font!', 100, 10);
+      .fontSize(32)
+      .text('Former First Page!', 100, 10);
+      doc.addPage()
+      doc.pdfkitDoc
+      .fontSize(40)
+      .text('Former Second Page!', 100, 10);
+      doc.addPage()
+      doc.pdfkitDoc
+      .fontSize(32)
+      .text('Third Page (is copied twice)!', 100, 10);
 
       console.log("end drawing")
 
       // doc.close().toDataURL() // get a data url when you're done
       doc.close().toBlob() // get a blob when you're done
-      // merge the pdf data two times (doubles page one) and get result as data url
-      .then( blob => pdf.merge(blob,blob).toDataURL())
+      // print page numbers
+      .then( blob => { pdf.pageNumbers(blob).then( numbers => console.log("doc has pages: ",numbers)); return blob })
+      // merge pdf but move page 2 to first and first page to second place, double third page
+      .then( blob => pdf.merge({blob,pages:[2,1,3,3]}).toDataURL() )
       .then( dataURL => { // show data url containing pdf in iframe
          console.log("dataURL.length",dataURL.length)
          iframe.src=dataURL

@@ -88,17 +88,22 @@
 
       console.log("end drawing")
 
-      // doc.close().toDataURL() // get a data url when you're done
-      doc.close().toBlob() // get a blob when you're done
+
+      // get a ArrayBuffer,Blob,object or data URL,or PDFData when you're done
+      // doc.close().toArrayBuffer()
+      // doc.close().toBlob()
+      // doc.close().toObjectURL()
+      // doc.close().toDataURL()
+      Promise.resolve(doc.close())
       // print page numbers
-      .then( blob => { pdf.pageNumbers(blob).then( numbers => console.log("doc has pages: ",numbers)); return blob })
+      .then( blob => { console.log("blob",blob.constructor.name); pdf.PDFData.pageNumbers(blob).then( numbers => console.log("doc has pages: ",numbers)); return blob })
       // merge pdf but move page 2 to first and first page to second place, double third page
-      .then( blob => pdf.merge({blob,pages:[2,1,3,3]}).toDataURL() )
-      .then( dataURL => { // show data url containing pdf in iframe
+      .then( blob => pdf.PDFData.merge({bytes:blob,pages:[2,1,3,3]}).toDataURL() )
+      .then( dataURL => { // show pdf (content stored in data url) in iframe
          console.log("dataURL.length",dataURL.length)
          iframe.src=dataURL
          // in case of toObjectURL call URL.revokeObjectURL(dataURL)
-      }).catch( e => console.log("error in doc.close()"))
+      }).catch( e => console.log("error in doc.close()",e))
    </script>
 
 </body>

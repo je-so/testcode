@@ -137,24 +137,27 @@ class PDFData
       })
    }
 
+   /**
+    * Sets PDF document content or Error.
+    * The set data could be read with {@link toBlob} or any other to<Type> function.
+    * @param {Blob|ArrayBuffer|Uint8Array|Error} blob Contains PDF content as binary data or Error object.
+    */
    set(blob) {
-      if (blob instanceof Blob) {
-         this.#resolve(blob)
-      }
-      else if (blob instanceof ArrayBuffer || blob instanceof Uint8Array) {
-         this.#resolve(new Blob([blob], { type: 'application/pdf' }))
-      }
-      else if (blob instanceof Error) {
-         this.#reject(blob)
+      if (PDFData.checkBinaryType(blob)) {
+         this.#resolve(PDFData.toBlob(blob))
       }
       else {
-         this.#reject(newError(`Unsupported data type »${_typeof(blob)}«`))
+         this.#reject( blob instanceof Error ? blob : newError(`Unsupported data type »${_typeof(blob)}«`) )
       }
    }
 
+   /** @returns {Promise<Blob>} PDF document content as Blob. */
    async toBlob() { return this.#promise }
-   async toArrayBuffer() { return this.#promise.then( blob => blob.arrayBuffer()) }
+   /** @returns {Promise<ArrayBuffer>} PDF document content as ArrayBuffer. */
+   async toArrayBuffer() { return this.#promise.then( blob => blob.arrayBuffer() ) }
+   /** @returns {Promise<string>} PDF document content as object URL. */
    async toObjectURL() { return this.#promise.then( blob => URL.createObjectURL(blob)) }
+   /** @returns {Promise<string>} PDF document content as data URL. */
    async toDataURL() {
       return this.#promise.then( blob => new Promise((resolve,reject) => {
          const reader = new FileReader()
@@ -164,6 +167,122 @@ class PDFData
       }))
    }
 
+   //
+   // conversion of PDF data into ArrayBuffer
+   //
+
+   /** Returns union type of all types accepted as PDF data, which are convertible to Blob. */
+   static get binaryType() { return "Blob|PDFData|ArrayBuffer|Uint8Array|string" }
+   /**
+    * Checks if data type is supported.
+    * @param {any} bytes - Content of PDF document as binary data.
+    * @returns {boolean} <tt>true</tt> in case bytes could be converted into type Blob.
+    */
+   static checkBinaryType(bytes) { return (bytes instanceof Blob) || (bytes instanceof PDFData) || (bytes instanceof Uint8Array) || (bytes instanceof ArrayBuffer) || typeof bytes === "string" }
+   /**
+    * Converts supported binary data type into type Blob.
+    * @param {any} bytes - Content of PDF document as binary data.
+    * @returns {Promise<ArrayBuffer>} Binary data converted into type Blob.
+    */
+   static async toBlob(bytes) {
+      if (bytes instanceof Blob)
+         return bytes
+      if (bytes instanceof PDFData)
+         return bytes.toBlob()
+      if (bytes instanceof Uint8Array || bytes instanceof ArrayBuffer)
+         return new Blob([bytes], { type: 'application/pdf' })
+      if (typeof bytes === "string" &&
+          (bytes.startsWith("data:") || bytes.startsWith("blob:"))) {
+         return fetch(bytes)
+            .then(resp => resp.blob())
+            .catch(e => { throw newError("PDF data contains invalid data or object URL",e) })
+      }
+      throw newError("PDF data contains no data or object URL")
+   }
+
+   /**
+    * Converts supported binary data type into type ArrayBuffer.
+    * @param {any} bytes - Content of PDF document as binary data.
+    * @returns {Promise<ArrayBuffer>} Binary data converted into type ArrayBuffer.
+    */
+   static async toArrayBuffer(bytes) {
+      if (bytes instanceof Blob)
+         return bytes.arrayBuffer()
+      if (bytes instanceof PDFData)
+         return bytes.toArrayBuffer()
+      if (bytes instanceof Uint8Array)
+         return bytes.buffer
+      if (bytes instanceof ArrayBuffer)
+         return bytes
+      if (typeof bytes === "string" &&
+          (bytes.startsWith("data:") || bytes.startsWith("blob:"))) {
+         return fetch(bytes)
+            .then(resp => resp.arrayBuffer())
+            .catch(e => { throw newError("PDF data contains invalid data or object URL",e) })
+      }
+      throw newError("PDF data contains no data or object URL")
+   }
+
+   //
+   // handling of raw PDF data
+   //
+
+   /**
+    * The function merges one or more PDF documents into one and returns the merged PDF data.
+    * A single PDF document is provided either by its data (Blob or ArrayBuffer)
+    * or a wrapper object with properties bytes and pages.
+    * Pages is an array holding all page numbers (starting from 1) to be copied into the resulting document.
+    *
+    * The pages are copied in the same order as stored in pages array.
+    * You could supply a page number more than once in which case this page is copied more than once.
+    * In case pages is empty or undefined all pages are copied.
+    * @param {(ArrayBuffer|{bytes:ArrayBuffer,pages?:number[]})[]} pdfData - Data content of one or more PDF documents. If they are wrapped in an object set property blob to content of PDF and supply an pages array to select the pages for copy and also their order.
+    * @returns {PDFData} A {@link PDFData wrapper object} for the merged data. Use {@link toBlob} or {@link toDataURL} or another to<Type> function to access the merged data.
+    */
+   static merge(...pdfData) {
+      if (!pdfData.length)
+         return null
+
+      async function wrapData()
+      {
+         const wrappedPDfData = pdfData.map( data => {
+            const isWrapper = typeof data === "object" && ("bytes" in data)
+            const bytes = isWrapper ? data.bytes : data
+            const pages = isWrapper ? data.pages : undefined
+            if (!PDFData.checkBinaryType(bytes))
+               throw newError(`expect ${isWrapper ? 'bytes property':'PDF data'} of type (${PDFData.binaryType}${isWrapper?'':'|{bytes:ArrayBuffer|...}'}) not ${_typeof(bytes)}`)
+            if (pages !== undefined && !Array.isArray(pages))
+               throw newError(`expect pages property of type (Array|undefined) not ${_typeof(pages)}`)
+            return { bytes, pages }
+         })
+
+         for (const wrapper of wrappedPDfData) {
+            wrapper.bytes = await PDFData.toArrayBuffer(wrapper.bytes)
+         }
+
+         return wrappedPDfData
+      }
+
+      const data=new PDFData()
+
+      wrapData()
+      .then( wrappedPDfData => pdflibMerge(wrappedPDfData))
+      .then( mergedData => data.set(mergedData))
+      .catch( e => data.set(e))
+
+      return data
+   }
+
+   /**
+    * Returns an array of all pages defined in the document.
+    * @param {ArrayBuffer} pdfData The bytes of the PDF document.
+    * @returns {number[]} Array which lists all contained page numbers.
+    */
+   static async pageNumbers(pdfData) {
+      if (!PDFData.checkBinaryType(pdfData))
+         throw newError(`expect PDF data of type (${PDFData.binaryType}) not ${_typeof(pdfData)}`)
+      return pdflibPageNumbers(await PDFData.toArrayBuffer(pdfData))
+   }
 }
 
 ////////////////////////
@@ -699,15 +818,13 @@ class TextArea
    }
 }
 
-async function pdflibMerge(fromPdfData) {
+async function pdflibMerge(pdfData) {
    const mergedPdf = await pdflib.PDFDocument.create()
    let copyMetadata = true
 
    async function copyPages(toPDF, fromData, pages) {
-      if (fromData instanceof Blob)
-         fromData = await fromData.arrayBuffer()
-      else if (!(fromData instanceof ArrayBuffer))
-         throw newError(`expect PDF data of type (Blob|ArrayBuffer) not ${_typeof(fromData)}`)
+      if (!(fromData instanceof ArrayBuffer))
+         throw newError(`expect PDF data of type (ArrayBuffer) not ${_typeof(fromData)}`)
       const fromPDF = await pdflib.PDFDocument.load(fromData)
       const allPages = fromPDF.getPageIndices()
       const fromPages = (pages && pages.length
@@ -725,53 +842,18 @@ async function pdflibMerge(fromPdfData) {
       }
    }
 
-   for (const fromPdf of fromPdfData) {
-      const isWrapper = typeof fromPdf === "object" && ("blob" in fromPdf)
-      const pdfData = isWrapper ? fromPdf.blob : fromPdf
-      const pages = isWrapper ? fromPdf.pages : undefined
-      if (!(pdfData instanceof Blob) && !(pdfData instanceof ArrayBuffer))
-         throw newError(`expect PDF data of type (Blob|ArrayBuffer|{blob:Blob|ArrayBuffer,pages:undefined|number[]}) not ${isWrapper ? '{blob:'+_typeof(pdfData)+'}':_typeof(pdfData)}`)
-      if (pages !== undefined && !Array.isArray(pages))
-         throw newError(`expect pages property of type (Array|undefined) not ${_typeof(pages)}`)
-      await copyPages(mergedPdf, pdfData, pages)
+   for (const fromPdf of pdfData) {
+      await copyPages(mergedPdf, fromPdf.bytes, fromPdf.pages)
    }
 
-   return mergedPdf
+   return mergedPdf.save()
 }
 
-/**
- * The function copies pages from one or more PDF documents into a single PDF
- * document and returns the merged PDF data.
- * In case a Blob is provided or pages property in the wrapper is either undefined
- * or an empty array all pages are copied.
- * The pages array contains page numbers starting from 1.
- * The pages are copied in order. You could supply page numbers more than once in which case
- * the page is copied more than once.
- * @param {(Blob|{blob:Blob,pages:undefined|number[]})[]} fromPdfData - Data content of one or more PDF documents. If they are wrapped in an object set property blob to content of PDF and supply an pages array to select the pages for copy and also their order.
- * @returns {PDFData} See {@link PDFData} how to access to returned data.
- */
-function merge(...fromPdfData) {
-   if (!fromPdfData.length)
-      return null
-
-   const data=new PDFData()
-
-   pdflibMerge(fromPdfData)
-   .then( mergedPdf => mergedPdf.save())
-   .then( mergedData => data.set(mergedData))
-   .catch( e => data.set(e))
-
-   return data
-}
-
-async function pageNumbers(fromPdfData) {
-   if (fromPdfData instanceof Blob)
-      fromPdfData = await fromPdfData.arrayBuffer()
-   else if (!(fromPdfData instanceof ArrayBuffer))
-      throw newError(`expect PDF data of type (Blob|ArrayBuffer) not ${_typeof(fromPdfData)}`)
-   const doc = await pdflib.PDFDocument.load(fromPdfData)
-   const pageIndices = doc.getPageIndices()
-   return pageIndices.map(pi => pi+1/*page numbers start from 1*/)
+async function pdflibPageNumbers(pdfData) {
+   if (!(pdfData instanceof ArrayBuffer))
+      throw newError(`expect PDF data of type (ArrayBuffer) not ${_typeof(pdfData)}`)
+   const doc = await pdflib.PDFDocument.load(pdfData)
+   return doc.getPageIndices().map(pi => pi+1/*page numbers start from 1*/)
 }
 
 Object.assign(module.exports, {
@@ -779,8 +861,6 @@ Object.assign(module.exports, {
    assertType,
    mm2pt,
    pt2mm,
-   merge,
-   pageNumbers,
    FontData,
    Document,
    PDFData,

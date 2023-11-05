@@ -1,6 +1,6 @@
-# replace joerg with your username and 
-# python3... with name of your http-server
-id=`pgrep -fu joerg "python3.*http\.server"`
+# replace joerg with your username and
+# lite-server with name of your http-server
+id=`pgrep -u joerg "lite-server"`
 if [ "$id" != "" ]; then
-   kill "$id"
+   kill -s HUP "$id"
 fi

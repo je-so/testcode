@@ -33,48 +33,138 @@ const module = {
 const errmsg=(msg) => `${module.name}: ${msg}`
 const logConsole=(e) => { console.log(e); return e }
 const newError=(msg,cause) => logConsole(new Error(errmsg(msg),cause ? {cause} : undefined))
+const throwError=(msg,cause) => { throw newError(msg,cause) }
+/**
+ * Checks if value is a Promise a Promise is returned which calls thenCallbach after Promise has been resolved.
+ * If value is not a Promise it is returned unchanged.
+ * @param {any|Promise<any>} value    The value which is checked for being a Promise.
+ * @param {(any)=>void} thenCallback  The function which is called if the Promise is resolved. The thenCallback should assign the given argument to the same value as ifPromise's return value is asigned to.
+ * @returns {any|Promise<any>} Either value or a Promise which calls thenCallback if value is resolved.
+ */
 const ifPromise=(value, thenCallback) =>
                      value instanceof Promise
-                     ? value.then( thenCallback )
+                     ? value.then( v => { thenCallback(v); return v })
                      : value
-const onReady=(asyncOps, createValueCallback) =>
+/**
+ * If one the asyncOps is a Promise (==async op in progresss) a Promise is returned which resolves
+ * if all asyncOps are fulfilled and then calls createValueCallback.
+ * The return value of createValueCallback is used to resolve the returned Promise.
+ * If none of the provided asyncOps is a Promise createValueCallback is called without delay and
+ * its return value is returned from this function.
+ *
+ * @param {(any|Promise<any>)[]} asyncOps  Array of values or running async operations (Promise).
+ * @param {()=>any} createValueCallback    The callback which computes the result and returns it.
+ * @param {undefined|(any)=>void} thenCallback The function which is called if onReady returns a Promise and this Promise is resolved. The thenCallback should assign the given argument to the same value as onReady's return value is asigned to. If thenCallback is undefined it is ignored.
+ * @returns {any|Promise<any>} If asyncOps contains a Promise a Promise is returned else the return value of createValueCallback.
+ */
+const onReady=(asyncOps, createValueCallback, thenCallback) =>
          asyncOps.some( op => op instanceof Promise)
-         ? Promise.all(asyncOps).then(_ => createValueCallback())
+         ? Promise.all(asyncOps).then(_ => { const v = createValueCallback(); if (thenCallback) thenCallback(v); return v })
          : createValueCallback()
-const _typeof=(v) => typeof v !== "object" ? typeof v
+/**
+ * Replacement for typeof. For a null value "null" is returned instead of "object".
+ * For an object value of a sub-type of Object the name of its constructor function is returned.
+ *
+ * A value out of ["bigint","boolean","null","number","NaN","Infinity","object","string","symbol","undefined"] or v's constructor name (<tt>v.constructor.name</tt>) is returned.
+ * @param {any} v    The value whose type is to be determined.
+ * @returns {string} The type-name of the given value.
+ */
+const typename=(v) => typeof v === "number" ? (isFinite(v) ? "number" : isNaN(v) ? "NaN" : "Infinity")
+         : typeof v !== "object" ? typeof v
          : v === null ? "null"
-         : v.constructor === Object || typeof v.constructor !== "function" ? "object"
-         : v.constructor.name
+         : v.constructor === Object ? "object"
+         : v.constructor?.name ?? "object"
 
-const assertFunction=(value,argName) => { if (typeof value !== "function") throw newError(`expect argument »${argName}« of type function`) ; return value }
-const assertNumber=(value,argName) => { if ((typeof value !== "number" && !(value instanceof Number)) || isNaN(value)) throw newError(`expect argument »${argName}« of type number`) ; return value }
-const assertType=(Type,value,argName) => { if (!(value instanceof Type)) throw newError(`expect argument »${argName}« of type ${Type.name}`) ; return value }
+const assertFunction=(value,argName) => { if (typeof value !== "function") throwError(`expect argument »${argName}« of type function not ${typename(value)}`) ; return value }
+const assertNumber=(value,argName) => { if (typeof value !== "number" || !isFinite(value)) throwError(`expect argument »${argName}« of type number not ${typename(value)}`) ; return value }
+const assertString=(value,argName) => { if (typeof value !== "string") throwError(`expect argument »${argName}« of type string not ${typename(value)}`) ; return value }
+const assertType=(Type,value,argName) => { if (!(value instanceof Type)) throwError(`expect argument »${argName}« of type ${Type.name} not ${typename(value)}`) ; return value }
 
-if (!pdfkit.PDFDocument) throw newError("could not import PDFDocument from pdfkit")
-if (!pdfkit.PageSizes) throw newError("could not import PageSizes from pdfkit")
-if (!blobstream.blobStream) throw newError("could not import blobStream from blobstream")
+if (!pdfkit.PDFDocument) throwError("could not import PDFDocument from pdfkit")
+if (!pdfkit.PageSizes) throwError("could not import PageSizes from pdfkit")
+if (!blobstream.blobStream) throwError("could not import blobStream from blobstream")
 
 
-///////////////////////////
-// Value Unit Conversion //
-///////////////////////////
+/////////////////////
+// Unit Conversion //
+/////////////////////
 
 // All coordinate and size values are measured in points.
 // If you want to use other units you need to convert them into points
 // and returned values (size, position, ...) back into other units.
 
 /**
- * Converts millimeter (mm) into points (pt).
- * @param {Number} mm   A value in millimeter.
- * @returns             The value in millimeter converted into a value in points.
+ * Supports conversion of values from millitmeter, points, percent into values measured in points.
  */
-const mm2pt = (mm) => mm * 72 / 25.4
+class LengthUnit {
+   static assertBaseValue(baseValue,argName) { return baseValue !== undefined ? assertNumber(baseValue,"baseValue") : throwError(`expect argument »${argName}« of absolute length unit not '%'-unit`) }
+
+   static mm = new LengthUnit("mm", mmValue => mmValue * 72 / 25.4, ptValue => ptValue * 25.4 / 72)
+   static pt = new LengthUnit("pt", ptValue => ptValue, ptValue => ptValue)
+   static percent = new LengthUnit("%", (percentValue, argName, baseValue) => percentValue * this.assertBaseValue(baseValue,argName) / 100,
+                           (ptValue, argName, baseValue) => 100 * this.assertBaseValue(baseValue,argName) / ptValue)
+
+   /**
+    * Constructs immutable object which manages conversion of values into values in points.
+    * @param {string} name  Abbreviated name of the physical unit of a value.
+    * @param {(number,argName,number?) => number} toPt    Conversion function to convert a value from given unit into a value in points.
+    * @param {(number,argName,number?) => number} fromPt  Conversion function to convert a value from points into a value in given unit.
+    */
+   constructor(name, toPt, fromPt) {
+      this.name = name
+      this.convertToPt = toPt
+      this.convertFromPt = fromPt
+      Object.freeze(this)
+   }
+
+}
+
 /**
- * Converts points (pt) into millimeter (mm).
- * @param {Number} mm   A value in millimeter.
- * @returns             The value in points converted into a value in millimeter.
+ * A value with a physical or relative unit. A percent value is relative to a base value in points.
  */
-const pt2mm = (pt) => pt * 25.4 / 72
+class uValue
+{
+   static #valuePattern=/^([-+]?[0-9]+([.][0-9]+)?)\s?(pt|mm|%)?$/
+   static #unitsMap=new Map([ ["mm", LengthUnit.mm], ["%", LengthUnit.percent], ["pt", LengthUnit.pt]])
+
+   static parse(strValue) {
+      const match=String(strValue).match(this.#valuePattern)
+      if (!match)
+         throwError(`expect value of format "[+-]<digits>[.<digits>][ ][pt|mm|%]" not "${String(strValue)}"`)
+      return new uValue(assertNumber(parseFloat(match[1]),"value"), match[3])
+   }
+
+   static get pt() { return LengthUnit.pt }
+   static get mm() { return LengthUnit.mm }
+   static get percent() { return LengthUnit.percent }
+   static get ['%']()   { return LengthUnit.percent }
+
+   static convertToPt(number,argName,baseValue) {
+      if (number instanceof uValue)
+         number = number.convertToPt(argName,baseValue)
+      return assertNumber(number,argName)
+   }
+
+   #unit
+   #value
+
+   /**
+    * Constructs a value measured in some unit. Percent values are relative to a base value.
+    * @param {number} value            The value which is measured in some unit.
+    * @param {LengthUnit|string} unit  The length unit the value is measured in.
+    */
+   constructor(value, unit="pt") {
+      this.#unit = ( unit instanceof LengthUnit ? unit
+                    : typeof unit === "string" ? (uValue.#unitsMap.get(unit) ?? throwError(`Expect unit one of ['mm','pt','%'] not '${unit}'`))
+                    : throwError(`Expect unit of type LengthUnit|string not ${typename(unit)}`))
+      this.#value = assertNumber(value, "value")
+   }
+
+   convertToPt(argName,baseValue) { return this.#unit.convertToPt(this.#value,argName,baseValue) }
+
+   getUnit()   { return this.#unit }
+   getValue()  { return this.#value }
+}
 
 
 ///////////////////////////
@@ -91,12 +181,16 @@ class EventListeners {
       }
    }
 
-   #getListeners(event) {
-      const listeners = this.#eventListeners[event]
-      if (listeners === undefined)
-         throw newError(`unknown event »${String(event)}«`)
-      return listeners
-   }
+   /**
+    * Returns true if event is supported.
+    * @param {string} event  The name of the event.
+    * @returns {boolean}     <tt>true</tt> if event is known.
+    */
+   isSupported(event) { return Array.isArray(this.#eventListeners[event]) }
+
+   #assertListeners(listeners,event) { return Array.isArray(listeners) ? listeners : throwError(`unknown event »${String(event)}«`) }
+
+   #getListeners(event) { return this.#assertListeners(this.#eventListeners[event],event) }
 
    addListener(event, callback) {
       const listeners = this.#getListeners(event)
@@ -116,13 +210,18 @@ class EventListeners {
       for (const listener of listeners)
          listener.call(_this,args)
    }
-
 }
 
+
 ////////////////////////////
-// Data Conversion Helper //
+// Binary PDF Data Helper //
 ////////////////////////////
 
+/**
+ * Holds result after PDF document has been closed (see {@link Document.close}).
+ *
+ * Also supports merging of PDF documents only available as binary data.
+ */
 class PDFData
 {
    #promise
@@ -147,9 +246,13 @@ class PDFData
          this.#resolve(PDFData.toBlob(blob))
       }
       else {
-         this.#reject( blob instanceof Error ? blob : newError(`Unsupported data type »${_typeof(blob)}«`) )
+         this.#reject( blob instanceof Error ? blob : newError(`Unsupported data type ${typename(blob)}`) )
       }
    }
+
+   //
+   // binary data is readable in different formats
+   //
 
    /** @returns {Promise<Blob>} PDF document content as Blob. */
    async toBlob() { return this.#promise }
@@ -168,20 +271,20 @@ class PDFData
    }
 
    //
-   // conversion of PDF data into ArrayBuffer
+   // conversion of binary data into Blob|ArrayBuffer
    //
 
    /** Returns union type of all types accepted as PDF data, which are convertible to Blob. */
-   static get binaryType() { return "Blob|PDFData|ArrayBuffer|Uint8Array|string" }
+   static get binaryType() { return "PDFData|Blob|ArrayBuffer|Uint8Array|string" }
    /**
     * Checks if data type is supported.
-    * @param {any} bytes - Content of PDF document as binary data.
-    * @returns {boolean} <tt>true</tt> in case bytes could be converted into type Blob.
+    * @param {any} bytes Content of PDF document as binary data.
+    * @returns {boolean} <tt>true</tt> in case parameter bytes is convertible into type Blob.
     */
    static checkBinaryType(bytes) { return (bytes instanceof Blob) || (bytes instanceof PDFData) || (bytes instanceof Uint8Array) || (bytes instanceof ArrayBuffer) || typeof bytes === "string" }
    /**
     * Converts supported binary data type into type Blob.
-    * @param {any} bytes - Content of PDF document as binary data.
+    * @param {any} bytes  Content of PDF document as binary data.
     * @returns {Promise<ArrayBuffer>} Binary data converted into type Blob.
     */
    static async toBlob(bytes) {
@@ -195,14 +298,13 @@ class PDFData
           (bytes.startsWith("data:") || bytes.startsWith("blob:"))) {
          return fetch(bytes)
             .then(resp => resp.blob())
-            .catch(e => { throw newError("PDF data contains invalid data or object URL",e) })
+            .catch(e => throwError("PDF data contains invalid data or object URL",e))
       }
-      throw newError("PDF data contains no data or object URL")
+      throwError("PDF data contains no data or object URL")
    }
-
    /**
     * Converts supported binary data type into type ArrayBuffer.
-    * @param {any} bytes - Content of PDF document as binary data.
+    * @param {any} bytes  Content of PDF document as binary data.
     * @returns {Promise<ArrayBuffer>} Binary data converted into type ArrayBuffer.
     */
    static async toArrayBuffer(bytes) {
@@ -218,13 +320,13 @@ class PDFData
           (bytes.startsWith("data:") || bytes.startsWith("blob:"))) {
          return fetch(bytes)
             .then(resp => resp.arrayBuffer())
-            .catch(e => { throw newError("PDF data contains invalid data or object URL",e) })
+            .catch(e => throwError("PDF data contains invalid data or object URL",e))
       }
-      throw newError("PDF data contains no data or object URL")
+      throwError("PDF data contains no data or object URL")
    }
 
    //
-   // handling of raw PDF data
+   // handling of raw PDF documents (binary data)
    //
 
    /**
@@ -236,7 +338,7 @@ class PDFData
     * The pages are copied in the same order as stored in pages array.
     * You could supply a page number more than once in which case this page is copied more than once.
     * In case pages is empty or undefined all pages are copied.
-    * @param {(ArrayBuffer|{bytes:ArrayBuffer,pages?:number[]})[]} pdfData - Data content of one or more PDF documents. If they are wrapped in an object set property blob to content of PDF and supply an pages array to select the pages for copy and also their order.
+    * @param {(ArrayBuffer|{bytes:ArrayBuffer,pages?:number[]})[]} pdfData  Data content of one or more PDF documents. If they are wrapped in an object set property blob to content of PDF and supply an pages array to select the pages for copy and also their order.
     * @returns {PDFData} A {@link PDFData wrapper object} for the merged data. Use {@link toBlob} or {@link toDataURL} or another to<Type> function to access the merged data.
     */
    static merge(...pdfData) {
@@ -250,9 +352,9 @@ class PDFData
             const bytes = isWrapper ? data.bytes : data
             const pages = isWrapper ? data.pages : undefined
             if (!PDFData.checkBinaryType(bytes))
-               throw newError(`expect ${isWrapper ? 'bytes property':'PDF data'} of type (${PDFData.binaryType}${isWrapper?'':'|{bytes:ArrayBuffer|...}'}) not ${_typeof(bytes)}`)
+               throwError(`expect ${isWrapper ? 'bytes property':'PDF data'} of type (${PDFData.binaryType}${isWrapper?'':'|{bytes:PDFData|...}'}) not ${typename(bytes)}`)
             if (pages !== undefined && !Array.isArray(pages))
-               throw newError(`expect pages property of type (Array|undefined) not ${_typeof(pages)}`)
+               throwError(`expect pages property of type (Array|undefined) not ${typename(pages)}`)
             return { bytes, pages }
          })
 
@@ -280,15 +382,19 @@ class PDFData
     */
    static async pageNumbers(pdfData) {
       if (!PDFData.checkBinaryType(pdfData))
-         throw newError(`expect PDF data of type (${PDFData.binaryType}) not ${_typeof(pdfData)}`)
+         throwError(`expect PDF data of type (${PDFData.binaryType}) not ${typename(pdfData)}`)
       return pdflibPageNumbers(await PDFData.toArrayBuffer(pdfData))
    }
 }
 
-////////////////////////
-// User Font Handling //
-////////////////////////
 
+/////////////////////////
+// Font Files Handling //
+/////////////////////////
+
+/**
+ * TODO:
+ */
 class FontData
 {
    static loaded=new Map()
@@ -311,7 +417,7 @@ class FontData
       return FontData.loaded.get(fontID) ?? new FontData(fontID, url, fetch(url).then(
          response => {
             if (!response.ok)
-               throw newError(`can not load font from url »${url}«`,`${response.status}: ${response.statusText}`)
+               throwError(`can not load font from url »${url}«`,`${response.status}: ${response.statusText}`)
             return response.arrayBuffer()
       }).catch( e => this.data = e ))
    }
@@ -319,7 +425,7 @@ class FontData
    static get(fontID) {
       const font = FontData.loaded.get(fontID)
       if (!font)
-         throw new Error(errmsg(`fontID '${fontID}' is undefined`))
+         throwError(`fontID '${fontID}' is undefined`)
       return font
    }
 
@@ -329,37 +435,10 @@ class FontData
 
 }
 
-class FontStyle
-{
-   #fontID;       // font ID: "<name>-<style>"
-   #fontSize;     // font size in points
-   #charSpace;    // spacing after a character in points (letter-spacing in CSS)
-   #lineHeight;   // line height in percent of the maximum text height, a value of 1 means 100%
-
-   FontStyle(fontID, fontSize, charSpace=0, lineHeight=1.1) {
-      this.#fontID   = fontID
-      this.#fontSize = fontSize
-      this.#charSpace = charSpace
-      this.#lineHeight = lineHeight
-   }
-
-   get charSpace()  { return this.#charSpace }
-   get fontSize()   { return this.#fontSize }
-   get fontID()     { return this.#fontID }
-   get lineHeight() { return this.#lineHeight }
-
-   setCharSpace(charSpace) {
-      return new FontStyle(this.#fontID, this.#fontSize, charSpace, this.#lineHeight)
-   }
-   setFontSize(fontSize) {
-      return new FontStyle(this.#fontID, fontSize, this.#charSpace, this.#lineHeight)
-   }
-   setLineHeight(lineHeight) {
-      return new FontStyle(this.#fontID, this.#fontSize, this.#charSpace, lineHeight)
-   }
-}
-
-class BaseFont
+/**
+ * TODO:
+ */
+class FontkitFont
 {
    #fontData
    #fontkitFont
@@ -371,10 +450,11 @@ class BaseFont
    }
 
    /**
-    * Called once from subclass to set font object which wraps the {@link FontData}
-    * and provides query functions for font metrics. The font provider is fontkit.
-    * Supports either a Promise which resolves to font object or the font object itself.
-    * If the return value of {@link asyncOperation} is not a Promise then this BaseFont
+    * Called once from subclass to set font object which parses {@link FontData}
+    * and provides query functions for font metrics. The font provider implementation used is fontkit.
+    * Supports either a Promise which resolves to font provider or the provider itself.
+    * The subclass must call this function in its constructor.
+    * If the return value of {@link asyncOperation} is not a Promise then this object
     * could be queried for font metrics.
     */
    set fontkitFont(fontkitFont) {
@@ -442,7 +522,12 @@ class BaseFont
 
 }
 
-class FFont extends BaseFont
+/**
+ * A font data wrapper used to query font metrics without adding it to a {@link Document} first.
+ *
+ * The fontkit library is used as font engine.
+ */
+class FFont extends FontkitFont
 {
    constructor(fontDataOrID) {
       super(fontDataOrID)
@@ -451,12 +536,13 @@ class FFont extends BaseFont
    }
 }
 
-
 /**
- * A font wrapper for a font added to Document.
- * A value of this type is returned by {@link Document.addFont}
+ * A font wrapper for a font added to {@link Document}.
+ * A value of this type is returned by {@link Document.addFont addFont}.
+ *
+ * This object can be used to query font metrics.
  */
-class EmbeddedFont extends BaseFont
+class EmbeddedFont extends FontkitFont
 {
    #doc
    #font
@@ -481,11 +567,11 @@ class EmbeddedFont extends BaseFont
             const doc=this.#doc.pdfkitDoc
             doc.registerFont(this.fontData.id, this.fontData.data)
             doc.font(this.fontData.id)
-            return this.#font = doc._fontFamilies[this.fontData.id]
+            return doc._fontFamilies[this.fontData.id]
          } catch(e) {
-            this.#font = newError(`can not embed font with id »${this.fontData.id}«`,e)
+            return newError(`can not embed font with id »${this.fontData.id}«`,e)
          }
-      })
+      }, f => this.#font = f)
       this.fontkitFont = onReady([this.#font], () => this.#font instanceof Error ? this.#font : this.#font.font)
    }
 
@@ -493,9 +579,10 @@ class EmbeddedFont extends BaseFont
 
 }
 
-//////////////
-// Document //
-//////////////
+
+//////////////////
+// PDF Document //
+//////////////////
 
 /**
  * Wraps pdfkit.PDFDocument API.
@@ -544,38 +631,38 @@ class Document
     * @property {boolean} autoFirstPage - Default is false. Set it to true if you want to the first page to be added automatically in the constructor.
     * @property {boolean} compress      - Default is true in which case the content is compressed before stored in the PDF document.
     * @property {Margin} margin         - Default margin of a new page.
+    * @property {'l'|'landscape'|'p'|'portrait'} orientation  The orientation of the page where "p" stands for portrait and "l" for landscape mode. In case of "l" the given page size is rotated (height is used as width and vice versa).
     * @property {string} pdfVersion     - Default is "1.7" which is written as version of the generated PDF.
     */
 
    /**
     * PDF metadata describing language, subject, creation date and other.
     * @typedef {Object} PDFMetadata
-    * @property {string} author   - The author of the document.
-    * @property {string} creator  - The name of the application which created the document content.
-    * @property {string} keywords - One or more keywords (separated by space) to tag the content for search engines.
-    * @property {string} language - The language of the document, i.e. "de-DE" or "en-US".
-    * @property {string} producer - The name of the library or driver which encoded PDF output.
-    *                               In most cases this equals creator.
-    * @property {string} subject  - The topic of the document.
-    * @property {string} title    - The document title.
-    * @property {date} creationDate     - The date and time when the document was created.
-    * @property {date} modificationDate - The date and time when the document was changed last.
+    * @property {string} author    The author of the document.
+    * @property {string} creator   The name of the application which created the document content.
+    * @property {string} keywords  One or more keywords (separated by space) to tag the content for search engines.
+    * @property {string} language  The language of the document, i.e. "de-DE" or "en-US".
+    * @property {string} producer  The name of the library or driver which encodes PDF output. In most cases this equals creator.
+    * @property {string} subject   The topic of the document.
+    * @property {string} title     The document title.
+    * @property {date} creationDate      The date and time when the document was created.
+    * @property {date} modificationDate  The date and time when the document was changed last.
     */
 
    /**
     * Creates a new PDF document.
     *
-    * @param {string | [number,number]} size - Either the name of a predefined page size or an array with width and height in points.
-    * @param {'l'|'landscape'|'p'|'portrait'} orientation - The orientation of the page where "p" stands for portrait and "l" for landscape mode. In case of "l" the given page size is rotated (height is used as width and vice versa).
-    * @param {PDFMetadata & PDFLibraryOptions} options - Options containg {@link PDFMetadata} and also {@link PDFLibraryOptions} to control behaviour of library.
+    * @param {string | [number,number]} size  Either the name of a predefined page size or an array with width and height in points.
+    * @param {PDFMetadata & PDFLibraryOptions} options  Options containg {@link PDFMetadata} and also {@link PDFLibraryOptions} to control behaviour of library.
     */
-   constructor(size="a4", orientation="p", options={}) {
-      if (orientation[0] != "p" && orientation[0] != "l")
-         throw newError(`support only 'p' (portrait) or 'l' (landscape) and not ${orientation}`)
+   constructor(size="a4", options={}) {
+      const orientation = options.orientation ?? "p"
+      if (assertString(orientation,"orientation")[0] != "p" && orientation[0] != "l")
+         throwError(`expect orientation to be one of ['p','l','portrait','landscape'] and not ${orientation}`)
       if (! (typeof size === "string" && this.predefinedSizes[size.toLowerCase()])
          && (!Array.isArray(size) || size.length != 2
             || size[0] <= 0 || size[1] <= 0))
-            throw newError(`unsupported page size ${size}`)
+            throwError(`unsupported page size ${size}`)
       // set default values for all pages
       this.#defaults.orientation = orientation[0] === 'p' ? 'portrait' : 'landscape'
       this.#defaults.size        = size
@@ -595,8 +682,8 @@ class Document
    }
 
    /**
-    * TODO
-    * @returns
+    * After all content has been created call this function to get the content of the PDF document.
+    * @returns {PDFData}  The content of the PDF document encoded as binary data.
     */
    close() {
       const doc = this.#pdf
@@ -631,7 +718,7 @@ class Document
     * Sets meta information describing language, author, creation date, modification date and other.
     * All properties of parameter info are optional.
     *
-    * @param {PDFMetadata} info - The object which contains all metadata. See {@link PDFMetadata}.
+    * @param {PDFMetadata} info  The object which contains all metadata. See {@link PDFMetadata}.
     */
    setMetadata(info={}) { this.#copyMetadata(this.#pdf.info,info) }
 
@@ -642,8 +729,8 @@ class Document
     * returned from {@link EmbeddedFont.asyncOperation asyncOperation}.
     * If this method is called more than once for the same {@link FontData}
     * the previously created {@link EmbeddedFont} object is returned.
-    * @param {string|FontData} fontDataOrID Either font-ID of a loaded font or the loaded {@link FontData} object.
-    * @returns {EmbeddedFont} Either a new or an existing embedded font of type {@link EmbeddedFont}.
+    * @param {string|FontData} fontDataOrID  Either font-ID of a loaded font or the loaded {@link FontData} object.
+    * @returns {EmbeddedFont}  Either a new or an existing embedded font of type {@link EmbeddedFont}.
     */
    addFont(fontDataOrID) {
       const fontData = fontDataOrID instanceof FontData ? fontDataOrID : FontData.get(fontDataOrID)
@@ -657,7 +744,7 @@ class Document
       const fontID = fontDataOrID instanceof FontData ? fontDataOrID.id : fontDataOrID
       const font = this.#embeddedFonts.get(fontID)
       if (!font)
-         throw newError(`fontID '${fontID}' is undefined`)
+         throwError(`fontID '${String(fontID)}' is undefined`)
       return font
    }
 
@@ -665,7 +752,8 @@ class Document
       const doc = this.#pdf
       options.size   = options.size ?? this.#defaults.size
       options.layout = (options.orientation ?? this.#defaults.orientation)[0]  === 'p' ? 'portrait' : 'landscape'
-      options.margins = this.#defaults.margin
+      const m = options.margin ?? this.#defaults.margin
+      options.margins = m instanceof Margin ? m.toObject() : m
       doc.addPage(options)
       const currentPage = this.nrPages
       this.#eventListeners.callListener("addPage",this,currentPage)
@@ -677,8 +765,18 @@ class Document
    }
 
    /**
-    * @param {(doc,currentPage,nrPages,currentMargin) => void} pageCallback
-    *   Callback to draw something on the current page.
+    * Contains description of a single document page.
+    * @typedef {Object} PageInfo
+    * @property {number} nr       The page number is described (and is the current one).
+    * @property {number} nrPages  The number of all pages in the document.
+    * @property {object} margins  A value object with top,right,bottom,and left values in points.
+    * @property {number} width    The width of page in points.
+    * @property {number} height   The height of the page in points.
+    */
+
+   /**
+    * Calls for all pages in ascending order (1..nrPages) pageCallback.
+    * @param {(doc:Document,pageInfo:PageInfo) => void} pageCallback  Callback to draw something on the current page.
     */
    forPages(pageCallback) {
       const doc = this.#pdf
@@ -686,9 +784,8 @@ class Document
       const nrPages = range.start + range.count
       assertFunction(pageCallback,"pageCallback")
       for (let i=range.start; i<nrPages; ++i) {
-         const currentPage = i + 1
          doc.switchToPage(i)
-         pageCallback(this,currentPage,nrPages,doc.page.margins)
+         pageCallback(this, { nr:i+1, nrPages, margins:doc.page.margins, width:doc.page.width, height:doc.page.height })
       }
    }
 
@@ -700,26 +797,26 @@ class Document
    /////////////////////////
 
    currentPageNr() {
-      throw newError("not implemented")
+      throwError("not implemented")
    }
 
    pageHeight(pageNr) {
-      throw newError("not implemented")
+      throwError("not implemented")
       /*
       pageNr ??= this.currentPageNr()
       if (! (pageNr > 0))
-         throw new Error(errmsg(`first page number starts with 1 and not with '${pageNr}'`))
+         throwError(`first page number starts with 1 and not with '${pageNr}'`)
       const doc = this.#pdf
       return doc.getPageHeight(pageNr)
       */
    }
 
    pageWidth(pageNr) {
-      throw newError("not implemented")
+      throwError("not implemented")
       /*
       pageNr ??= this.currentPageNr()
       if (! (pageNr > 0))
-         throw new Error(errmsg(`first page number starts with 1 and not with '${pageNr}'`))
+         throwError(`first page number starts with 1 and not with '${pageNr}'`)
       const doc = this.#pdf
       return doc.getPageWidth(pageNr)
       */
@@ -744,6 +841,41 @@ class Document
 
 }
 
+
+///////////////////////////////
+// Draw PDF Document Content //
+///////////////////////////////
+
+class FontStyle
+{
+   #fontID;       // font ID: "<name>-<style>"
+   #fontSize;     // font size in points
+   #charSpace;    // spacing after a character in points (letter-spacing in CSS)
+   #lineHeight;   // line height in percent of the maximum text height, a value of 1 means 100%
+
+   FontStyle(fontID, fontSize, charSpace=0, lineHeight=1.1) {
+      this.#fontID   = fontID
+      this.#fontSize = fontSize
+      this.#charSpace = charSpace
+      this.#lineHeight = lineHeight
+   }
+
+   get charSpace()  { return this.#charSpace }
+   get fontSize()   { return this.#fontSize }
+   get fontID()     { return this.#fontID }
+   get lineHeight() { return this.#lineHeight }
+
+   setCharSpace(charSpace) {
+      return new FontStyle(this.#fontID, this.#fontSize, charSpace, this.#lineHeight)
+   }
+   setFontSize(fontSize) {
+      return new FontStyle(this.#fontID, fontSize, this.#charSpace, this.#lineHeight)
+   }
+   setLineHeight(lineHeight) {
+      return new FontStyle(this.#fontID, this.#fontSize, this.#charSpace, lineHeight)
+   }
+}
+
 class Margin
 {
    #top; #right; #bottom; #left;
@@ -766,6 +898,7 @@ class Margin
    setRight(right) { return right === this.#right ? this : new Margin(this.#top,right,this.#bottom,this.#left) }
    setBottom(bottom) { return bottom === this.#bottom ? this : new Margin(this.#top,this.#right,bottom,this.#left) }
    setLeft(left) { return left === this.#left ? this : new Margin(this.#top,this.#right,this.#bottom,left) }
+   toObject() { return { top:this.#top, right:this.#right, bottom:this.#bottom, left:this.#left }}
 
 }
 
@@ -818,13 +951,25 @@ class TextArea
    }
 }
 
-async function pdflibMerge(pdfData) {
+class PageLayout
+{
+   // TODO: header-, footer-, main-, sidebar- Region
+   // TODO: subtract header, footer, sidebar from page-size to get main-Region
+}
+
+
+///////////////////////////////////////////////////////////////
+// Handling of binary PDF data with help of PDF-LIB library. //
+///////////////////////////////////////////////////////////////
+
+async function pdflibMerge(pdfData)
+{
    const mergedPdf = await pdflib.PDFDocument.create()
    let copyMetadata = true
 
    async function copyPages(toPDF, fromData, pages) {
       if (!(fromData instanceof ArrayBuffer))
-         throw newError(`expect PDF data of type (ArrayBuffer) not ${_typeof(fromData)}`)
+         throwError(`expect PDF data of type (ArrayBuffer) not ${typename(fromData)}`)
       const fromPDF = await pdflib.PDFDocument.load(fromData)
       const allPages = fromPDF.getPageIndices()
       const fromPages = (pages && pages.length
@@ -849,22 +994,28 @@ async function pdflibMerge(pdfData) {
    return mergedPdf.save()
 }
 
-async function pdflibPageNumbers(pdfData) {
+async function pdflibPageNumbers(pdfData)
+{
    if (!(pdfData instanceof ArrayBuffer))
-      throw newError(`expect PDF data of type (ArrayBuffer) not ${_typeof(pdfData)}`)
+      throwError(`expect PDF data of type (ArrayBuffer) not ${typename(pdfData)}`)
    const doc = await pdflib.PDFDocument.load(pdfData)
    return doc.getPageIndices().map(pi => pi+1/*page numbers start from 1*/)
 }
 
+
+////////////
+// Export //
+////////////
+
 Object.assign(module.exports, {
    module,
    assertType,
-   mm2pt,
-   pt2mm,
+   uValue,
    FontData,
-   Document,
-   PDFData,
    FFont,
+   PDFData,
+   Document,
+   PageLayout,
    Margin,
 })
 

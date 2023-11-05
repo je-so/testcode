@@ -25,13 +25,25 @@
    <script type="module">
       import pdf from "jsm-pdf"
 
+      if (   pdf.uValue.parse(-1200).getUnit() != pdf.uValue.pt
+          || pdf.uValue.parse("12.4").getUnit() != pdf.uValue.pt)
+         throw Error("expected default unit == pt")
+
+      pdf.uValue.parse("+10.5 mm")
+      pdf.uValue.parse("10.5%")
+      pdf.uValue.parse("-10.5pt")
+
+      const uv = new pdf.uValue(1e306,"mm")
+      console.log("uv.convertToPt()",pdf.uValue.convertToPt(uv,"uv"))
+
       const iframe=document.getElementById("pdf")
 
-      pdf.FontData.load("UbuntuMono","./UbuntuMono-R.ttf") // async op
-      pdf.FontData.load("URWBookman-Light","./URWBookman-Light.otf") // async op
+      pdf.FontData.load("UbuntuMono","/examples/UbuntuMono-R.ttf") // async op
+      pdf.FontData.load("URWBookman-Light","/examples/URWBookman-Light.otf") // async op
       pdf.FontData.load("Lexend-Light","/Lexend-Light.ttf") // async op
 
-      const doc=new pdf.Document("a4","p", { pdfVersion:"1.7", compress: false,
+      const doc=new pdf.Document("a4", { pdfVersion:"1.7", compress: false,
+         // orientation: "portrait",
          keywords: "hello world",
          language: "de-DE",
          creationDate: new Date("2019-12-13"),
@@ -40,7 +52,7 @@
       })
       console.log("pdfkitDoc",doc.pdfkitDoc)
       doc.addPage()
-      doc.forPages( (doc,current,nrPages,margin) => console.log("doc",doc,"current",current,"nrPages",nrPages,"margin",margin))
+      doc.forPages( (doc,page) => console.log("doc",doc,"page",page))
 
       const font1 = doc.addFont("UbuntuMono")
       const font2 = doc.addFont("URWBookman-Light")
@@ -53,7 +65,7 @@
       console.log("font1",font1)
       console.log("font1.isError",font1.isError)
       console.log("font2",font2)
-      console.log("font2.isError",font1.isError)
+      console.log("font2.isError",font2.isError)
       console.log("font3",font3)
 
       /*
@@ -96,7 +108,7 @@
       // doc.close().toDataURL()
       Promise.resolve(doc.close())
       // print page numbers
-      .then( blob => { console.log("blob",blob.constructor.name); pdf.PDFData.pageNumbers(blob).then( numbers => console.log("doc has pages: ",numbers)); return blob })
+      .then( blob => { console.log("binary-data-type",blob.constructor.name); pdf.PDFData.pageNumbers(blob).then( numbers => console.log("doc has pages: ",numbers)); return blob })
       // merge pdf but move page 2 to first and first page to second place, double third page
       .then( blob => pdf.PDFData.merge({bytes:blob,pages:[2,1,3,3]}).toDataURL() )
       .then( dataURL => { // show pdf (content stored in data url) in iframe

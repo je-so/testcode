@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>Test Resize</title>
+   <style>
+   </style>
+</head>
+<body style="">
+   <h3>Test Move & Resize Divs</h3>
+   <dl>
+      <dt>Components</dt>
+      <dd>
+         <ul>
+            <li>View</li>
+            <li>View-Model</li>
+            <li>Controller</li>
+            <li>ResizeDecorator</li>
+         </ul>
+      </dd>
+      <dt>Missing Features</dt>
+      <dd>
+         <ul>
+            <li>Window decorations</li>
+            <li>Model and binding to View-Model</li>
+            <li>Data types for model properties</li>
+         </ul>
+      </dd>
+   </dl>
+
+   <div id=window style="width:150px;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box">
+      Resize div<br>(static)
+   </div>
+
+   <div id=window2 style="position:absolute;left:440px;top:160px;width:150px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
+      Move or resize div<br>(absolute)
+   </div>
+
+   <div id=window3 style="position:fixed;left:300px;top:230px;width:150px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
+      Move or resize div<br>(fixed)
+   </div>
+
+   <div style="height:1000px;"></div>
+
+   <script>
+      const div1 = document.getElementById("window")
+      const div2 = document.getElementById("window2")
+      const div3 = document.getElementById("window3")
+      const htmlDecorators = {
+         htmlElements: new WeakMap(),
+         get(htmlElem,decoratorName) {
+            const decorators = this.htmlElements.get(htmlElem)
+            return decoratorName===undefined ? decorators : decorators && decorators[decoratorName]
+         },
+         decorate(htmlElem,decoratorName,addDecorator) {
+            const decorators = this.get(htmlElem) || {}
+            if (!(decoratorName in decorators)) {
+               decorators[decoratorName] = addDecorator()
+               this.htmlElements.set(htmlElem, decorators)
+            }
+         }
+      }
+      const UIupdates = {
+         callbacks: [],
+         frameID: null,
+         oldTimestamp: null,
+         milliseconds: 0,
+         loop(timestamp) {
+            const callbacks = this.callbacks
+            const oldTimestamp = this.oldTimestamp || timestamp
+            this.callbacks = []
+            this.frameID = null
+            this.oldTimestamp = timestamp
+            this.milliseconds += timestamp-oldTimestamp
+            for (const callback of callbacks)
+               callback(this.milliseconds)
+         },
+         add(callback) {
+            this.callbacks.push(callback)
+            if (this.frameID == null)
+               this.frameID = requestAnimationFrame(this.loop.bind(this))
+         }
+      }
+      function asyncUIUpdate(callback) {
+         UIupdates.add(callback)
+      }
+
+      function setStyles(htmlElem, styles) {
+         for (const key in styles) {
+            htmlElem.style.setProperty(key,styles[key])
+         }
+         return htmlElem
+      }
+      function newDiv(styles){
+         return setStyles(document.createElement("div"),styles)
+      }
+      function addMouseMoveController(htmlElem, onResize) {
+         const onWindowMousedown = (e) => {
+            const touch = (e.touches && e.touches[0])
+            const event = touch || e
+            const abortController = new AbortController()
+            const removeSignal = abortController.signal
+            const removeListener = abortController.abort.bind(abortController)
+            let pageX = event.pageX
+            let pageY = event.pageY
+            e.stopPropagation()
+            e.preventDefault()
+            const onMouseMove = (e) => {
+               const touch = (e.touches && e.touches[0])
+               const event = touch || e
+               const diffX = event.pageX-pageX
+               const diffY = event.pageY-pageY
+               pageX = event.pageX
+               pageY = event.pageY
+               onResize(diffX,diffY)
+            }
+            const onMouseUp = (e) => {
+               removeListener()
+            }
+            if (touch) {
+               window.addEventListener("touchmove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
+               window.addEventListener("touchend",onMouseUp,{capture:true, passive:false, once:true})
+            }
+            else {
+               window.addEventListener("mousemove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
+               window.addEventListener("mouseup",onMouseUp,{capture:true, passive:false, once:true})
+            }
+         }
+         htmlElem.addEventListener("mousedown",onWindowMousedown,{capture:false,passive:false})
+         htmlElem.addEventListener("touchstart",onWindowMousedown,{capture:false,passive:false})
+      }
+
+      function ResizeDecorator(htmlElem, viewModel) {
+         htmlDecorators.decorate(htmlElem,"ResizeDecorator", () => {
+            const display =
+               (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
+               ? "initial"
+               : "none"
+            const outerWidth = 6
+            const innerWidth = 4
+            const borderSize = (outerWidth+innerWidth)+"px"
+            const outerSize = "-"+outerWidth+"px"
+            const edgeSize = (outerWidth+2*innerWidth)+"px"
+            const borders = [
+               newDiv({top:outerSize, left:0, right:0, height:borderSize, cursor:"n-resize", position:"absolute", "z-index":1, display}),
+               newDiv({right:outerSize, top:0, bottom:0, width:borderSize, cursor:"e-resize", position:"absolute", "z-index":1}),
+               newDiv({bottom:outerSize, left:0, right:0, height:borderSize, cursor:"s-resize", position:"absolute", "z-index":1}),
+               newDiv({left:outerSize, top:0, bottom:0, width:borderSize, cursor:"w-resize", position:"absolute", "z-index":1, display}),
+               newDiv({top:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"nw-resize", position:"absolute", "z-index":1, display}),
+               newDiv({top:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"ne-resize", position:"absolute", "z-index":1, display}),
+               newDiv({bottom:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"se-resize", position:"absolute", "z-index":1}),
+               newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
+            ]
+            htmlElem.append(...borders)
+            const resizeTop = (xdiff, ydiff) => { viewModel.addValue("top", ydiff); viewModel.addValue("height", -ydiff); }
+            const resizeRight = (xdiff, ydiff) => { viewModel.addValue("width", xdiff); }
+            const resizeBottom = (xdiff, ydiff) => { viewModel.addValue("height", ydiff); }
+            const resizeLeft = (xdiff, ydiff) => { viewModel.addValue("left", xdiff); viewModel.addValue("width", -xdiff); }
+            addMouseMoveController(borders[1],resizeRight)
+            addMouseMoveController(borders[2],resizeBottom)
+            addMouseMoveController(borders[6],(xdiff, ydiff) => { resizeBottom(xdiff, ydiff); resizeRight(xdiff,ydiff); })
+            if (display !== "none") {
+               addMouseMoveController(borders[0],resizeTop)
+               addMouseMoveController(borders[3],resizeLeft)
+               addMouseMoveController(borders[4],(xdiff, ydiff) => { resizeTop(xdiff, ydiff); resizeLeft(xdiff,ydiff); })
+               addMouseMoveController(borders[5],(xdiff, ydiff) => { resizeTop(xdiff, ydiff); resizeRight(xdiff,ydiff); })
+               addMouseMoveController(borders[7],(xdiff, ydiff) => { resizeBottom(xdiff, ydiff); resizeLeft(xdiff,ydiff); })
+               addMouseMoveController(htmlElem,(xdiff, ydiff) => { viewModel.addValue("top", ydiff); viewModel.addValue("left", xdiff); })
+               setStyles(htmlElem,{ cursor:"move" })
+            }
+            setStyles(htmlElem,{ contain: "size layout" })
+            return { borders }
+         })
+      }
+      class ViewModel {
+         #modelName
+         #properties = {}
+         constructor(modelName) {
+            this.#modelName = modelName
+         }
+         error(msg) {
+            throw Error(`View model ${this.#modelName} error: ${msg}`)
+         }
+         assertProperty(name) {
+            if (!(name in this.#properties))
+               this.error(`Missing property ${String(name)}.`)
+         }
+         addProp(name, value, onChange) {
+            if (name in this.#properties)
+               this.error(`Can not add property ${String(name)} twice.`)
+            this.#properties[name] = { name, value, htmlElem:null, onChange }
+         }
+         /**
+          * (Re-)Binds change of property value to callback which
+          * updates css property of html view.
+          *
+          * @param {string} name Name of view model property.
+          * @param {htmlElem} htmlElem Callback which assigns new property value to html view.
+          * @param {(htmlElem, value, prevValue, timestamp) => void=} onChange Callback which assigns new property value to html view.
+          */
+         bindPropToView(name, htmlElem, onChange) {
+            this.assertProperty(name)
+            this.#properties[name] = { ...this.#properties[name], htmlElem, onChange: onChange || this.#properties[name].onChange }
+         }
+         bindToView(htmlElem) {
+            for (const name of Reflect.ownKeys(this.#properties))
+               this.#properties[name] = { ...this.#properties[name], htmlElem }
+         }
+         setValue(name, value) {
+            this.assertProperty(name)
+            const prop = this.#properties[name]
+            if (prop.onChange && prop.htmlElem) {
+               asyncUIUpdate(
+                  (timestamp) => {
+                     prop.onChange(prop.htmlElem, value, prop.value, timestamp)
+                  }
+               )
+            }
+            this.#properties[name] = { ...this.#properties[name], value }
+         }
+         addValue(name, increment) {
+            const prop = this.#properties[name]
+            this.setValue(name, prop?.value != null ? prop.value+increment : increment)
+         }
+      }
+      function newWindowResizeVModel(div) {
+         const vmWindowResize = new ViewModel("WindowResize")
+         vmWindowResize.addProp("top", div.offsetTop, (htmlElem, value) => {
+            htmlElem.style.top = value+"px"
+         })
+         vmWindowResize.addProp("left", div.offsetLeft, (htmlElem, value) => {
+            htmlElem.style.left = value+"px"
+         })
+         vmWindowResize.addProp("width", div.offsetWidth, (htmlElem, value) => {
+            htmlElem.style.width = value+"px"
+         })
+         vmWindowResize.addProp("height", div.offsetHeight, (htmlElem, value) => {
+            htmlElem.style.height = value+"px"
+         })
+         vmWindowResize.bindToView(div)
+         return vmWindowResize
+      }
+      ResizeDecorator(div1, newWindowResizeVModel(div1))
+      ResizeDecorator(div2, newWindowResizeVModel(div2))
+      ResizeDecorator(div3, newWindowResizeVModel(div3))
+   </script>
+</body>
+</html>

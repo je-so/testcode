@@ -9,6 +9,7 @@
 </head>
 <body style="">
    <h3>Test Move & Resize Divs</h3>
+   <div id="LOG">error log:</div>
    <dl>
       <dt>Components</dt>
       <dd>
@@ -23,7 +24,7 @@
       <dd>
          <ul>
             <li>Window decorations</li>
-            <li>Model and binding to View-Model</li>
+            <li>Model and Data-Binding to View-Model</li>
             <li>Data types for model properties</li>
          </ul>
       </dd>
@@ -47,19 +48,44 @@
       const div1 = document.getElementById("window")
       const div2 = document.getElementById("window2")
       const div3 = document.getElementById("window3")
+      const logError = (msg) => {
+         document.getElementById("LOG").innerHTML += msg
+      }
       const htmlDecorators = {
          htmlElements: new WeakMap(),
-         get(htmlElem,decoratorName) {
+         get(htmlElem, decorator) {
             const decorators = this.htmlElements.get(htmlElem)
-            return decoratorName===undefined ? decorators : decorators && decorators[decoratorName]
+            return decorators && decorator
+               ? decorators.find( entry => entry.decorator === decorator )
+               : decorators
          },
-         decorate(htmlElem,decoratorName,addDecorator) {
-            const decorators = this.get(htmlElem) || {}
-            if (!(decoratorName in decorators)) {
-               decorators[decoratorName] = addDecorator()
-               this.htmlElements.set(htmlElem, decorators)
+         isElementDecorated(htmlElem, decorator) {
+            return Boolean(this.get(htmlElem, decorator))
+         },
+         getDecoratedElements(rootElem, decorator) {
+            const result = []
+            if (isElementDecorated(rootElem, decorator))
+               result.push(rootElem)
+            for (const htmlElem of rootElem.querySelectorAll("*")) {
+               if (isElementDecorated(htmlElem, decorator))
+                  result.push(htmlElem)
             }
+         },
+         decorate(htmlElem, decorator, viewModel) {
+            if (!this.isElementDecorated(htmlElem, decorator)) {
+               const decoratorState = decorator(htmlElem, viewModel)
+               const addedDecorator = { decorator, decoratorState, htmlElem, viewModel }
+               this.htmlElements.set(htmlElem,
+                  (this.htmlElements.get(htmlElem) || []).concat(addedDecorator)
+               )
+               if (!viewModel.isBound())
+                  viewModel.bindToView(htmlElem)
+            }
+            return this.get(htmlElem, decorator)
          }
+      }
+      function decorateElement(htmlElem, decorator, viewModel) {
+         return htmlDecorators.decorate(htmlElem, decorator, viewModel)
       }
       const UIupdates = {
          callbacks: [],
@@ -95,83 +121,119 @@
       function newDiv(styles){
          return setStyles(document.createElement("div"),styles)
       }
-      function addMouseMoveController(htmlElem, onResize) {
-         const onWindowMousedown = (e) => {
+      function addMoveController(htmlElem, onMove) {
+         const onMousedown = (e) => {
             const touch = (e.touches && e.touches[0])
+            if (touch && e.touches.length !== 1)
+               return
             const event = touch || e
             const abortController = new AbortController()
             const removeSignal = abortController.signal
             const removeListener = abortController.abort.bind(abortController)
-            let pageX = event.pageX
-            let pageY = event.pageY
+            let prevPos = { x:event.pageX, y:event.pageY }
             e.stopPropagation()
             e.preventDefault()
             const onMouseMove = (e) => {
                const touch = (e.touches && e.touches[0])
+               if (touch && e.touches.length !== 1) {
+                  removeListener()
+                  return
+               }
                const event = touch || e
-               const diffX = event.pageX-pageX
-               const diffY = event.pageY-pageY
-               pageX = event.pageX
-               pageY = event.pageY
-               onResize(diffX,diffY)
+               const pos = { x:event.pageX, y:event.pageY }
+               const xydiff = { xdiff:pos.x-prevPos.x, ydiff:pos.y-prevPos.y }
+               prevPos = pos
+               onMove({type:"move", target:htmlElem, ...xydiff})
             }
             const onMouseUp = (e) => {
                removeListener()
             }
             if (touch) {
                window.addEventListener("touchmove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
-               window.addEventListener("touchend",onMouseUp,{capture:true, passive:false, once:true})
+               window.addEventListener("touchend",onMouseUp,{capture:true, passive:false, signal:removeSignal})
             }
             else {
                window.addEventListener("mousemove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
-               window.addEventListener("mouseup",onMouseUp,{capture:true, passive:false, once:true})
+               window.addEventListener("mouseup",onMouseUp,{capture:true, passive:false, signal:removeSignal})
             }
          }
-         htmlElem.addEventListener("mousedown",onWindowMousedown,{capture:false,passive:false})
-         htmlElem.addEventListener("touchstart",onWindowMousedown,{capture:false,passive:false})
+         htmlElem.addEventListener("mousedown",onMousedown,{capture:false,passive:false})
+         htmlElem.addEventListener("touchstart",onMousedown,{capture:false,passive:false})
+      }
+      function addTouchResizeController(htmlElem, onResize) {
+         const onTouchStart = (e) => {
+            const touches = e.targetTouches
+            if (touches.length !== 2 || !touches[0] || !touches[1])
+               return
+            const abortController = new AbortController()
+            const removeSignal = abortController.signal
+            const removeListener = abortController.abort.bind(abortController)
+            let prevPos = { x:Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
+            e.stopPropagation()
+            e.preventDefault()
+
+            const onTouchMove = (e) => {
+               const touches = e.targetTouches
+               if (touches.length !== 2 || !touches[0] || !touches[1]) {
+                  removeListener()
+                  return
+               }
+               const pos = { x: Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
+               const xydiff = { xdiff:pos.x-prevPos.x, ydiff:pos.y-prevPos.y }
+               prevPos = pos
+               onResize({type:"touchresize", target:htmlElem, ...xydiff})
+            }
+            const onTouchEnd = (e) => {
+               removeListener()
+            }
+            window.addEventListener("touchmove",onTouchMove,{capture:true, passive:false, signal:removeSignal})
+            window.addEventListener("touchend",onTouchEnd,{capture:true, passive:false, signal:removeSignal})
+         }
+         htmlElem.addEventListener("touchstart",onTouchStart,{capture:false,passive:false})
       }
 
       function ResizeDecorator(htmlElem, viewModel) {
-         htmlDecorators.decorate(htmlElem,"ResizeDecorator", () => {
-            const display =
-               (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
-               ? "initial"
-               : "none"
-            const outerWidth = 6
-            const innerWidth = 4
-            const borderSize = (outerWidth+innerWidth)+"px"
-            const outerSize = "-"+outerWidth+"px"
-            const edgeSize = (outerWidth+2*innerWidth)+"px"
-            const borders = [
-               newDiv({top:outerSize, left:0, right:0, height:borderSize, cursor:"n-resize", position:"absolute", "z-index":1, display}),
-               newDiv({right:outerSize, top:0, bottom:0, width:borderSize, cursor:"e-resize", position:"absolute", "z-index":1}),
-               newDiv({bottom:outerSize, left:0, right:0, height:borderSize, cursor:"s-resize", position:"absolute", "z-index":1}),
-               newDiv({left:outerSize, top:0, bottom:0, width:borderSize, cursor:"w-resize", position:"absolute", "z-index":1, display}),
-               newDiv({top:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"nw-resize", position:"absolute", "z-index":1, display}),
-               newDiv({top:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"ne-resize", position:"absolute", "z-index":1, display}),
-               newDiv({bottom:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"se-resize", position:"absolute", "z-index":1}),
-               newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
-            ]
-            htmlElem.append(...borders)
-            const resizeTop = (xdiff, ydiff) => { viewModel.addValue("top", ydiff); viewModel.addValue("height", -ydiff); }
-            const resizeRight = (xdiff, ydiff) => { viewModel.addValue("width", xdiff); }
-            const resizeBottom = (xdiff, ydiff) => { viewModel.addValue("height", ydiff); }
-            const resizeLeft = (xdiff, ydiff) => { viewModel.addValue("left", xdiff); viewModel.addValue("width", -xdiff); }
-            addMouseMoveController(borders[1],resizeRight)
-            addMouseMoveController(borders[2],resizeBottom)
-            addMouseMoveController(borders[6],(xdiff, ydiff) => { resizeBottom(xdiff, ydiff); resizeRight(xdiff,ydiff); })
-            if (display !== "none") {
-               addMouseMoveController(borders[0],resizeTop)
-               addMouseMoveController(borders[3],resizeLeft)
-               addMouseMoveController(borders[4],(xdiff, ydiff) => { resizeTop(xdiff, ydiff); resizeLeft(xdiff,ydiff); })
-               addMouseMoveController(borders[5],(xdiff, ydiff) => { resizeTop(xdiff, ydiff); resizeRight(xdiff,ydiff); })
-               addMouseMoveController(borders[7],(xdiff, ydiff) => { resizeBottom(xdiff, ydiff); resizeLeft(xdiff,ydiff); })
-               addMouseMoveController(htmlElem,(xdiff, ydiff) => { viewModel.addValue("top", ydiff); viewModel.addValue("left", xdiff); })
-               setStyles(htmlElem,{ cursor:"move" })
-            }
-            setStyles(htmlElem,{ contain: "size layout" })
-            return { borders }
-         })
+         const display =
+            (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
+            ? "initial"
+            : "none"
+         const outerWidth = 6
+         const innerWidth = 4
+         const borderSize = (outerWidth+innerWidth)+"px"
+         const outerSize = "-"+outerWidth+"px"
+         const edgeSize = (outerWidth+3*innerWidth)+"px"
+         const borders = [
+            newDiv({top:outerSize, left:0, right:0, height:borderSize, cursor:"n-resize", position:"absolute", "z-index":1, display}),
+            newDiv({right:outerSize, top:0, bottom:0, width:borderSize, cursor:"e-resize", position:"absolute", "z-index":1}),
+            newDiv({bottom:outerSize, left:0, right:0, height:borderSize, cursor:"s-resize", position:"absolute", "z-index":1}),
+            newDiv({left:outerSize, top:0, bottom:0, width:borderSize, cursor:"w-resize", position:"absolute", "z-index":1, display}),
+            newDiv({top:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"nw-resize", position:"absolute", "z-index":1, display}),
+            newDiv({top:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"ne-resize", position:"absolute", "z-index":1, display}),
+            newDiv({bottom:outerSize, right:outerSize, width:edgeSize, height:edgeSize, cursor:"se-resize", position:"absolute", "z-index":1}),
+            newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
+         ]
+         htmlElem.append(...borders)
+         const resizeTop = (e) => { viewModel.addValue("top", e.ydiff); viewModel.addValue("height", -e.ydiff); }
+         const resizeRight = (e) => { viewModel.addValue("width", e.xdiff); }
+         const resizeBottom = (e) => { viewModel.addValue("height", e.ydiff); }
+         const resizeLeft = (e) => { viewModel.addValue("left", e.xdiff); viewModel.addValue("width", -e.xdiff); }
+         addMoveController(borders[1],resizeRight)
+         addMoveController(borders[2],resizeBottom)
+         addMoveController(borders[6],(e) => { resizeBottom(e); resizeRight(e); })
+         if (display !== "none") {
+            addMoveController(borders[0],resizeTop)
+            addMoveController(borders[3],resizeLeft)
+            addMoveController(borders[4],(e) => { resizeTop(e); resizeLeft(e); })
+            addMoveController(borders[5],(e) => { resizeTop(e); resizeRight(e); })
+            addMoveController(borders[7],(e) => { resizeBottom(e); resizeLeft(e); })
+            addMoveController(htmlElem,(e) => { viewModel.addValue("top", e.ydiff); viewModel.addValue("left", e.xdiff); })
+            addTouchResizeController(htmlElem,(e) => { resizeRight(e); resizeBottom(e); e.xdiff*=-1; e.ydiff*=-1; resizeTop(e); resizeLeft(e); })
+            setStyles(htmlElem,{ cursor:"move" })
+         }
+         else
+            addTouchResizeController(htmlElem,(e) => { e.xdiff*=2; e.ydiff*=2; resizeRight(e); resizeBottom(e); })
+         setStyles(htmlElem,{ contain: "size layout" })
+         return { borders }
       }
       class ViewModel {
          #modelName
@@ -182,68 +244,169 @@
          error(msg) {
             throw Error(`View model ${this.#modelName} error: ${msg}`)
          }
-         assertProperty(name) {
-            if (!(name in this.#properties))
-               this.error(`Missing property ${String(name)}.`)
-         }
-         addProp(name, value, onChange) {
-            if (name in this.#properties)
-               this.error(`Can not add property ${String(name)} twice.`)
-            this.#properties[name] = { name, value, htmlElem:null, onChange }
+         isProperty(name) {
+            return (name in this.#properties)
          }
          /**
-          * (Re-)Binds change of property value to callback which
-          * updates css property of html view.
+          * Adds new property to view model wuth default value and data Accessor mechanism.
           *
           * @param {string} name Name of view model property.
-          * @param {htmlElem} htmlElem Callback which assigns new property value to html view.
-          * @param {(htmlElem, value, prevValue, timestamp) => void=} onChange Callback which assigns new property value to html view.
+          * @param {any} value Start value assigned to property.
+          * @param {ViewValueAccessor} viewvalue Implements accessing a single data value of a HTML view.
           */
-         bindPropToView(name, htmlElem, onChange) {
-            this.assertProperty(name)
-            this.#properties[name] = { ...this.#properties[name], htmlElem, onChange: onChange || this.#properties[name].onChange }
+         addProperty(name, value, viewvalue) {
+            if (this.isProperty(name))
+               this.error(`Can not add property ${String(name)} twice.`)
+            this.#properties[name] = { name, value, viewvalue, htmlElem:null }
          }
-         bindToView(htmlElem) {
-            for (const name of Reflect.ownKeys(this.#properties))
-               this.#properties[name] = { ...this.#properties[name], htmlElem }
-         }
-         setValue(name, value) {
-            this.assertProperty(name)
+         #getProperty(name) {
             const prop = this.#properties[name]
-            if (prop.onChange && prop.htmlElem) {
+            if (!prop)
+               this.error(`Missing property ${String(name)}.`)
+            return prop
+         }
+         #setPropertyView(prop, htmlElem) {
+            if (prop.htmlElem !== htmlElem)
+               return this.#properties[prop.name] = { ...prop, htmlElem }
+            else
+               return prop
+         }
+         #setPropertyValue(prop, value) {
+            if (prop.value !== value)
+               return this.#properties[prop.name] = { ...prop, value }
+            else
+               return prop
+         }
+         #setPropertyValueWithUpdate(prop, value) {
+            this.#updatePropertyView(this.#setPropertyValue(prop, value))
+         }
+         #updatePropertyView(prop) {
+            if (prop.htmlElem) {
                asyncUIUpdate(
-                  (timestamp) => {
-                     prop.onChange(prop.htmlElem, value, prop.value, timestamp)
-                  }
+                  () => prop.viewvalue.set(prop.htmlElem, prop.value)
                )
             }
-            this.#properties[name] = { ...this.#properties[name], value }
+         }
+         /**
+          * Binds all view model properties to a html view.
+          * To sync values call either {@link ViewModel.setValuesFromView}
+          * or {@link ViewModel.updateView} after this method.
+          *
+          * @param {HTMLElement} htmlElem The default html view all properties are bound to.
+          * @param {{"propName":HTMLElement}=} propNameHtmlElemMap Oprional key value map which overwrites the default html view with a more specific subview.
+          */
+         bindToView(htmlElem, propNameHtmlElemMap) {
+            for (const name of Reflect.ownKeys(this.#properties)) {
+               const prop = this.#setPropertyView(this.#getProperty(name), (propNameHtmlElemMap && propNameHtmlElemMap[name]) || htmlElem)
+               if (prop.htmlElem)
+                  prop.viewvalue.bindToView(prop.htmlElem)
+            }
+         }
+         /**
+          * Returns true if any property of model is bound to a HTML view.
+          */
+         isBound() {
+            for (const name of Reflect.ownKeys(this.#properties)) {
+               const prop = this.#getProperty(name)
+               if (prop.htmlElem)
+                  return true
+            }
+            return false
+         }
+         /**
+          * Sets every property value to value read from its bound HTML view.
+          * Properties which are not bound (htmlElem == null) are skipped.
+          */
+         setValuesFromView() {
+            for (const name of Reflect.ownKeys(this.#properties))
+               this.setValueFromView(name)
+         }
+         /**
+          * Sets a single property value from to value read from its bound HTML view.
+          * If no view is bound nothing is done.
+          * Call this function from a bound view in case a view value has changed.
+          *
+          * @param {string} name Name of view model property.
+          */
+         setValueFromView(name) {
+            const prop = this.#getProperty(name)
+            if (prop.htmlElem)
+               this.#setPropertyValue(prop, prop.viewvalue.get(prop.htmlElem))
+         }
+         /**
+          * Assigns all property values to the bound HTML view.
+          */
+         updateView() {
+            for (const name of Reflect.ownKeys(this.#properties))
+               this.#updatePropertyView(this.#getProperty(name))
+         }
+         getValue(name, value) {
+            return this.#getProperty(name).value
+         }
+         setValue(name, value) {
+            this.#setPropertyValueWithUpdate(this.#getProperty(name), value)
          }
          addValue(name, increment) {
-            const prop = this.#properties[name]
-            this.setValue(name, prop?.value != null ? prop.value+increment : increment)
+            const prop = this.#getProperty(name)
+            this.#setPropertyValueWithUpdate(prop, prop.value+increment)
+         }
+         /**
+          * Sets a property value without updating the bound HTML view.
+          * Call this function from a view listener in case user has input new value.
+          *
+          * @param {string} name Name of view model property.
+          * @param {any} value Value of HTML view property.
+          */
+         setValueNoUpdate(name, value) {
+            this.#setPropertyValue(this.#getProperty(name), value)
          }
       }
-      function newWindowResizeVModel(div) {
+
+      class ViewValueAccessor {
+         bindToView(htmlElem) { /* subtype should could overwrite to prepare view (calling needsBorderBox) */ }
+         set(htmlElem, value) { throw Error("Not implemented") }
+         get(htmlElem) { throw Error("Not implemented") }
+         needsBorderBox(htmlElem) {
+            const needValue = "border-box"
+            const styleProp = "box-sizing"
+            const value = getComputedStyle(htmlElem)[styleProp]
+            if (value != needValue) {
+               console.warn(`${this.constructor.name} needs style['${styleProp}']=='${needValue}' instead of '${value}' to work properly on html element`, htmlElem)
+               htmlElem.style.setProperty(styleProp,needValue)
+            }
+         }
+      }
+      class TopStyleAccessor extends ViewValueAccessor {
+         set(htmlElem, value) { htmlElem.style.top = value+"px" }
+         get(htmlElem) { return htmlElem.offsetTop }
+      }
+      class LeftStyleAccessor extends ViewValueAccessor {
+         set(htmlElem, value) { htmlElem.style.left = value+"px" }
+         get(htmlElem) { return htmlElem.offsetLeft }
+      }
+      class WidthStyleAccessor extends ViewValueAccessor {
+         bindToView(htmlElem) { this.needsBorderBox(htmlElem) }
+         set(htmlElem, value) { htmlElem.style.width = value+"px" }
+         get(htmlElem) { return htmlElem.offsetWidth }
+      }
+      class HeightStyleAccessor extends ViewValueAccessor {
+         bindToView(htmlElem) { this.needsBorderBox(htmlElem) }
+         set(htmlElem, value) { htmlElem.style.height = value+"px" }
+         get(htmlElem) { return htmlElem.offsetHeight }
+      }
+
+      function newWindowResizeViewModel() {
          const vmWindowResize = new ViewModel("WindowResize")
-         vmWindowResize.addProp("top", div.offsetTop, (htmlElem, value) => {
-            htmlElem.style.top = value+"px"
-         })
-         vmWindowResize.addProp("left", div.offsetLeft, (htmlElem, value) => {
-            htmlElem.style.left = value+"px"
-         })
-         vmWindowResize.addProp("width", div.offsetWidth, (htmlElem, value) => {
-            htmlElem.style.width = value+"px"
-         })
-         vmWindowResize.addProp("height", div.offsetHeight, (htmlElem, value) => {
-            htmlElem.style.height = value+"px"
-         })
-         vmWindowResize.bindToView(div)
+         vmWindowResize.addProperty("top", 0, new TopStyleAccessor())
+         vmWindowResize.addProperty("left", 0, new LeftStyleAccessor())
+         vmWindowResize.addProperty("width", 100, new WidthStyleAccessor())
+         vmWindowResize.addProperty("height", 100, new HeightStyleAccessor())
          return vmWindowResize
       }
-      ResizeDecorator(div1, newWindowResizeVModel(div1))
-      ResizeDecorator(div2, newWindowResizeVModel(div2))
-      ResizeDecorator(div3, newWindowResizeVModel(div3))
+      decorateElement(div1, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
+      decorateElement(div2, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
+      decorateElement(div3, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
+      window.addEventListener("error", (e) => logError("<br>line "+e.lineno+":"+e.message))
    </script>
 </body>
 </html>

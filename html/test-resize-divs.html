@@ -96,6 +96,9 @@
          capturedListeners: null,
          suppressedListeners: null,
          processedEvent: null,
+         processedTargets: null,
+         onCaptureBind: null,
+         onBubbleBind: null,
          error(msg) {
             throw Error(`htmlListener error: ${msg}`)
          },
@@ -105,20 +108,26 @@
                this.bubbleEvent = null
                this.capturedListeners = new Set()
                this.suppressedListeners = new Set()
+               this.processedTargets = new WeakSet()
             }
             else if (e !== this.captureEvent)
                this.error("Internal: Event loop processes two capture events at same time.")
-            const listeners = this.get(e.currentTarget,e.type)
-            for (const listener of listeners) {
-               let isSuppressed = this.suppressedListeners.has(listener)
-               for (const suppressedListener of listener.suppressedListeners) {
-                  this.suppressedListeners.add(suppressedListener)
+            if (!this.processedTargets.has(e.currentTarget)) {
+               this.processedTargets.add(e.currentTarget)
+               const listeners = this.get(e.currentTarget,e.type)
+               for (const listener of listeners) {
+                  let isSuppressed = this.suppressedListeners.has(listener)
+                  for (const suppressedListener of listener.suppressedListeners) {
+                     this.suppressedListeners.add(suppressedListener)
+                     if (!isSuppressed)
+                        this.capturedListeners.delete(suppressedListener)
+                  }
                   if (!isSuppressed)
-                     this.capturedListeners.delete(suppressedListener)
+                     this.capturedListeners.add(listener)
                }
-               if (!isSuppressed)
-                  this.capturedListeners.add(listener)
             }
+            else
+               console.warn("Internal: onCapture called with same target more than once.")
          },
          onBubble(e) {
             if (!this.bubbleEvent) {
@@ -126,10 +135,13 @@
                   console.warn("Internal: No event handler found in capture phase.")
                this.bubbleEvent = e
                this.captureEvent = null
+               this.processedTargets = new WeakSet()
             }
             else if (e !== this.bubbleEvent)
                this.error("Internal: Event loop processes two bubble events at same time.")
-            if (this.capturedListeners.size) {
+            if (  this.capturedListeners.size
+               && !this.processedTargets.has(e.currentTarget)) {
+               this.processedTargets.add(e.currentTarget)
                const listeners = this.get(e.currentTarget)
                for (const listener of listeners) {
                   if (this.capturedListeners.has(listener)) {
@@ -141,11 +153,13 @@
          },
          addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
             if (!this.isListener(htmlElem,eventType,eventHandler)) {
-               const onCapture = this.onCapture.bind(this)
-               const onBubble = this.onBubble.bind(this)
-               const listener = { htmlElem, eventType, eventHandler, onCapture, onBubble, ID: ++this.uniqueID, suppressedListeners }
-               listener.htmlElem.addEventListener(listener.eventType,onCapture,{capture:true,passive:false})
-               listener.htmlElem.addEventListener(listener.eventType,onBubble,{capture:false,passive:false})
+               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, suppressedListeners }
+               if (!this.isListener(listener.htmlElem,listener.eventType)) {
+                  this.onCaptureBind ??= this.onCapture.bind(this)
+                  this.onBubbleBind ??= this.onBubble.bind(this)
+                  listener.htmlElem.addEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
+                  listener.htmlElem.addEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
+               }
                this.htmlElements.set(htmlElem,
                   (this.htmlElements.get(htmlElem) || []).concat(listener)
                )
@@ -156,10 +170,12 @@
             const listeners = this.get(listener.htmlElem)
             const changedListeners = listeners.filter( entry => entry !== listener )
             if (listeners.length > changedListeners.length) {
-               listener.htmlElem.removeEventListener(listener.eventType,listener.onCapture,{capture:true,passive:false})
-               listener.htmlElem.removeEventListener(listener.eventType,listener.onBubble,{capture:false,passive:false})
                this.htmlElements.set(listener.htmlElem,changedListeners)
                this.capturedListeners?.delete(listener)
+               if (!this.isListener(listener.htmlElem,listener.eventType)) {
+                  listener.htmlElem.removeEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
+                  listener.htmlElem.removeEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
+               }
             }
          },
          stopImmediatePropagation() {

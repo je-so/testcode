@@ -51,38 +51,220 @@
       const logError = (msg) => {
          document.getElementById("LOG").innerHTML += msg
       }
+
+      /**
+       * Function which decorates the provided HTML element with additional functionality
+       * and uses the provided {@link ViewModel} to manage its state.
+       * @callback Decorator
+       * @param {HTMLElement} htmlElem - The HTML element which is decorated.
+       * @param {ViewModel} viewModel - The {@link ViewModel} which manages all view state and updates the view if state changes occur.
+       * @return {object} State information about what decorator has changed (useful for unding all changes).
+       */
+
+      /**
+       * Description of applied decorator to an HTML element.
+       * @typedef {object} AppliedDecorator
+       * @property {Decorator} decorator - The applied decorator function.
+       * @property {object} decoratorState - State information returned by the {@link Decorator} function.
+       * @property {HTMLElement} htmlElem - The HTML element which serves as root view.
+       * @property {ViewModel} viewModel - The {@link ViewModel} which manages whole view state and is bound to root view or its sub views.
+       */
+
+      /** Description fo added listener to an HTML element.
+       * @typedef {object} AddedListener
+       * @property {(Event)=>void} eventHandler - Registered callback which handles event type for an html element.
+       * @property {string} eventType - The event type ("click","touchstart",...).
+       * @property {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
+       * @property {bigint} ID - Unique number which identifies the added event listener.
+       * @property {AddedListener[]} suppressedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
+       */
+
+      /**
+       * Manages event listeners and allows to prioritize them.
+       * One listener could suppress other listeners.
+       * So if two listeners would be executed, and one is suppressed by the other one
+       * only one is executed. Higher priority of a listener is expresses by
+       * suppression of the one with lower priority.
+       */
+      const htmlListeners = {
+         htmlElements: new WeakMap(),
+         uniqueID: 0n,
+         bubbleEvent: null,
+         captureEvent: null,
+         capturedListeners: null,
+         suppressedListeners: null,
+         processedEvent: null,
+         onCapture: null,
+         onBubble: null,
+         error(msg) {
+            throw Error(`htmlListener error: ${msg}`)
+         },
+         init() {
+            if (this.onCapture)
+               return // already initialized
+            this.onCapture = (e) => {
+               if (!this.captureEvent) {
+                  this.captureEvent = e
+                  this.bubbleEvent = null
+                  this.capturedListeners = new Set()
+                  this.suppressedListeners = new Set()
+               }
+               else if (e !== this.captureEvent)
+                  this.error("Internal: Event loop processes two capture events at same time.")
+               const listeners = this.get(e.currentTarget,e.type)
+               for (const listener of listeners) {
+                  let isSuppressed = this.suppressedListeners.has(listener)
+                  for (const suppressedListener of listener.suppressedListeners) {
+                     this.suppressedListeners.add(suppressedListener)
+                     if (!isSuppressed)
+                        this.capturedListeners.delete(suppressedListener)
+                  }
+                  if (!isSuppressed)
+                     this.capturedListeners.add(listener)
+               }
+            }
+            this.onBubble = (e) => {
+               if (!this.bubbleEvent) {
+                  if (this.capturedListeners.size === 0)
+                     console.warn("Internal: No event handler found in capture phase.")
+                  this.bubbleEvent = e
+                  this.captureEvent = null
+               }
+               else if (e !== this.bubbleEvent)
+                  this.error("Internal: Event loop processes two bubble events at same time.")
+               if (this.capturedListeners.size) {
+                  const listeners = this.get(e.currentTarget)
+                  for (const listener of listeners) {
+                     if (this.capturedListeners.has(listener)) {
+                        this.capturedListeners.delete(listener)
+                        listener.eventHandler(e)
+                     }
+                  }
+               }
+            }
+         },
+         addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
+            if (!this.isListener(htmlElem,eventType,eventHandler)) {
+               this.init()
+               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, suppressedListeners }
+               listener.htmlElem.addEventListener(listener.eventType,this.onCapture,{capture:true,passive:false})
+               listener.htmlElem.addEventListener(listener.eventType,this.onBubble,{capture:false,passive:false})
+               this.htmlElements.set(htmlElem,
+                  (this.htmlElements.get(htmlElem) || []).concat(listener)
+               )
+               return listener
+            }
+         },
+         removeListener(listener) {
+            const listeners = this.get(listener.htmlElem)
+            const changedListeners = listeners.filter( entry => entry !== listener )
+            if (listeners.length > changedListeners.length) {
+               listener.htmlElem.removeEventListener(listener.eventType,this.onCapture,{capture:true,passive:false})
+               listener.htmlElem.removeEventListener(listener.eventType,this.onBubble,{capture:false,passive:false})
+               this.htmlElements.set(listener.htmlElem,changedListeners)
+               this.capturedListeners?.delete(listener)
+            }
+         },
+         stopImmediatePropagation() {
+            this.capturedListeners?.clear()
+         },
+         get(htmlElem, eventType, eventHandler) {
+            const listeners = this.htmlElements.get(htmlElem) || []
+            return eventType || eventHandler
+                  ? listeners.filter( entry =>
+                                    (!eventType || entry.eventType === eventType)
+                                 && (!eventHandler || entry.eventHandler === eventHandler))
+                  : listeners
+         },
+         isListener(htmlElem, eventType, eventHandler) {
+            return this.get(htmlElem,eventType,eventHandler).length > 0
+         },
+      }
+      function addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
+         return htmlListeners.addListener(htmlElem, eventType, eventHandler, ...suppressedListeners)
+      }
+      function removeListeners(...listeners) {
+         listeners.forEach( listener => htmlListeners.removeListener(listener))
+      }
+
+      /**
+       * Maps an HTML element to array of applied decorators.
+       */
       const htmlDecorators = {
          htmlElements: new WeakMap(),
+         error(msg) {
+            throw Error(`htmlDecorators error: ${msg}`)
+         },
+         /**
+          * Applies decorator by calling it and adds it to list of applied docorators for htmlElem.
+          * @param {HTMLElement} htmlElem
+          * @param {Decorator} decorator
+          * @param {ViewModel} viewModel
+          */
+         decorate(htmlElem, decorator, viewModel) {
+            if (!(htmlElem instanceof HTMLElement)) this.error("htmlElem argument expects type HTMLElement.")
+            if (!(decorator instanceof Function)) this.error("decorator argument expects type Function.")
+            if (!(viewModel instanceof ViewModel)) this.error("viewModel argument expects type ViewModel.")
+            if (!this.isDecorated(htmlElem, decorator)) {
+               const decoratorState = decorator(htmlElem, viewModel)
+               const newDecorator = { decorator, decoratorState, htmlElem, viewModel }
+               this.htmlElements.set(htmlElem,
+                  (this.htmlElements.get(htmlElem) || []).concat(newDecorator)
+               )
+               if (!viewModel.isBound())
+                  viewModel.bindView(htmlElem)
+               return newDecorator
+            }
+         },
+         /**
+          * Returns information about decorators applied to an HTML element.
+          * @param {HTMLElement} htmlElem Element whose decorators are to be returned.
+          * @param {Decorator=} decorator Optional decorator to return information about a single decorator. If undefined an array of all decorators applied to the element is returned.
+          * @return {AppliedDecorator[]} An array describing all applied decorators. The returned array may be empty.
+          */
          get(htmlElem, decorator) {
-            const decorators = this.htmlElements.get(htmlElem)
-            return decorators && decorator
-               ? decorators.find( entry => entry.decorator === decorator )
+            const decorators = this.htmlElements.get(htmlElem) || []
+            return decorator
+               ? decorators.filter( entry => entry.decorator === decorator )
                : decorators
          },
-         isElementDecorated(htmlElem, decorator) {
-            return Boolean(this.get(htmlElem, decorator))
+         /**
+          * Checks if an element is decorated at all or decorated by a specific decorator.
+          * @param {HTMLElement} htmlElem Element which checked for being decorated.
+          * @param {Decorator=} decorator Optional decorator to check for. If undefined any dorator is considered.
+          * @return {boolean} <tt>true</tt> if the element is decorated with provided decorator or decorated at all in case decorator is undefined.
+          */
+         isDecorated(htmlElem, decorator) {
+            return this.get(htmlElem, decorator).length > 0
+         },
+         /**
+          * Returns view model of a single decorator.
+          * @param {HTMLElement} htmlElem Element which checked for being decorated.
+          * @param {Decorator} decorator Decorator whose state should be returned. Value is not optional.
+          * @return {object|undefined} Returned state of applied decorator or undefined if decorator was not applied to given element.
+          */
+         getDecoratorState(htmlElem, decorator) {
+            return this.get(htmlElem, decorator)[0]?.decoratorState
+         },
+         /**
+          * Returns view model of a single decorator.
+          * @param {HTMLElement} htmlElem Element which checked for being decorated.
+          * @param {Decorator} decorator Decorator whose view model should be returned. Value is not optional.
+          * @return {ViewModel|undefined} ViewModel of applied decorator or undefined if decorator was not applied to given element.
+          */
+         getDecoratorViewModel(htmlElem, decorator) {
+            return this.get(htmlElem, decorator)[0]?.viewModel
          },
          getDecoratedElements(rootElem, decorator) {
             const result = []
-            if (isElementDecorated(rootElem, decorator))
+            if (this.isDecorated(rootElem, decorator))
                result.push(rootElem)
             for (const htmlElem of rootElem.querySelectorAll("*")) {
-               if (isElementDecorated(htmlElem, decorator))
+               if (this.isDecorated(htmlElem, decorator))
                   result.push(htmlElem)
             }
+            return result
          },
-         decorate(htmlElem, decorator, viewModel) {
-            if (!this.isElementDecorated(htmlElem, decorator)) {
-               const decoratorState = decorator(htmlElem, viewModel)
-               const addedDecorator = { decorator, decoratorState, htmlElem, viewModel }
-               this.htmlElements.set(htmlElem,
-                  (this.htmlElements.get(htmlElem) || []).concat(addedDecorator)
-               )
-               if (!viewModel.isBound())
-                  viewModel.bindToView(htmlElem)
-            }
-            return this.get(htmlElem, decorator)
-         }
       }
       function decorateElement(htmlElem, decorator, viewModel) {
          return htmlDecorators.decorate(htmlElem, decorator, viewModel)
@@ -112,6 +294,80 @@
          UIupdates.add(callback)
       }
 
+      class ViewController {
+         // TODO:
+         add() { throw Error("Method 'add' not implemented.") }
+         remove() { throw Error("Method 'remove' not implemented.") }
+      }
+
+      function addMoveController(htmlElem, onMove, ...suppressedListeners) {
+         const onMousedown = (e) => {
+            const touch = (e.touches && e.touches[0])
+            if (touch && e.touches.length !== 1)
+               return
+            const event = touch || e
+            const listeners = []
+            let prevPos = { x:event.pageX, y:event.pageY }
+            e.preventDefault()
+
+            const onMouseMove = (e) => {
+               const touch = (e.touches && e.touches[0])
+               if (touch && e.touches.length !== 1) {
+                  removeListeners(...listeners)
+                  return
+               }
+               const event = touch || e
+               const pos = { x:event.pageX, y:event.pageY }
+               const movexy = { movex:pos.x-prevPos.x, movey:pos.y-prevPos.y }
+               prevPos = pos
+               onMove(movexy)
+            }
+            const onMouseUp = (e) => {
+               removeListeners(...listeners)
+            }
+            if (touch) {
+               listeners.push(addListener(window,"touchmove",onMouseMove))
+               listeners.push(addListener(window,"touchend",onMouseUp))
+            }
+            else {
+               listeners.push(addListener(window,"mousemove",onMouseMove))
+               listeners.push(addListener(window,"mouseup",onMouseUp))
+            }
+         }
+         return [
+            addListener(htmlElem,"mousedown",onMousedown,...suppressedListeners),
+            addListener(htmlElem,"touchstart",onMousedown,...suppressedListeners),
+         ]
+      }
+      function addTouchResizeController(htmlElem, onResize) {
+         const onTouchStart = (e) => {
+            const touches = e.targetTouches
+            if (touches.length !== 2 || !touches[0] || !touches[1])
+               return
+            const listeners = []
+            let prevPos = { x:Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
+            e.preventDefault()
+
+            const onTouchMove = (e) => {
+               const touches = e.targetTouches
+               if (touches.length !== 2 || !touches[0] || !touches[1]) {
+                  removeListeners(...listeners)
+                  return
+               }
+               const pos = { x: Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
+               const movexy = { movex:pos.x-prevPos.x, movey:pos.y-prevPos.y }
+               prevPos = pos
+               onResize(movexy)
+            }
+            const onTouchEnd = (e) => {
+               removeListeners(...listeners)
+            }
+            listeners.push(addListener(window,"touchmove",onTouchMove))
+            listeners.push(addListener(window,"touchend",onTouchEnd))
+         }
+         return [ addListener(htmlElem,"touchstart",onTouchStart) ]
+      }
+
       function setStyles(htmlElem, styles) {
          for (const key in styles) {
             htmlElem.style.setProperty(key,styles[key])
@@ -120,76 +376,6 @@
       }
       function newDiv(styles){
          return setStyles(document.createElement("div"),styles)
-      }
-      function addMoveController(htmlElem, onMove) {
-         const onMousedown = (e) => {
-            const touch = (e.touches && e.touches[0])
-            if (touch && e.touches.length !== 1)
-               return
-            const event = touch || e
-            const abortController = new AbortController()
-            const removeSignal = abortController.signal
-            const removeListener = abortController.abort.bind(abortController)
-            let prevPos = { x:event.pageX, y:event.pageY }
-            e.stopPropagation()
-            e.preventDefault()
-            const onMouseMove = (e) => {
-               const touch = (e.touches && e.touches[0])
-               if (touch && e.touches.length !== 1) {
-                  removeListener()
-                  return
-               }
-               const event = touch || e
-               const pos = { x:event.pageX, y:event.pageY }
-               const xydiff = { xdiff:pos.x-prevPos.x, ydiff:pos.y-prevPos.y }
-               prevPos = pos
-               onMove({type:"move", target:htmlElem, ...xydiff})
-            }
-            const onMouseUp = (e) => {
-               removeListener()
-            }
-            if (touch) {
-               window.addEventListener("touchmove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
-               window.addEventListener("touchend",onMouseUp,{capture:true, passive:false, signal:removeSignal})
-            }
-            else {
-               window.addEventListener("mousemove",onMouseMove,{capture:true, passive:false, signal:removeSignal})
-               window.addEventListener("mouseup",onMouseUp,{capture:true, passive:false, signal:removeSignal})
-            }
-         }
-         htmlElem.addEventListener("mousedown",onMousedown,{capture:false,passive:false})
-         htmlElem.addEventListener("touchstart",onMousedown,{capture:false,passive:false})
-      }
-      function addTouchResizeController(htmlElem, onResize) {
-         const onTouchStart = (e) => {
-            const touches = e.targetTouches
-            if (touches.length !== 2 || !touches[0] || !touches[1])
-               return
-            const abortController = new AbortController()
-            const removeSignal = abortController.signal
-            const removeListener = abortController.abort.bind(abortController)
-            let prevPos = { x:Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
-            e.stopPropagation()
-            e.preventDefault()
-
-            const onTouchMove = (e) => {
-               const touches = e.targetTouches
-               if (touches.length !== 2 || !touches[0] || !touches[1]) {
-                  removeListener()
-                  return
-               }
-               const pos = { x: Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
-               const xydiff = { xdiff:pos.x-prevPos.x, ydiff:pos.y-prevPos.y }
-               prevPos = pos
-               onResize({type:"touchresize", target:htmlElem, ...xydiff})
-            }
-            const onTouchEnd = (e) => {
-               removeListener()
-            }
-            window.addEventListener("touchmove",onTouchMove,{capture:true, passive:false, signal:removeSignal})
-            window.addEventListener("touchend",onTouchEnd,{capture:true, passive:false, signal:removeSignal})
-         }
-         htmlElem.addEventListener("touchstart",onTouchStart,{capture:false,passive:false})
       }
 
       function ResizeDecorator(htmlElem, viewModel) {
@@ -213,39 +399,74 @@
             newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
          ]
          htmlElem.append(...borders)
-         const resizeTop = (e) => { viewModel.addValue("top", e.ydiff); viewModel.addValue("height", -e.ydiff); }
-         const resizeRight = (e) => { viewModel.addValue("width", e.xdiff); }
-         const resizeBottom = (e) => { viewModel.addValue("height", e.ydiff); }
-         const resizeLeft = (e) => { viewModel.addValue("left", e.xdiff); viewModel.addValue("width", -e.xdiff); }
-         addMoveController(borders[1],resizeRight)
-         addMoveController(borders[2],resizeBottom)
-         addMoveController(borders[6],(e) => { resizeBottom(e); resizeRight(e); })
          if (display !== "none") {
-            addMoveController(borders[0],resizeTop)
-            addMoveController(borders[3],resizeLeft)
-            addMoveController(borders[4],(e) => { resizeTop(e); resizeLeft(e); })
-            addMoveController(borders[5],(e) => { resizeTop(e); resizeRight(e); })
-            addMoveController(borders[7],(e) => { resizeBottom(e); resizeLeft(e); })
-            addMoveController(htmlElem,(e) => { viewModel.addValue("top", e.ydiff); viewModel.addValue("left", e.xdiff); })
-            addTouchResizeController(htmlElem,(e) => { resizeRight(e); resizeBottom(e); e.xdiff*=-1; e.ydiff*=-1; resizeTop(e); resizeLeft(e); })
+            const moveListeners = addMoveController(htmlElem,(e) => { viewModel.values.top += e.movey; viewModel.values.left += e.movex; })
+            const topListeners = addMoveController(borders[0],viewModel.methods.resizeTop,...moveListeners)
+            const rightListeners = addMoveController(borders[1],viewModel.methods.resizeRight,...moveListeners)
+            const bottomListeners = addMoveController(borders[2],viewModel.methods.resizeBottom,...moveListeners)
+            const leftListeners = addMoveController(borders[3],viewModel.methods.resizeLeft,...moveListeners)
+            addMoveController(borders[4],viewModel.methods.resizeTopLeft,...moveListeners,...topListeners,...leftListeners)
+            addMoveController(borders[5],viewModel.methods.resizeTopRight,...moveListeners,...topListeners,...rightListeners)
+            addMoveController(borders[6],viewModel.methods.resizeBottomRight,...moveListeners,...bottomListeners,...rightListeners)
+            addMoveController(borders[7],viewModel.methods.resizeBottomLeft,...moveListeners,...bottomListeners,...leftListeners)
+            addTouchResizeController(htmlElem,viewModel.methods.resize)
             setStyles(htmlElem,{ cursor:"move" })
          }
-         else
-            addTouchResizeController(htmlElem,(e) => { e.xdiff*=2; e.ydiff*=2; resizeRight(e); resizeBottom(e); })
+         else {
+            const rightListeners = addMoveController(borders[1],viewModel.methods.resizeRight)
+            const bottomListeners = addMoveController(borders[2],viewModel.methods.resizeBottom)
+            addMoveController(borders[6],viewModel.methods.resizeBottomRight,...bottomListeners,...rightListeners)
+            addTouchResizeController(htmlElem,viewModel.methods.resizeStatic)
+         }
          setStyles(htmlElem,{ contain: "size layout" })
+
          return { borders }
       }
+      /**
+       * Model which is bound to a single view and manages its state.
+       */
       class ViewModel {
          #modelName
          #properties = {}
+         #proxy
+         #proxyKeepView
+         #methods = {}
          constructor(modelName) {
             this.#modelName = modelName
+            this.#proxy = new Proxy(this, {
+               get(target, p) {
+                  return target.getValue(p)
+               },
+               set(target, p, value) {
+                  return target.setValue(p, value), true
+               }
+            })
+            this.#proxyKeepView = new Proxy(this, {
+               get(target, p) {
+                  return target.getValue(p)
+               },
+               set(target, p, value) {
+                  return target.setValueKeepView(p, value), true
+               }
+            })
          }
          error(msg) {
-            throw Error(`View model ${this.#modelName} error: ${msg}`)
+            throw Error(`ViewModel-${this.#modelName} error: ${msg}`)
          }
          isProperty(name) {
             return (name in this.#properties)
+         }
+         isMethod(name) {
+            return (name in this.#methods)
+         }
+         get values() {
+            return this.#proxy
+         }
+         get valuesNoUpdate() {
+            return this.#proxyKeepView
+         }
+         get methods() {
+            return this.#methods
          }
          /**
           * Adds new property to view model wuth default value and data Accessor mechanism.
@@ -259,28 +480,37 @@
                this.error(`Can not add property ${String(name)} twice.`)
             this.#properties[name] = { name, value, viewvalue, htmlElem:null }
          }
+         addMethod(name, vmFunction, thisValue=null) {
+            if (this.isMethod(name))
+               this.error(`Can not add method ${String(name)} twice.`)
+            this.#methods[name] = vmFunction.bind(thisValue||this,this)
+         }
+         addCommonMethods(methodsObject) {
+            for (const name of Object.keys(methodsObject))
+               this.addMethod(name, methodsObject[name], methodsObject)
+         }
          #getProperty(name) {
             const prop = this.#properties[name]
             if (!prop)
                this.error(`Missing property ${String(name)}.`)
             return prop
          }
-         #setPropertyView(prop, htmlElem) {
+         #bindView(prop, htmlElem) {
             if (prop.htmlElem !== htmlElem)
                return this.#properties[prop.name] = { ...prop, htmlElem }
             else
                return prop
          }
-         #setPropertyValue(prop, value) {
+         #setValueKeepView(prop, value) {
             if (prop.value !== value)
                return this.#properties[prop.name] = { ...prop, value }
             else
                return prop
          }
-         #setPropertyValueWithUpdate(prop, value) {
-            this.#updatePropertyView(this.#setPropertyValue(prop, value))
+         #setValue(prop, value) {
+            this.#updateView(this.#setValueKeepView(prop, value))
          }
-         #updatePropertyView(prop) {
+         #updateView(prop) {
             if (prop.htmlElem) {
                asyncUIUpdate(
                   () => prop.viewvalue.set(prop.htmlElem, prop.value)
@@ -295,11 +525,11 @@
           * @param {HTMLElement} htmlElem The default html view all properties are bound to.
           * @param {{"propName":HTMLElement}=} propNameHtmlElemMap Oprional key value map which overwrites the default html view with a more specific subview.
           */
-         bindToView(htmlElem, propNameHtmlElemMap) {
+         bindView(htmlElem, propNameHtmlElemMap) {
             for (const name of Reflect.ownKeys(this.#properties)) {
-               const prop = this.#setPropertyView(this.#getProperty(name), (propNameHtmlElemMap && propNameHtmlElemMap[name]) || htmlElem)
+               const prop = this.#bindView(this.#getProperty(name), (propNameHtmlElemMap && propNameHtmlElemMap[name]) || htmlElem)
                if (prop.htmlElem)
-                  prop.viewvalue.bindToView(prop.htmlElem)
+                  prop.viewvalue.bindView(prop.htmlElem)
             }
          }
          /**
@@ -331,24 +561,20 @@
          setValueFromView(name) {
             const prop = this.#getProperty(name)
             if (prop.htmlElem)
-               this.#setPropertyValue(prop, prop.viewvalue.get(prop.htmlElem))
+               this.#setValueKeepView(prop, prop.viewvalue.get(prop.htmlElem))
          }
          /**
           * Assigns all property values to the bound HTML view.
           */
          updateView() {
             for (const name of Reflect.ownKeys(this.#properties))
-               this.#updatePropertyView(this.#getProperty(name))
+               this.#updateView(this.#getProperty(name))
          }
          getValue(name, value) {
             return this.#getProperty(name).value
          }
          setValue(name, value) {
-            this.#setPropertyValueWithUpdate(this.#getProperty(name), value)
-         }
-         addValue(name, increment) {
-            const prop = this.#getProperty(name)
-            this.#setPropertyValueWithUpdate(prop, prop.value+increment)
+            this.#setValue(this.#getProperty(name), value)
          }
          /**
           * Sets a property value without updating the bound HTML view.
@@ -357,13 +583,16 @@
           * @param {string} name Name of view model property.
           * @param {any} value Value of HTML view property.
           */
-         setValueNoUpdate(name, value) {
-            this.#setPropertyValue(this.#getProperty(name), value)
+         setValueKeepView(name, value) {
+            this.#setValueKeepView(this.#getProperty(name), value)
+         }
+         getMethod(name) {
+            return this.#methods[name]
          }
       }
 
       class ViewValueAccessor {
-         bindToView(htmlElem) { /* subtype should could overwrite to prepare view (calling needsBorderBox) */ }
+         bindView(htmlElem) { /* subtype should could overwrite to prepare view (calling needsBorderBox) */ }
          set(htmlElem, value) { throw Error("Not implemented") }
          get(htmlElem) { throw Error("Not implemented") }
          needsBorderBox(htmlElem) {
@@ -385,28 +614,46 @@
          get(htmlElem) { return htmlElem.offsetLeft }
       }
       class WidthStyleAccessor extends ViewValueAccessor {
-         bindToView(htmlElem) { this.needsBorderBox(htmlElem) }
+         bindView(htmlElem) { this.needsBorderBox(htmlElem) }
          set(htmlElem, value) { htmlElem.style.width = value+"px" }
          get(htmlElem) { return htmlElem.offsetWidth }
       }
       class HeightStyleAccessor extends ViewValueAccessor {
-         bindToView(htmlElem) { this.needsBorderBox(htmlElem) }
+         bindView(htmlElem) { this.needsBorderBox(htmlElem) }
          set(htmlElem, value) { htmlElem.style.height = value+"px" }
          get(htmlElem) { return htmlElem.offsetHeight }
       }
 
-      function newWindowResizeViewModel() {
-         const vmWindowResize = new ViewModel("WindowResize")
-         vmWindowResize.addProperty("top", 0, new TopStyleAccessor())
-         vmWindowResize.addProperty("left", 0, new LeftStyleAccessor())
-         vmWindowResize.addProperty("width", 100, new WidthStyleAccessor())
-         vmWindowResize.addProperty("height", 100, new HeightStyleAccessor())
-         return vmWindowResize
+      class WindowResizeVM extends ViewModel {
+         constructor({top=0, left=0, width=100, height=100}={}) {
+            super("WindowResize")
+            this.addProperty("top", top, new TopStyleAccessor())
+            this.addProperty("left", left, new LeftStyleAccessor())
+            this.addProperty("width", width, new WidthStyleAccessor())
+            this.addProperty("height", height, new HeightStyleAccessor())
+            this.addCommonMethods(WindowResizeVM.commonMethods)
+         }
+
+         static commonMethods = {
+            resizeTop(vm,e) { vm.values.top += e.movey; vm.values.height -= e.movey; },
+            resizeRight(vm,e) { vm.values.width += e.movex; },
+            resizeBottom(vm,e) { vm.values.height += e.movey; },
+            resizeLeft(vm,e) { vm.values.left += e.movex; vm.values.width -= e.movex; },
+            resizeTopLeft(vm,e) { this.resizeLeft(vm,e); this.resizeTop(vm,e); },
+            resizeTopRight(vm,e) { this.resizeTop(vm,e); this.resizeRight(vm,e); },
+            resizeBottomRight(vm,e) { this.resizeRight(vm,e); this.resizeBottom(vm,e); },
+            resizeBottomLeft(vm,e) { this.resizeBottom(vm,e); this.resizeLeft(vm,e); },
+            resize(vm,e) { this.resizeRight(vm,e); this.resizeBottom(vm,e); e.movex*=-1; e.movey*=-1; this.resizeLeft(vm,e); this.resizeTop(vm,e); },
+            resizeStatic(vm,e) {  e.movex*=2; e.movey*=2; this.resizeRight(vm,e); this.resizeBottom(vm,e); },
+         }
       }
-      decorateElement(div1, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
-      decorateElement(div2, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
-      decorateElement(div3, ResizeDecorator, newWindowResizeViewModel()).viewModel.setValuesFromView()
+
+      decorateElement(div1, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
+      decorateElement(div2, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
+      decorateElement(div3, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
+      var vm3 = htmlDecorators.getDecoratorViewModel(div3,ResizeDecorator)
       window.addEventListener("error", (e) => logError("<br>line "+e.lineno+":"+e.message))
+
    </script>
 </body>
 </html>

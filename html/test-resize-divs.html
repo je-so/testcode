@@ -49,7 +49,7 @@
       const div2 = document.getElementById("window2")
       const div3 = document.getElementById("window3")
       const logError = (msg) => {
-         document.getElementById("LOG").innerHTML += msg
+         document.getElementById("LOG").innerHTML = msg
       }
 
       /**
@@ -76,6 +76,8 @@
        * @property {string} eventType - The event type ("click","touchstart",...).
        * @property {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
        * @property {bigint} ID - Unique number which identifies the added event listener.
+       * @property {(Event)=>void} onCapture - Anonymous function which is registerd as HTML event listener and calls htmlListener.onCapture.
+       * @property {(Event)=>void} onBubble - Anonymous function which is registerd as HTML event listener and calls htmlListener.onBubble.
        * @property {AddedListener[]} suppressedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
        */
 
@@ -94,61 +96,56 @@
          capturedListeners: null,
          suppressedListeners: null,
          processedEvent: null,
-         onCapture: null,
-         onBubble: null,
          error(msg) {
             throw Error(`htmlListener error: ${msg}`)
          },
-         init() {
-            if (this.onCapture)
-               return // already initialized
-            this.onCapture = (e) => {
-               if (!this.captureEvent) {
-                  this.captureEvent = e
-                  this.bubbleEvent = null
-                  this.capturedListeners = new Set()
-                  this.suppressedListeners = new Set()
-               }
-               else if (e !== this.captureEvent)
-                  this.error("Internal: Event loop processes two capture events at same time.")
-               const listeners = this.get(e.currentTarget,e.type)
-               for (const listener of listeners) {
-                  let isSuppressed = this.suppressedListeners.has(listener)
-                  for (const suppressedListener of listener.suppressedListeners) {
-                     this.suppressedListeners.add(suppressedListener)
-                     if (!isSuppressed)
-                        this.capturedListeners.delete(suppressedListener)
-                  }
-                  if (!isSuppressed)
-                     this.capturedListeners.add(listener)
-               }
+         onCapture(e) {
+            if (!this.captureEvent) {
+               this.captureEvent = e
+               this.bubbleEvent = null
+               this.capturedListeners = new Set()
+               this.suppressedListeners = new Set()
             }
-            this.onBubble = (e) => {
-               if (!this.bubbleEvent) {
-                  if (this.capturedListeners.size === 0)
-                     console.warn("Internal: No event handler found in capture phase.")
-                  this.bubbleEvent = e
-                  this.captureEvent = null
+            else if (e !== this.captureEvent)
+               this.error("Internal: Event loop processes two capture events at same time.")
+            const listeners = this.get(e.currentTarget,e.type)
+            for (const listener of listeners) {
+               let isSuppressed = this.suppressedListeners.has(listener)
+               for (const suppressedListener of listener.suppressedListeners) {
+                  this.suppressedListeners.add(suppressedListener)
+                  if (!isSuppressed)
+                     this.capturedListeners.delete(suppressedListener)
                }
-               else if (e !== this.bubbleEvent)
-                  this.error("Internal: Event loop processes two bubble events at same time.")
-               if (this.capturedListeners.size) {
-                  const listeners = this.get(e.currentTarget)
-                  for (const listener of listeners) {
-                     if (this.capturedListeners.has(listener)) {
-                        this.capturedListeners.delete(listener)
-                        listener.eventHandler(e)
-                     }
+               if (!isSuppressed)
+                  this.capturedListeners.add(listener)
+            }
+         },
+         onBubble(e) {
+            if (!this.bubbleEvent) {
+               if (this.capturedListeners.size === 0)
+                  console.warn("Internal: No event handler found in capture phase.")
+               this.bubbleEvent = e
+               this.captureEvent = null
+            }
+            else if (e !== this.bubbleEvent)
+               this.error("Internal: Event loop processes two bubble events at same time.")
+            if (this.capturedListeners.size) {
+               const listeners = this.get(e.currentTarget)
+               for (const listener of listeners) {
+                  if (this.capturedListeners.has(listener)) {
+                     this.capturedListeners.delete(listener)
+                     listener.eventHandler(e)
                   }
                }
             }
          },
          addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
             if (!this.isListener(htmlElem,eventType,eventHandler)) {
-               this.init()
-               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, suppressedListeners }
-               listener.htmlElem.addEventListener(listener.eventType,this.onCapture,{capture:true,passive:false})
-               listener.htmlElem.addEventListener(listener.eventType,this.onBubble,{capture:false,passive:false})
+               const onCapture = this.onCapture.bind(this)
+               const onBubble = this.onBubble.bind(this)
+               const listener = { htmlElem, eventType, eventHandler, onCapture, onBubble, ID: ++this.uniqueID, suppressedListeners }
+               listener.htmlElem.addEventListener(listener.eventType,onCapture,{capture:true,passive:false})
+               listener.htmlElem.addEventListener(listener.eventType,onBubble,{capture:false,passive:false})
                this.htmlElements.set(htmlElem,
                   (this.htmlElements.get(htmlElem) || []).concat(listener)
                )
@@ -159,8 +156,8 @@
             const listeners = this.get(listener.htmlElem)
             const changedListeners = listeners.filter( entry => entry !== listener )
             if (listeners.length > changedListeners.length) {
-               listener.htmlElem.removeEventListener(listener.eventType,this.onCapture,{capture:true,passive:false})
-               listener.htmlElem.removeEventListener(listener.eventType,this.onBubble,{capture:false,passive:false})
+               listener.htmlElem.removeEventListener(listener.eventType,listener.onCapture,{capture:true,passive:false})
+               listener.htmlElem.removeEventListener(listener.eventType,listener.onBubble,{capture:false,passive:false})
                this.htmlElements.set(listener.htmlElem,changedListeners)
                this.capturedListeners?.delete(listener)
             }
@@ -178,6 +175,16 @@
          },
          isListener(htmlElem, eventType, eventHandler) {
             return this.get(htmlElem,eventType,eventHandler).length > 0
+         },
+         getListenedElements(rootElem, eventType, eventHandler) {
+            const result = []
+            if (this.isListener(rootElem,eventType,eventHandler))
+               result.push(rootElem)
+            for (const htmlElem of rootElem.querySelectorAll("*")) {
+               if (this.isListener(htmlElem,eventType,eventHandler))
+                  result.push(htmlElem)
+            }
+            return result
          },
       }
       function addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
@@ -302,7 +309,7 @@
 
       function addMoveController(htmlElem, onMove, ...suppressedListeners) {
          const onMousedown = (e) => {
-            const touch = (e.touches && e.touches[0])
+            const touch = (e.targetTouches && e.targetTouches[0])
             if (touch && e.touches.length !== 1)
                return
             const event = touch || e
@@ -311,7 +318,7 @@
             e.preventDefault()
 
             const onMouseMove = (e) => {
-               const touch = (e.touches && e.touches[0])
+               const touch = (e.targetTouches && e.targetTouches[0])
                if (touch && e.touches.length !== 1) {
                   removeListeners(...listeners)
                   return
@@ -326,12 +333,12 @@
                removeListeners(...listeners)
             }
             if (touch) {
-               listeners.push(addListener(window,"touchmove",onMouseMove))
-               listeners.push(addListener(window,"touchend",onMouseUp))
+               listeners.push(addListener(document,"touchmove",onMouseMove))
+               listeners.push(addListener(document,"touchend",onMouseUp))
             }
             else {
-               listeners.push(addListener(window,"mousemove",onMouseMove))
-               listeners.push(addListener(window,"mouseup",onMouseUp))
+               listeners.push(addListener(document,"mousemove",onMouseMove))
+               listeners.push(addListener(document,"mouseup",onMouseUp))
             }
          }
          return [
@@ -342,7 +349,7 @@
       function addTouchResizeController(htmlElem, onResize) {
          const onTouchStart = (e) => {
             const touches = e.targetTouches
-            if (touches.length !== 2 || !touches[0] || !touches[1])
+            if (e.touches.length !== 2 || !touches[0] || !touches[1])
                return
             const listeners = []
             let prevPos = { x:Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
@@ -350,7 +357,7 @@
 
             const onTouchMove = (e) => {
                const touches = e.targetTouches
-               if (touches.length !== 2 || !touches[0] || !touches[1]) {
+               if (e.touches.length !== 2 || !touches[0] || !touches[1]) {
                   removeListeners(...listeners)
                   return
                }
@@ -362,8 +369,8 @@
             const onTouchEnd = (e) => {
                removeListeners(...listeners)
             }
-            listeners.push(addListener(window,"touchmove",onTouchMove))
-            listeners.push(addListener(window,"touchend",onTouchEnd))
+            listeners.push(addListener(document,"touchmove",onTouchMove))
+            listeners.push(addListener(document,"touchend",onTouchEnd))
          }
          return [ addListener(htmlElem,"touchstart",onTouchStart) ]
       }
@@ -400,23 +407,23 @@
          ]
          htmlElem.append(...borders)
          if (display !== "none") {
-            const moveListeners = addMoveController(htmlElem,(e) => { viewModel.values.top += e.movey; viewModel.values.left += e.movex; })
-            const topListeners = addMoveController(borders[0],viewModel.methods.resizeTop,...moveListeners)
-            const rightListeners = addMoveController(borders[1],viewModel.methods.resizeRight,...moveListeners)
-            const bottomListeners = addMoveController(borders[2],viewModel.methods.resizeBottom,...moveListeners)
-            const leftListeners = addMoveController(borders[3],viewModel.methods.resizeLeft,...moveListeners)
-            addMoveController(borders[4],viewModel.methods.resizeTopLeft,...moveListeners,...topListeners,...leftListeners)
-            addMoveController(borders[5],viewModel.methods.resizeTopRight,...moveListeners,...topListeners,...rightListeners)
-            addMoveController(borders[6],viewModel.methods.resizeBottomRight,...moveListeners,...bottomListeners,...rightListeners)
-            addMoveController(borders[7],viewModel.methods.resizeBottomLeft,...moveListeners,...bottomListeners,...leftListeners)
-            addTouchResizeController(htmlElem,viewModel.methods.resize)
+            const moveListeners = addMoveController(htmlElem,viewModel.on.move)
+            const topListeners = addMoveController(borders[0],viewModel.on.resizeTop,...moveListeners)
+            const rightListeners = addMoveController(borders[1],viewModel.on.resizeRight,...moveListeners)
+            const bottomListeners = addMoveController(borders[2],viewModel.on.resizeBottom,...moveListeners)
+            const leftListeners = addMoveController(borders[3],viewModel.on.resizeLeft,...moveListeners)
+            addMoveController(borders[4],viewModel.on.resizeTopLeft,...moveListeners,...topListeners,...leftListeners)
+            addMoveController(borders[5],viewModel.on.resizeTopRight,...moveListeners,...topListeners,...rightListeners)
+            addMoveController(borders[6],viewModel.on.resizeBottomRight,...moveListeners,...bottomListeners,...rightListeners)
+            addMoveController(borders[7],viewModel.on.resizeBottomLeft,...moveListeners,...bottomListeners,...leftListeners)
+            addTouchResizeController(htmlElem,viewModel.on.resize)
             setStyles(htmlElem,{ cursor:"move" })
          }
          else {
-            const rightListeners = addMoveController(borders[1],viewModel.methods.resizeRight)
-            const bottomListeners = addMoveController(borders[2],viewModel.methods.resizeBottom)
-            addMoveController(borders[6],viewModel.methods.resizeBottomRight,...bottomListeners,...rightListeners)
-            addTouchResizeController(htmlElem,viewModel.methods.resizeStatic)
+            const rightListeners = addMoveController(borders[1],viewModel.on.resizeRight)
+            const bottomListeners = addMoveController(borders[2],viewModel.on.resizeBottom)
+            addMoveController(borders[6],viewModel.on.resizeBottomRight,...bottomListeners,...rightListeners)
+            addTouchResizeController(htmlElem,viewModel.on.resizeStatic)
          }
          setStyles(htmlElem,{ contain: "size layout" })
 
@@ -430,7 +437,7 @@
          #properties = {}
          #proxy
          #proxyKeepView
-         #methods = {}
+         #on = {}
          constructor(modelName) {
             this.#modelName = modelName
             this.#proxy = new Proxy(this, {
@@ -456,17 +463,17 @@
          isProperty(name) {
             return (name in this.#properties)
          }
-         isMethod(name) {
-            return (name in this.#methods)
+         isEventHandler(name) {
+            return (name in this.#on)
          }
          get values() {
             return this.#proxy
          }
-         get valuesNoUpdate() {
+         get valuesKeepView() {
             return this.#proxyKeepView
          }
-         get methods() {
-            return this.#methods
+         get on() {
+            return this.#on
          }
          /**
           * Adds new property to view model wuth default value and data Accessor mechanism.
@@ -480,14 +487,15 @@
                this.error(`Can not add property ${String(name)} twice.`)
             this.#properties[name] = { name, value, viewvalue, htmlElem:null }
          }
-         addMethod(name, vmFunction, thisValue=null) {
-            if (this.isMethod(name))
-               this.error(`Can not add method ${String(name)} twice.`)
-            this.#methods[name] = vmFunction.bind(thisValue||this,this)
+         bindEventHandler(name, eventHandler, thisValue=null) {
+            if (this.isEventHandler(name))
+               this.error(`Can not add event handler ${String(name)} twice.`)
+            this.#on[name] = eventHandler.bind(thisValue||this)
          }
-         addCommonMethods(methodsObject) {
-            for (const name of Object.keys(methodsObject))
-               this.addMethod(name, methodsObject[name], methodsObject)
+         bindEventHandlers(prototype) {
+            for (const name of Reflect.ownKeys(prototype))
+               if (String(name).startsWith("on"))
+                  this.bindEventHandler(name.substring(2,3).toLowerCase()+name.substring(3),prototype[name])
          }
          #getProperty(name) {
             const prop = this.#properties[name]
@@ -586,8 +594,8 @@
          setValueKeepView(name, value) {
             this.#setValueKeepView(this.#getProperty(name), value)
          }
-         getMethod(name) {
-            return this.#methods[name]
+         getEventHandler(name) {
+            return this.#on[name]
          }
       }
 
@@ -631,29 +639,44 @@
             this.addProperty("left", left, new LeftStyleAccessor())
             this.addProperty("width", width, new WidthStyleAccessor())
             this.addProperty("height", height, new HeightStyleAccessor())
-            this.addCommonMethods(WindowResizeVM.commonMethods)
+            this.bindEventHandlers(WindowResizeVM.prototype)
          }
 
-         static commonMethods = {
-            resizeTop(vm,e) { vm.values.top += e.movey; vm.values.height -= e.movey; },
-            resizeRight(vm,e) { vm.values.width += e.movex; },
-            resizeBottom(vm,e) { vm.values.height += e.movey; },
-            resizeLeft(vm,e) { vm.values.left += e.movex; vm.values.width -= e.movex; },
-            resizeTopLeft(vm,e) { this.resizeLeft(vm,e); this.resizeTop(vm,e); },
-            resizeTopRight(vm,e) { this.resizeTop(vm,e); this.resizeRight(vm,e); },
-            resizeBottomRight(vm,e) { this.resizeRight(vm,e); this.resizeBottom(vm,e); },
-            resizeBottomLeft(vm,e) { this.resizeBottom(vm,e); this.resizeLeft(vm,e); },
-            resize(vm,e) { this.resizeRight(vm,e); this.resizeBottom(vm,e); e.movex*=-1; e.movey*=-1; this.resizeLeft(vm,e); this.resizeTop(vm,e); },
-            resizeStatic(vm,e) {  e.movex*=2; e.movey*=2; this.resizeRight(vm,e); this.resizeBottom(vm,e); },
-         }
+         move(deltax,deltay) { this.values.left += deltax; this.values.top += deltay; }
+         resizeTop(deltay) { this.values.top -= deltay; this.values.height += deltay; }
+         resizeRight(deltax) { this.values.width += deltax; }
+         resizeBottom(deltay) { this.values.height += deltay; }
+         resizeLeft(deltax) { this.values.left -= deltax; this.values.width += deltax; }
+         resizeTopLeft(deltax,deltay) { this.resizeLeft(deltax); this.resizeTop(deltay); }
+         resizeTopRight(deltax,deltay) { this.resizeRight(deltax); this.resizeTop(deltay); }
+         resizeBottomRight(deltax,deltay) { this.resizeRight(deltax); this.resizeBottom(deltay); }
+         resizeBottomLeft(deltax,deltay) { this.resizeLeft(deltax); this.resizeBottom(deltay); }
+         resize(deltax,deltay) { this.resizeRight(deltax); this.resizeBottom(deltay); this.resizeLeft(deltax); this.resizeTop(deltay); }
+         resizeStatic(deltax,deltay) { this.resizeRight(2*deltax); this.resizeBottom(2*deltay); }
+
+         // event handler starts with on
+
+         onMove(e) { this.move(e.movex,e.movey) }
+         onResizeTop(e) { this.resizeTop(-e.movey) }
+         onResizeRight(e) { this.resizeRight(e.movex) }
+         onResizeBottom(e) { this.resizeBottom(e.movey) }
+         onResizeLeft(e) { this.resizeLeft(-e.movex) }
+         onResizeTopLeft(e) { this.resizeLeft(-e.movex); this.resizeTop(-e.movey); }
+         onResizeTopRight(e) { this.resizeRight(e.movex); this.resizeTop(-e.movey); }
+         onResizeBottomRight(e) { this.resizeRight(e.movex); this.resizeBottom(e.movey); }
+         onResizeBottomLeft(e) { this.resizeLeft(-e.movex); this.resizeBottom(e.movey); }
+         onResize(e) { this.resize(e.movex,e.movey) }
+         onResizeStatic(e) { this.resizeStatic(e.movex,e.movey) }
+
       }
 
       decorateElement(div1, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
       decorateElement(div2, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
       decorateElement(div3, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
       var vm3 = htmlDecorators.getDecoratorViewModel(div3,ResizeDecorator)
-      window.addEventListener("error", (e) => logError("<br>line "+e.lineno+":"+e.message))
+      window.addEventListener("error", (e) => logError("line "+e.lineno+":"+e.message))
 
+      console.log(htmlListeners.getListenedElements(document))
    </script>
 </body>
 </html>

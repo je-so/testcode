@@ -7,16 +7,16 @@
    <style>
    </style>
 </head>
-<body style="">
+<body>
    <h3>Test Move & Resize Divs</h3>
-   <div id="LOG">error log:</div>
+   <div id="LOG"></div>
    <dl>
       <dt>Components</dt>
       <dd>
          <ul>
             <li>View</li>
             <li>View-Model</li>
-            <li>Controller</li>
+            <li>View-Controller</li>
             <li>ResizeDecorator</li>
          </ul>
       </dd>
@@ -24,7 +24,7 @@
       <dd>
          <ul>
             <li>Window decorations</li>
-            <li>Model and Data-Binding to View-Model</li>
+            <li>All things Model and Data-Binding to View-Model</li>
             <li>Data types for model properties</li>
          </ul>
       </dd>
@@ -48,8 +48,16 @@
       const div1 = document.getElementById("window")
       const div2 = document.getElementById("window2")
       const div3 = document.getElementById("window3")
+      let logLines = 0
       const logError = (msg) => {
-         document.getElementById("LOG").innerHTML = msg
+         ++ logLines
+         let append = document.getElementById("LOG").innerHTML
+         if (logLines > 15) {
+            append = append.substring(0,append.lastIndexOf("<br>"))
+            if (logLines === 1000)
+               logLines=100
+         }
+         document.getElementById("LOG").innerHTML = logLines + " " + msg + "<br>" + append
       }
 
       /**
@@ -72,31 +80,36 @@
 
       /** Description fo added listener to an HTML element.
        * @typedef {object} AddedListener
-       * @property {(Event)=>void} eventHandler - Registered callback which handles event type for an html element.
+       * @property {(e:Event)=>void} eventHandler - Registered callback which handles event type for an html element.
        * @property {string} eventType - The event type ("click","touchstart",...).
        * @property {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
        * @property {bigint} ID - Unique number which identifies the added event listener.
-       * @property {(Event)=>void} onCapture - Anonymous function which is registerd as HTML event listener and calls htmlListener.onCapture.
-       * @property {(Event)=>void} onBubble - Anonymous function which is registerd as HTML event listener and calls htmlListener.onBubble.
-       * @property {AddedListener[]} suppressedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
+       * @property {AddedListener[]} blockedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
        */
+
+      class Listener {
+         /////////////
+         // Options //
+         /////////////
+         static TARGET_ONLY = true
+      }
 
       /**
        * Manages event listeners and allows to prioritize them.
-       * One listener could suppress other listeners.
-       * So if two listeners would be executed, and one is suppressed by the other one
+       * One listener could block one or more other listeners.
+       * So if two listeners would be executed, and one is blocked by the other
        * only one is executed. Higher priority of a listener is expresses by
-       * suppression of the one with lower priority.
+       * blocking the one with lower priority.
        */
       const htmlListeners = {
          htmlElements: new WeakMap(),
          uniqueID: 0n,
          bubbleEvent: null,
          captureEvent: null,
-         capturedListeners: null,
-         suppressedListeners: null,
-         processedEvent: null,
-         processedTargets: null,
+         blockedListeners: null,
+         capturedTargets: null,
+         TARGET_ONLY: false,
+         continuePropagation: false,
          onCaptureBind: null,
          onBubbleBind: null,
          error(msg) {
@@ -106,91 +119,119 @@
             if (!this.captureEvent) {
                this.captureEvent = e
                this.bubbleEvent = null
-               this.capturedListeners = new Set()
-               this.suppressedListeners = new Set()
-               this.processedTargets = new WeakSet()
+               this.blockedListeners = new Set()
+               this.capturedTargets = new WeakSet()
+               this.TARGET_ONLY = false
+               this.continuePropagation = true
             }
             else if (e !== this.captureEvent)
                this.error("Internal: Event loop processes two capture events at same time.")
-            if (!this.processedTargets.has(e.currentTarget)) {
-               this.processedTargets.add(e.currentTarget)
+            if (this.capturedTargets.has(e.currentTarget)) {
+               console.warn("Internal: onCapture called with same target more than once.")
+            }
+            else {
+               this.capturedTargets.add(e.currentTarget)
                const listeners = this.get(e.currentTarget,e.type)
                for (const listener of listeners) {
-                  let isSuppressed = this.suppressedListeners.has(listener)
-                  for (const suppressedListener of listener.suppressedListeners) {
-                     this.suppressedListeners.add(suppressedListener)
-                     if (!isSuppressed)
-                        this.capturedListeners.delete(suppressedListener)
+                  for (const blockedListener of listener.blockedListeners) {
+                     this.blockedListeners.add(blockedListener)
                   }
-                  if (!isSuppressed)
-                     this.capturedListeners.add(listener)
+                  if (listener.TARGET_ONLY) {
+                     if (e.target === listener.htmlElem)
+                        this.TARGET_ONLY = true
+                     else
+                        this.blockedListeners.add(listener)
+                  }
                }
             }
-            else
-               console.warn("Internal: onCapture called with same target more than once.")
          },
          onBubble(e) {
             if (!this.bubbleEvent) {
-               if (this.capturedListeners.size === 0)
-                  console.warn("Internal: No event handler found in capture phase.")
                this.bubbleEvent = e
                this.captureEvent = null
-               this.processedTargets = new WeakSet()
             }
             else if (e !== this.bubbleEvent)
                this.error("Internal: Event loop processes two bubble events at same time.")
-            if (  this.capturedListeners.size
-               && !this.processedTargets.has(e.currentTarget)) {
-               this.processedTargets.add(e.currentTarget)
-               const listeners = this.get(e.currentTarget)
+            if (  this.continuePropagation
+               && this.capturedTargets.has(e.currentTarget)
+               && (!this.TARGET_ONLY || e.currentTarget === e.target)) {
+               this.capturedTargets.delete(e.currentTarget)
+               const listeners = this.get(e.currentTarget,e.type)
                for (const listener of listeners) {
-                  if (this.capturedListeners.has(listener)) {
-                     this.capturedListeners.delete(listener)
+                  if (!this.blockedListeners.has(listener)) {
                      listener.eventHandler(e)
+                     if (!this.continuePropagation)
+                        break;
                   }
                }
             }
          },
-         addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
-            if (!this.isListener(htmlElem,eventType,eventHandler)) {
-               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, suppressedListeners }
-               if (!this.isListener(listener.htmlElem,listener.eventType)) {
+         addListener(htmlElem, eventType, eventHandler, options={}) {
+            const blockedListeners = options.blockedListeners || []
+            const TARGET_ONLY = Boolean(options.TARGET_ONLY)
+            const eventTypes = this.htmlElements.get(htmlElem) || {}
+            const map = eventTypes[eventType] || new Map()
+            if (!map.has(eventHandler)) {
+               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, blockedListeners, TARGET_ONLY }
+               if (map.size === 0) {
                   this.onCaptureBind ??= this.onCapture.bind(this)
                   this.onBubbleBind ??= this.onBubble.bind(this)
                   listener.htmlElem.addEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
                   listener.htmlElem.addEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
+                  if (!this.htmlElements.has(htmlElem))
+                     this.htmlElements.set(htmlElem,eventTypes)
+                  eventTypes[eventType] = map
                }
-               this.htmlElements.set(htmlElem,
-                  (this.htmlElements.get(htmlElem) || []).concat(listener)
-               )
+               map.set(eventHandler,listener)
                return listener
             }
          },
          removeListener(listener) {
-            const listeners = this.get(listener.htmlElem)
-            const changedListeners = listeners.filter( entry => entry !== listener )
-            if (listeners.length > changedListeners.length) {
-               this.htmlElements.set(listener.htmlElem,changedListeners)
-               this.capturedListeners?.delete(listener)
-               if (!this.isListener(listener.htmlElem,listener.eventType)) {
+            const eventTypes = this.htmlElements.get(listener.htmlElem)
+            const map = eventTypes && eventTypes[listener.eventType]
+            if (map && map.size > 0) {
+               map.delete(listener.eventHandler)
+               if (map.size === 0) {
                   listener.htmlElem.removeEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
                   listener.htmlElem.removeEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
                }
             }
          },
          stopImmediatePropagation() {
-            this.capturedListeners?.clear()
+            this.continuePropagation = false
          },
+         /**
+          * Returns iterator of all matching listeners.
+          * @param {HTMLElement} htmlElem The HTML element whose listeners are queried.
+          * @param {string=} eventType Optional type of the event the listener must match else listeners with any event type are matched.
+          * @param {(e:Event)=>void} eventHandler Optional event handler function the listener must match else all listeners with any event handler are matched.
+          */
          get(htmlElem, eventType, eventHandler) {
-            const listeners = this.htmlElements.get(htmlElem) || []
-            return eventType || eventHandler
-                  ? listeners.filter( entry =>
-                                    (!eventType || entry.eventType === eventType)
-                                 && (!eventHandler || entry.eventHandler === eventHandler))
-                  : listeners
+            const eventTypes = this.htmlElements.get(htmlElem)
+            if (!eventTypes)
+               return [].values()
+            if (eventType)
+               if (eventHandler)
+                  return eventTypes[eventType] && eventTypes[eventType].get(eventHandler)
+                     ? [eventTypes[eventType].get(eventHandler)].values()
+                     : [].values()
+               else
+                  return (eventTypes[eventType] || []).values()
+            return (function*() {
+               for (const key in eventTypes) {
+                  const map = eventTypes[key]
+                  if (map) {
+                     if (!eventHandler)
+                        yield* map.values()
+                     const listener = map.get(eventHandler)
+                     if (listener)
+                        yield listener
+                  }
+               }
+            })()
          },
          isListener(htmlElem, eventType, eventHandler) {
-            return this.get(htmlElem,eventType,eventHandler).length > 0
+            return !this.get(htmlElem,eventType,eventHandler).next().done
          },
          getListenedElements(rootElem, eventType, eventHandler) {
             const result = []
@@ -203,11 +244,14 @@
             return result
          },
       }
-      function addListener(htmlElem, eventType, eventHandler, ...suppressedListeners) {
-         return htmlListeners.addListener(htmlElem, eventType, eventHandler, ...suppressedListeners)
+      function addListener(htmlElem, eventType, eventHandler, options) {
+         return htmlListeners.addListener(htmlElem, eventType, eventHandler, options)
       }
       function removeListeners(...listeners) {
-         listeners.forEach( listener => htmlListeners.removeListener(listener))
+         listeners.forEach( listener => listener && htmlListeners.removeListener(listener))
+      }
+      function stopImmediatePropagation() {
+         htmlListeners.stopImmediatePropagation()
       }
 
       /**
@@ -317,78 +361,221 @@
          UIupdates.add(callback)
       }
 
+      // implement controller blocking other controller
       class ViewController {
-         // TODO:
-         add() { throw Error("Method 'add' not implemented.") }
-         remove() { throw Error("Method 'remove' not implemented.") }
+         #inhibitedControllers=[]
+         #isActionCallback=true
+         #actionCallback
+         constructor() {
+         }
+         getInhibitedControllers() {
+            return this.#inhibitedControllers
+         }
+         setInhibitedControllers(inhibitedControllers) {
+            this.#inhibitedControllers = inhibitedControllers
+         }
+         get isActionCallback() {
+            return this.#isActionCallback
+         }
+         callAction(e) {
+            if (this.#isActionCallback)
+               this.#actionCallback(e)
+         }
+         inhibitControllers(turnInhibitionOn) {
+            const isActionCallback = !turnInhibitionOn
+            for (const ic of this.#inhibitedControllers) {
+               ic.#isActionCallback = isActionCallback
+            }
+         }
+         getTouchById(touches, id) {
+            for (const t of (touches||[]))
+               if (t.identifier === id)
+                  return t
+         }
+         getStartListenersFrom(controllers) {
+            return controllers.flatMap(bc => bc.startListeners)
+         }
+         removeListeners(listenersArray) {
+            removeListeners(...listenersArray)
+            listenersArray.length = 0
+         }
+         /////////////////////////////
+         // overwritten in subclass //
+         /////////////////////////////
+         get startListeners() {
+            return []
+         }
+         add(htmlElem, actionCallback, ...inhibitedControllers) {
+            this.remove()
+            this.#actionCallback = actionCallback
+            this.setInhibitedControllers(inhibitedControllers)
+            return this
+         }
+         remove() {
+            return this
+         }
       }
 
-      function addMoveController(htmlElem, onMove, ...suppressedListeners) {
-         const onMousedown = (e) => {
-            const touch = (e.targetTouches && e.targetTouches[0])
-            if (touch && e.touches.length !== 1)
-               return
-            const event = touch || e
-            const listeners = []
-            let prevPos = { x:event.pageX, y:event.pageY }
-            e.preventDefault()
+      class MoveController extends ViewController {
+         #startListeners = []
+         #listeners = []
+         #pos
 
-            const onMouseMove = (e) => {
-               const touch = (e.targetTouches && e.targetTouches[0])
-               if (touch && e.touches.length !== 1) {
-                  removeListeners(...listeners)
-                  return
-               }
-               const event = touch || e
-               const pos = { x:event.pageX, y:event.pageY }
-               const movexy = { movex:pos.x-prevPos.x, movey:pos.y-prevPos.y }
-               prevPos = pos
-               onMove(movexy)
+         debug = 0
+
+         constructor(htmlElem, moveCallback, ...inhibitedControllers) {
+            super()
+            return this.add(htmlElem, moveCallback, ...inhibitedControllers)
+         }
+
+         get startListeners() {
+            return this.#startListeners
+         }
+
+         add(htmlElem, moveCallback, ...inhibitedControllers) {
+            super.add(htmlElem, moveCallback, ...inhibitedControllers)
+            this.#startListeners = [
+               addListener(htmlElem,"mousedown",this.onStart.bind(this),{TARGET_ONLY:true}),
+               addListener(htmlElem,"touchstart",this.onStart.bind(this),{TARGET_ONLY:true}),
+            ]
+            return this
+         }
+
+         remove() {
+            if (this.#listeners.length)
+               this.onEnd()
+            if (this.#startListeners.length)
+               this.removeListeners(this.#startListeners)
+            return this
+         }
+
+         extractXY(e) {
+            return { x:e.pageX, y:e.pageY, id:e.identifier }
+         }
+
+         onStart(e) {
+            if (this.debug && e.touches)
+               logError(`${this.debug}: start ${e.targetTouches.length} id:${e.targetTouches.length==1?e.targetTouches[0].identifier:'?'}`)
+            if (this.#listeners.length || (e.touches && e.targetTouches.length !== 1)) {
+               if (e.touches && e.targetTouches.length !== 1)
+                  this.inhibitControllers(false)
+               return
             }
-            const onMouseUp = (e) => {
-               removeListeners(...listeners)
-            }
+            const touch = (e.targetTouches && e.targetTouches[0])
+            this.#pos = this.extractXY(touch || e)
+            e.preventDefault()
             if (touch) {
-               listeners.push(addListener(document,"touchmove",onMouseMove))
-               listeners.push(addListener(document,"touchend",onMouseUp))
+               this.#listeners.push(addListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}))
+               this.#listeners.push(addListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}))
+               this.#listeners.push(addListener(e.target,"touchcancel",this.onEnd.bind(this)))
             }
             else {
-               listeners.push(addListener(document,"mousemove",onMouseMove))
-               listeners.push(addListener(document,"mouseup",onMouseUp))
+               this.#listeners.push(addListener(document,"mousemove",this.onMove.bind(this)))
+               this.#listeners.push(addListener(document,"mouseup",this.onEnd.bind(this)))
             }
+            this.inhibitControllers(true)
          }
-         return [
-            addListener(htmlElem,"mousedown",onMousedown,...suppressedListeners),
-            addListener(htmlElem,"touchstart",onMousedown,...suppressedListeners),
-         ]
-      }
-      function addTouchResizeController(htmlElem, onResize) {
-         const onTouchStart = (e) => {
-            const touches = e.targetTouches
-            if (e.touches.length !== 2 || !touches[0] || !touches[1])
-               return
-            const listeners = []
-            let prevPos = { x:Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
-            e.preventDefault()
 
-            const onTouchMove = (e) => {
-               const touches = e.targetTouches
-               if (e.touches.length !== 2 || !touches[0] || !touches[1]) {
-                  removeListeners(...listeners)
-                  return
-               }
-               const pos = { x: Math.abs(touches[0].pageX - touches[1].pageX), y:Math.abs(touches[0].pageY - touches[1].pageY) }
-               const movexy = { movex:pos.x-prevPos.x, movey:pos.y-prevPos.y }
-               prevPos = pos
-               onResize(movexy)
-            }
-            const onTouchEnd = (e) => {
-               removeListeners(...listeners)
-            }
-            listeners.push(addListener(document,"touchmove",onTouchMove))
-            listeners.push(addListener(document,"touchend",onTouchEnd))
+         onMove(e) {
+            const touch = this.getTouchById(e.touches,this.#pos.id)
+            if (e.touches && (e.targetTouches.length !== 1 || !touch))
+               return
+            if (this.debug && e.touches)
+               logError(`${this.debug}: move ${e.targetTouches.length} id:${e.targetTouches[0].identifier} id2:${touch.identifier}`)
+            e.preventDefault()
+            const pos = this.extractXY(touch || e)
+            const deltaxy = { dx:pos.x-this.#pos.x, dy:pos.y-this.#pos.y }
+            this.#pos = pos
+            this.callAction(deltaxy)
          }
-         return [ addListener(htmlElem,"touchstart",onTouchStart) ]
+
+         onEnd(e) {
+            if (this.debug && e?.type === "touchcancel")
+               logError(`${this.debug}: cancel ${e?.touches?.length} ${e?.targetTouches?.length}`)
+            if (e?.targetTouches?.length > 0) {
+               this.#pos = this.extractXY(e.targetTouches[0])
+               if (e.targetTouches.length === 1)
+                  this.inhibitControllers(true)
+               return
+            }
+            e.preventDefault()
+            this.removeListeners(this.#listeners)
+            this.inhibitControllers(false)
+         }
+      }
+
+      class TouchResizeController extends ViewController {
+         #startListeners = []
+         #listeners = []
+         #pos
+
+         constructor(htmlElem, moveCallback, ...inhibitedControllers) {
+            super()
+            return this.add(htmlElem, moveCallback, ...inhibitedControllers)
+         }
+
+         get startListeners() {
+            return this.#startListeners
+         }
+
+         add(htmlElem, resizeCallback, ...inhibitedControllers) {
+            super.add(htmlElem, resizeCallback, ...inhibitedControllers)
+            this.#startListeners = [
+               addListener(htmlElem,"touchstart",this.onStart.bind(this)),
+            ]
+            return this
+         }
+
+         remove() {
+            if (this.#listeners.length)
+               this.onEnd()
+            if (this.#startListeners.length)
+               this.removeListeners(this.#startListeners)
+            return this
+         }
+
+         extractXY(e1,e2) {
+            return { x:Math.abs(e1.pageX - e2.pageX), y:Math.abs(e1.pageY - e2.pageY) }
+         }
+
+         onStart(e) {
+            if (this.#listeners.length || e.targetTouches?.length !== 2) {
+               if (e.touches && e.targetTouches.length !== 2)
+                  this.inhibitControllers(false)
+               return
+            }
+            this.#pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
+            e.preventDefault()
+            this.#listeners.push(addListener(e.target,"touchmove",this.onMove.bind(this)))
+            this.#listeners.push(addListener(e.target,"touchend",this.onEnd.bind(this)))
+            this.#listeners.push(addListener(e.target,"touchcancel",this.onEnd.bind(this)))
+            this.inhibitControllers(true)
+         }
+
+         onMove(e) {
+            if (e.targetTouches.length !== 2)
+               return
+            e.preventDefault()
+            const pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
+            const deltaxy = { dx:pos.x-this.#pos.x, dy:pos.y-this.#pos.y }
+            this.#pos = pos
+            this.callAction(deltaxy)
+         }
+
+         onEnd(e) {
+            if (e?.targetTouches?.length >= 2) {
+               if (this.debug)
+                  logError(`${this.debug}: end continue ${e.targetTouches.length} id:${e.targetTouches[0].identifier} ${e.targetTouches[1].identifier}`)
+               if (e.targetTouches.length === 2)
+                  this.inhibitControllers(true)
+               this.#pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
+               return
+            }
+            if (this.debug)
+               logError(`${this.debug}: end ${e?.targetTouches?.length}`)
+            this.removeListeners(this.#listeners)
+            this.inhibitControllers(false)
+         }
       }
 
       function setStyles(htmlElem, styles) {
@@ -402,11 +589,9 @@
       }
 
       function ResizeDecorator(htmlElem, viewModel) {
-         const display =
-            (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
-            ? "initial"
-            : "none"
-         const outerWidth = 6
+         const isMoveable = (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
+         const display = isMoveable ? "initial" : "none"
+         const outerWidth = 8
          const innerWidth = 4
          const borderSize = (outerWidth+innerWidth)+"px"
          const outerSize = "-"+outerWidth+"px"
@@ -422,28 +607,31 @@
             newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
          ]
          htmlElem.append(...borders)
-         if (display !== "none") {
-            const moveListeners = addMoveController(htmlElem,viewModel.on.move)
-            const topListeners = addMoveController(borders[0],viewModel.on.resizeTop,...moveListeners)
-            const rightListeners = addMoveController(borders[1],viewModel.on.resizeRight,...moveListeners)
-            const bottomListeners = addMoveController(borders[2],viewModel.on.resizeBottom,...moveListeners)
-            const leftListeners = addMoveController(borders[3],viewModel.on.resizeLeft,...moveListeners)
-            addMoveController(borders[4],viewModel.on.resizeTopLeft,...moveListeners,...topListeners,...leftListeners)
-            addMoveController(borders[5],viewModel.on.resizeTopRight,...moveListeners,...topListeners,...rightListeners)
-            addMoveController(borders[6],viewModel.on.resizeBottomRight,...moveListeners,...bottomListeners,...rightListeners)
-            addMoveController(borders[7],viewModel.on.resizeBottomLeft,...moveListeners,...bottomListeners,...leftListeners)
-            addTouchResizeController(htmlElem,viewModel.on.resize)
+         if (isMoveable) {
+            // TODO: add inhibit controller -> suppresses action but does not block events !!!
+            const moveWin = new MoveController(htmlElem,viewModel.on.move)
+            moveWin.debug = "movewin"
+            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.resize)
+            resizeWin.debug = "resizewin"
+            const topResize = new MoveController(borders[0],viewModel.on.resizeTop,moveWin,resizeWin)
+            const rightResize = new MoveController(borders[1],viewModel.on.resizeRight,moveWin,resizeWin)
+            const bottomResize = new MoveController(borders[2],viewModel.on.resizeBottom,moveWin,resizeWin)
+            const leftResize = new MoveController(borders[3],viewModel.on.resizeLeft,moveWin,resizeWin)
+            new MoveController(borders[4],viewModel.on.resizeTopLeft,moveWin,resizeWin,topResize,leftResize)
+            new MoveController(borders[5],viewModel.on.resizeTopRight,moveWin,resizeWin,topResize,rightResize)
+            new MoveController(borders[6],viewModel.on.resizeBottomRight,moveWin,resizeWin,bottomResize,rightResize)
+            new MoveController(borders[7],viewModel.on.resizeBottomLeft,moveWin,resizeWin,bottomResize,leftResize)
             setStyles(htmlElem,{ cursor:"move" })
          }
          else {
-            const rightListeners = addMoveController(borders[1],viewModel.on.resizeRight)
-            const bottomListeners = addMoveController(borders[2],viewModel.on.resizeBottom)
-            addMoveController(borders[6],viewModel.on.resizeBottomRight,...bottomListeners,...rightListeners)
-            addTouchResizeController(htmlElem,viewModel.on.resizeStatic)
+            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.resizeStatic)
+            const rightResize = new MoveController(borders[1],viewModel.on.resizeRight, resizeWin)
+            const bottomResize = new MoveController(borders[2],viewModel.on.resizeBottom, resizeWin)
+            new MoveController(borders[6],viewModel.on.resizeBottomRight,bottomResize,rightResize)
          }
          setStyles(htmlElem,{ contain: "size layout" })
 
-         return { borders }
+         return { borders, /* TODO: store controllers */ }
       }
       /**
        * Model which is bound to a single view and manages its state.
@@ -672,18 +860,17 @@
 
          // event handler starts with on
 
-         onMove(e) { this.move(e.movex,e.movey) }
-         onResizeTop(e) { this.resizeTop(-e.movey) }
-         onResizeRight(e) { this.resizeRight(e.movex) }
-         onResizeBottom(e) { this.resizeBottom(e.movey) }
-         onResizeLeft(e) { this.resizeLeft(-e.movex) }
-         onResizeTopLeft(e) { this.resizeLeft(-e.movex); this.resizeTop(-e.movey); }
-         onResizeTopRight(e) { this.resizeRight(e.movex); this.resizeTop(-e.movey); }
-         onResizeBottomRight(e) { this.resizeRight(e.movex); this.resizeBottom(e.movey); }
-         onResizeBottomLeft(e) { this.resizeLeft(-e.movex); this.resizeBottom(e.movey); }
-         onResize(e) { this.resize(e.movex,e.movey) }
-         onResizeStatic(e) { this.resizeStatic(e.movex,e.movey) }
-
+         onMove(e) { this.move(e.dx,e.dy) }
+         onResizeTop(e) { this.resizeTop(-e.dy) }
+         onResizeRight(e) { this.resizeRight(e.dx) }
+         onResizeBottom(e) { this.resizeBottom(e.dy) }
+         onResizeLeft(e) { this.resizeLeft(-e.dx) }
+         onResizeTopLeft(e) { this.resizeLeft(-e.dx); this.resizeTop(-e.dy); }
+         onResizeTopRight(e) { this.resizeRight(e.dx); this.resizeTop(-e.dy); }
+         onResizeBottomRight(e) { this.resizeRight(e.dx); this.resizeBottom(e.dy); }
+         onResizeBottomLeft(e) { this.resizeLeft(-e.dx); this.resizeBottom(e.dy); }
+         onResize(e) { this.resize(e.dx,e.dy) }
+         onResizeStatic(e) { this.resizeStatic(e.dx,e.dy) }
       }
 
       decorateElement(div1, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()

@@ -4,10 +4,78 @@
    <meta charset="UTF-8">
    <meta name="viewport" content="width=device-width, initial-scale=1.0">
    <title>Test Resize</title>
+   <link rel="stylesheet" href="icons/bootstrap-icons.min.css">
    <style>
+      .js-window {
+         --border-color: #333;
+         background-color: black; color: white;
+         border-radius: 12px 12px 0 0; border: 1px var(--border-color) solid;
+         box-sizing: border-box;
+         display: flex; flex-flow: column nowrap; place-items: stretch;
+      }
+      .js-window .js-head {
+         flex: 0 0 auto;
+         display: flex; flex-flow: row nowrap;
+         overflow: hidden;
+         padding: 3px 5px 3px 10px;
+      }
+      .js-window .js-body {
+         flex: 1 1 auto;
+         background-color: lightcoral;
+         border-top: 1px var(--border-color) solid;
+         box-sizing: border-box;
+         overflow: hidden; contain: layout;
+         display: grid; place-items: stretch;
+      }
+      .js-window .js-head .js-controls {
+         flex: 0 0 auto; align-self: center; order: 2;
+      }
+      .js-window .js-head .js-title {
+         flex: 1 1 auto; align-self: center; order: 1;
+         box-sizing: border-box;
+         max-width: calc(100% - 3 * (1.5em + 2 * 3px)); overflow: hidden;
+         white-space: nowrap;
+      }
+      .js-controls .js-min, .js-controls .js-max, .js-controls .js-close {
+         margin-left: 0.5em; padding: 2px 3px;
+         box-sizing: border-box;
+         width: 1em;
+      }
+      .js-controls .js-min:hover, .js-controls .js-max:hover, .js-controls .js-close:hover {
+         padding-left: 4px; padding-right: 2px;
+         background-color: lightslategray;
+      }
+      .js-controls .js-close:hover {
+         background-color: lightcoral;
+      }
+
+      .js-window-stack {
+         border: 1px darkgrey solid; background-color: lemonchiffon;
+         padding: 3px;
+         position: fixed; left: 5px; bottom: 5px;
+         display: grid; grid-gap: 5px;
+      }
+      .js-window-stack .js-window .js-body {
+         display: none;
+      }
+      .js-window-stack .js-window .js-title:hover {
+         background-color: lightslategray;
+         cursor: pointer;
+      }
+
    </style>
 </head>
 <body>
+   <TEMPLATE id="js-window-template">
+      <div class="js-window" style="width:12em; top: 100px; left: 500px; position: fixed;">
+         <div class="js-head">
+            <div class="js-title" data-marker="move" data-slot="window-title"></div>
+            <div class="js-controls"><i class="bi-dash-lg js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+         </div>
+         <div class="js-body" data-slot="window-child"></div>
+      </div>
+   </TEMPLATE>
+
    <h3>Test Move & Resize Divs</h3>
    <div id="LOG"></div>
    <dl>
@@ -24,13 +92,12 @@
       <dd>
          <ul>
             <li>Window decorations</li>
-            <li>All things Model and Data-Binding to View-Model</li>
-            <li>Data types for model properties</li>
+            <li>All things Model (i.e. type validation)</li>
          </ul>
       </dd>
    </dl>
 
-   <div id=window style="width:150px;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box">
+   <div id=window style="min-width:150px;min-height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box">
       Resize div<br>(static)
    </div>
 
@@ -38,8 +105,33 @@
       Move or resize div<br>(absolute)
    </div>
 
-   <div id=window3 style="position:fixed;left:300px;top:230px;width:150px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
+   <div id=window3 style="position:fixed;left:300px;top:230px;width:200px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
       Move or resize div<br>(fixed)
+   </div>
+
+   <div id="window4" class="js-window" style="width:250px; height:250px; background-color:black; border-radius: 10px 10px 0 0; color:white; box-sizing:border-box;">
+      <div class="js-head">
+         <div class="js-controls"><i class="bi-dash-lg js-min";></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+         <div class="js-title">Fixed Win</div>
+      </div>
+      <div style="background-color:white; margin: 1px;">sss</div>
+   </div>
+
+   <div class="js-window-stack">
+      <div class="js-window" style="width:13em; background-color:black; border-radius: 10px 10px 0 0; color:white;">
+         <div class="js-head">
+            <div class="js-controls"><i class="bi-arrow-up js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+            <div class="js-title">Fixed Win</div>
+         </div>
+         <div class="js-body" style="background-color:white; margin: 1px;">sss</div>
+      </div>
+      <div class="js-window" style="width:13em; background-color:black; border-radius: 10px 10px 0 0; color:white;">
+         <div class="js-head">
+            <div class="js-controls"><i class="bi-arrow-up js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+            <div class="js-title">Other Win</div>
+         </div>
+         <div class="js-body" style="background-color:red; margin: 1px;">sss</div>
+      </div>
    </div>
 
    <div style="height:1000px;"></div>
@@ -59,6 +151,7 @@
          }
          document.getElementById("LOG").innerHTML = logLines + " " + msg + "<br>" + append
       }
+      window.addEventListener("error", (e) => logError("line "+e.lineno+":"+e.message))
 
       /**
        * Function which decorates the provided HTML element with additional functionality
@@ -80,11 +173,12 @@
 
       /** Description fo added listener to an HTML element.
        * @typedef {object} AddedListener
-       * @property {(e:Event)=>void} eventHandler - Registered callback which handles event type for an html element.
-       * @property {string} eventType - The event type ("click","touchstart",...).
        * @property {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
+       * @property {string} eventType - The event type ("click","touchstart",...).
+       * @property {(e:Event)=>void} eventHandler - Registered callback which handles event type for an html element.
        * @property {bigint} ID - Unique number which identifies the added event listener.
        * @property {AddedListener[]} blockedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
+       * @property {boolean} TARGET_ONLY - If set to true all other event handlers not registered for this target (capture / bubbling phase) are ignored.
        */
 
       class Listener {
@@ -109,7 +203,6 @@
          blockedListeners: null,
          capturedTargets: null,
          TARGET_ONLY: false,
-         continuePropagation: false,
          onCaptureBind: null,
          onBubbleBind: null,
          error(msg) {
@@ -122,7 +215,6 @@
                this.blockedListeners = new Set()
                this.capturedTargets = new WeakSet()
                this.TARGET_ONLY = false
-               this.continuePropagation = true
             }
             else if (e !== this.captureEvent)
                this.error("Internal: Event loop processes two capture events at same time.")
@@ -152,16 +244,13 @@
             }
             else if (e !== this.bubbleEvent)
                this.error("Internal: Event loop processes two bubble events at same time.")
-            if (  this.continuePropagation
-               && this.capturedTargets.has(e.currentTarget)
+            if (  this.capturedTargets.has(e.currentTarget)
                && (!this.TARGET_ONLY || e.currentTarget === e.target)) {
                this.capturedTargets.delete(e.currentTarget)
                const listeners = this.get(e.currentTarget,e.type)
                for (const listener of listeners) {
                   if (!this.blockedListeners.has(listener)) {
                      listener.eventHandler(e)
-                     if (!this.continuePropagation)
-                        break;
                   }
                }
             }
@@ -196,9 +285,6 @@
                   listener.htmlElem.removeEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
                }
             }
-         },
-         stopImmediatePropagation() {
-            this.continuePropagation = false
          },
          /**
           * Returns iterator of all matching listeners.
@@ -247,11 +333,8 @@
       function addListener(htmlElem, eventType, eventHandler, options) {
          return htmlListeners.addListener(htmlElem, eventType, eventHandler, options)
       }
-      function removeListeners(...listeners) {
-         listeners.forEach( listener => listener && htmlListeners.removeListener(listener))
-      }
-      function stopImmediatePropagation() {
-         htmlListeners.stopImmediatePropagation()
+      function removeListeners(listenerArray) {
+         listenerArray.forEach( listener => listener && htmlListeners.removeListener(listener))
       }
 
       /**
@@ -278,8 +361,6 @@
                this.htmlElements.set(htmlElem,
                   (this.htmlElements.get(htmlElem) || []).concat(newDecorator)
                )
-               if (!viewModel.isBound())
-                  viewModel.bindView(htmlElem)
                return newDecorator
             }
          },
@@ -363,28 +444,38 @@
 
       // implement controller blocking other controller
       class ViewController {
+         #isActive=false
+         #listeners=[]
+         #activeListeners=[]
          #inhibitedControllers=[]
-         #isActionCallback=true
+         #otherControllersInhibited=false
+         #inhibitedCount=0
          #actionCallback
          constructor() {
          }
          getInhibitedControllers() {
             return this.#inhibitedControllers
          }
-         setInhibitedControllers(inhibitedControllers) {
-            this.#inhibitedControllers = inhibitedControllers
+         get actionCallback() {
+            return this.#actionCallback
          }
-         get isActionCallback() {
-            return this.#isActionCallback
+         get isActive() {
+            return this.#isActive
+         }
+         get isInhibited() {
+            return this.#inhibitedCount > 0
          }
          callAction(e) {
-            if (this.#isActionCallback)
+            if (!this.isInhibited && this.#actionCallback)
                this.#actionCallback(e)
          }
          inhibitControllers(turnInhibitionOn) {
-            const isActionCallback = !turnInhibitionOn
-            for (const ic of this.#inhibitedControllers) {
-               ic.#isActionCallback = isActionCallback
+            if (this.#otherControllersInhibited != turnInhibitionOn) {
+               this.#otherControllersInhibited = turnInhibitionOn
+               const countDelta = turnInhibitionOn ? 1 : -1
+               for (const ic of this.#inhibitedControllers) {
+                  ic.#inhibitedCount += countDelta
+               }
             }
          }
          getTouchById(touches, id) {
@@ -392,34 +483,49 @@
                if (t.identifier === id)
                   return t
          }
-         getStartListenersFrom(controllers) {
-            return controllers.flatMap(bc => bc.startListeners)
-         }
          removeListeners(listenersArray) {
-            removeListeners(...listenersArray)
+            removeListeners(listenersArray)
             listenersArray.length = 0
+         }
+         deactivate() {
+            if (this.#isActive) {
+               this.#isActive = false
+               this.removeListeners(this.#activeListeners)
+               this.inhibitControllers(false)
+            }
+         }
+         activate(addListenersCallback) {
+            if (!this.#isActive) {
+               this.#isActive = true
+               this.#activeListeners = addListenersCallback?.() || []
+               this.inhibitControllers(true)
+            }
          }
          /////////////////////////////
          // overwritten in subclass //
          /////////////////////////////
-         get startListeners() {
-            return []
-         }
          add(htmlElem, actionCallback, ...inhibitedControllers) {
             this.remove()
             this.#actionCallback = actionCallback
-            this.setInhibitedControllers(inhibitedControllers)
+            this.#inhibitedControllers = inhibitedControllers
             return this
          }
+         addListener(htmlElem, eventType, eventHandler, options) {
+            this.#listeners.push(addListener(htmlElem, eventType, eventHandler, options))
+         }
          remove() {
+            this.deactivate()
+            this.removeListeners(this.#listeners)
+            this.#actionCallback = null
+            this.#inhibitedControllers = []
             return this
          }
       }
 
       class MoveController extends ViewController {
-         #startListeners = []
-         #listeners = []
          #pos
+         #totalxy
+         #truncxy
 
          debug = 0
 
@@ -428,24 +534,10 @@
             return this.add(htmlElem, moveCallback, ...inhibitedControllers)
          }
 
-         get startListeners() {
-            return this.#startListeners
-         }
-
          add(htmlElem, moveCallback, ...inhibitedControllers) {
             super.add(htmlElem, moveCallback, ...inhibitedControllers)
-            this.#startListeners = [
-               addListener(htmlElem,"mousedown",this.onStart.bind(this),{TARGET_ONLY:true}),
-               addListener(htmlElem,"touchstart",this.onStart.bind(this),{TARGET_ONLY:true}),
-            ]
-            return this
-         }
-
-         remove() {
-            if (this.#listeners.length)
-               this.onEnd()
-            if (this.#startListeners.length)
-               this.removeListeners(this.#startListeners)
+            this.addListener(htmlElem,"mousedown",this.onStart.bind(this),{TARGET_ONLY:true})
+            this.addListener(htmlElem,"touchstart",this.onStart.bind(this),{TARGET_ONLY:true})
             return this
          }
 
@@ -455,82 +547,62 @@
 
          onStart(e) {
             if (this.debug && e.touches)
-               logError(`${this.debug}: start ${e.targetTouches.length} id:${e.targetTouches.length==1?e.targetTouches[0].identifier:'?'}`)
-            if (this.#listeners.length || (e.touches && e.targetTouches.length !== 1)) {
-               if (e.touches && e.targetTouches.length !== 1)
-                  this.inhibitControllers(false)
+               logError(`${this.debug}: start ${e.targetTouches.length} id:${e.targetTouches[0].identifier}`)
+            if (this.isActive || (e.touches && e.targetTouches.length !== 1)) {
                return
             }
             const touch = (e.targetTouches && e.targetTouches[0])
             this.#pos = this.extractXY(touch || e)
+            this.#totalxy = { x:0, y:0 }
+            this.#truncxy = { x:0, y:0 }
             e.preventDefault()
-            if (touch) {
-               this.#listeners.push(addListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}))
-               this.#listeners.push(addListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}))
-               this.#listeners.push(addListener(e.target,"touchcancel",this.onEnd.bind(this)))
-            }
-            else {
-               this.#listeners.push(addListener(document,"mousemove",this.onMove.bind(this)))
-               this.#listeners.push(addListener(document,"mouseup",this.onEnd.bind(this)))
-            }
-            this.inhibitControllers(true)
+            this.activate( () => touch
+                  ?  [  addListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}),
+                        addListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}),
+                        addListener(e.target,"touchcancel",this.onEnd.bind(this)) ]
+                  :  [  addListener(document,"mousemove",this.onMove.bind(this)),
+                        addListener(document,"mouseup",this.onEnd.bind(this)) ])
          }
 
          onMove(e) {
-            const touch = this.getTouchById(e.touches,this.#pos.id)
-            if (e.touches && (e.targetTouches.length !== 1 || !touch))
+            if (e.touches && e.targetTouches.length !== 1)
                return
-            if (this.debug && e.touches)
-               logError(`${this.debug}: move ${e.targetTouches.length} id:${e.targetTouches[0].identifier} id2:${touch.identifier}`)
             e.preventDefault()
+            const touch = e.targetTouches && e.targetTouches[0]
             const pos = this.extractXY(touch || e)
-            const deltaxy = { dx:pos.x-this.#pos.x, dy:pos.y-this.#pos.y }
+            const totalxy = { x:pos.x-this.#pos.x+this.#totalxy.x, y:pos.y-this.#pos.y+this.#totalxy.y }
+            const truncxy = { x:Math.trunc(totalxy.x), y:Math.trunc(totalxy.y) }
+            const movexy = { dx:truncxy.x-this.#truncxy.x, dy:truncxy.y-this.#truncxy.y }
             this.#pos = pos
-            this.callAction(deltaxy)
+            this.#totalxy = totalxy
+            if (movexy.dx || movexy.dy) {
+               this.#truncxy = truncxy
+               this.callAction(movexy)
+            }
          }
 
          onEnd(e) {
-            if (this.debug && e?.type === "touchcancel")
-               logError(`${this.debug}: cancel ${e?.touches?.length} ${e?.targetTouches?.length}`)
             if (e?.targetTouches?.length > 0) {
                this.#pos = this.extractXY(e.targetTouches[0])
-               if (e.targetTouches.length === 1)
-                  this.inhibitControllers(true)
                return
             }
-            e.preventDefault()
-            this.removeListeners(this.#listeners)
-            this.inhibitControllers(false)
+            this.deactivate()
          }
       }
 
       class TouchResizeController extends ViewController {
-         #startListeners = []
-         #listeners = []
          #pos
+         #totalxy
+         #truncxy
 
          constructor(htmlElem, moveCallback, ...inhibitedControllers) {
             super()
             return this.add(htmlElem, moveCallback, ...inhibitedControllers)
          }
 
-         get startListeners() {
-            return this.#startListeners
-         }
-
          add(htmlElem, resizeCallback, ...inhibitedControllers) {
             super.add(htmlElem, resizeCallback, ...inhibitedControllers)
-            this.#startListeners = [
-               addListener(htmlElem,"touchstart",this.onStart.bind(this)),
-            ]
-            return this
-         }
-
-         remove() {
-            if (this.#listeners.length)
-               this.onEnd()
-            if (this.#startListeners.length)
-               this.removeListeners(this.#startListeners)
+            this.addListener(htmlElem,"touchstart",this.onStart.bind(this))
             return this
          }
 
@@ -539,17 +611,17 @@
          }
 
          onStart(e) {
-            if (this.#listeners.length || e.targetTouches?.length !== 2) {
-               if (e.touches && e.targetTouches.length !== 2)
-                  this.inhibitControllers(false)
+            if (this.isActive || e.targetTouches?.length !== 2) {
                return
             }
             this.#pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
+            this.#totalxy = { x:0, y:0 }
+            this.#truncxy = { x:0, y:0 }
             e.preventDefault()
-            this.#listeners.push(addListener(e.target,"touchmove",this.onMove.bind(this)))
-            this.#listeners.push(addListener(e.target,"touchend",this.onEnd.bind(this)))
-            this.#listeners.push(addListener(e.target,"touchcancel",this.onEnd.bind(this)))
-            this.inhibitControllers(true)
+            this.activate( () =>
+               [  addListener(e.target,"touchmove",this.onMove.bind(this)),
+                  addListener(e.target,"touchend",this.onEnd.bind(this)),
+                  addListener(e.target,"touchcancel",this.onEnd.bind(this)) ])
          }
 
          onMove(e) {
@@ -557,24 +629,23 @@
                return
             e.preventDefault()
             const pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
-            const deltaxy = { dx:pos.x-this.#pos.x, dy:pos.y-this.#pos.y }
+            const totalxy = { x:pos.x-this.#pos.x+this.#totalxy.x, y:pos.y-this.#pos.y+this.#totalxy.y }
+            const truncxy = { x:Math.trunc(totalxy.x), y:Math.trunc(totalxy.y) }
+            const resizexy = { dx:truncxy.x-this.#truncxy.x, dy:truncxy.y-this.#truncxy.y }
             this.#pos = pos
-            this.callAction(deltaxy)
+            this.#totalxy = totalxy
+            if (resizexy.dx || resizexy.dy) {
+               this.#truncxy = truncxy
+               this.callAction(resizexy)
+            }
          }
 
          onEnd(e) {
             if (e?.targetTouches?.length >= 2) {
-               if (this.debug)
-                  logError(`${this.debug}: end continue ${e.targetTouches.length} id:${e.targetTouches[0].identifier} ${e.targetTouches[1].identifier}`)
-               if (e.targetTouches.length === 2)
-                  this.inhibitControllers(true)
                this.#pos = this.extractXY(e.targetTouches[0],e.targetTouches[1])
                return
             }
-            if (this.debug)
-               logError(`${this.debug}: end ${e?.targetTouches?.length}`)
-            this.removeListeners(this.#listeners)
-            this.inhibitControllers(false)
+            this.deactivate()
          }
       }
 
@@ -607,89 +678,79 @@
             newDiv({bottom:outerSize, left:outerSize, width:edgeSize, height:edgeSize, cursor:"sw-resize", position:"absolute", "z-index":1, display}),
          ]
          htmlElem.append(...borders)
+         const controllers = {}
          if (isMoveable) {
-            // TODO: add inhibit controller -> suppresses action but does not block events !!!
-            const moveWin = new MoveController(htmlElem,viewModel.on.move)
-            moveWin.debug = "movewin"
-            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.resize)
+            const moveMarkers = viewModel.getMarkers("move")
+            const moveWin = (moveMarkers.length === 0 ? [ htmlElem ] : moveMarkers)
+                            .map( node => (setStyles(node,{cursor: "move"}), new MoveController(node,viewModel.on.Move)))
+            moveWin[0].debug = "movewin"
+            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.Resize)
             resizeWin.debug = "resizewin"
-            const topResize = new MoveController(borders[0],viewModel.on.resizeTop,moveWin,resizeWin)
-            const rightResize = new MoveController(borders[1],viewModel.on.resizeRight,moveWin,resizeWin)
-            const bottomResize = new MoveController(borders[2],viewModel.on.resizeBottom,moveWin,resizeWin)
-            const leftResize = new MoveController(borders[3],viewModel.on.resizeLeft,moveWin,resizeWin)
-            new MoveController(borders[4],viewModel.on.resizeTopLeft,moveWin,resizeWin,topResize,leftResize)
-            new MoveController(borders[5],viewModel.on.resizeTopRight,moveWin,resizeWin,topResize,rightResize)
-            new MoveController(borders[6],viewModel.on.resizeBottomRight,moveWin,resizeWin,bottomResize,rightResize)
-            new MoveController(borders[7],viewModel.on.resizeBottomLeft,moveWin,resizeWin,bottomResize,leftResize)
-            setStyles(htmlElem,{ cursor:"move" })
+            const topResize = new MoveController(borders[0],viewModel.on.ResizeTop,...moveWin,resizeWin)
+            const rightResize = new MoveController(borders[1],viewModel.on.ResizeRight,...moveWin,resizeWin)
+            const bottomResize = new MoveController(borders[2],viewModel.on.ResizeBottom,...moveWin,resizeWin)
+            const leftResize = new MoveController(borders[3],viewModel.on.ResizeLeft,...moveWin,resizeWin)
+            const topLeftResize = new MoveController(borders[4],viewModel.on.ResizeTopLeft,...moveWin,resizeWin,topResize,leftResize)
+            const topRightResize = new MoveController(borders[5],viewModel.on.ResizeTopRight,...moveWin,resizeWin,topResize,rightResize)
+            const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,...moveWin,resizeWin,bottomResize,rightResize)
+            const bottomLeftResize = new MoveController(borders[7],viewModel.on.ResizeBottomLeft,...moveWin,resizeWin,bottomResize,leftResize)
+            Object.assign(controllers, { moveWin, resizeWin, topResize, rightResize, bottomResize, leftResize, topLeftResize, topRightResize, bottomRightResize, bottomLeftResize })
          }
          else {
-            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.resizeStatic)
-            const rightResize = new MoveController(borders[1],viewModel.on.resizeRight, resizeWin)
-            const bottomResize = new MoveController(borders[2],viewModel.on.resizeBottom, resizeWin)
-            new MoveController(borders[6],viewModel.on.resizeBottomRight,bottomResize,rightResize)
+            const resizeWin = new TouchResizeController(htmlElem,viewModel.on.ResizeStatic)
+            const rightResize = new MoveController(borders[1],viewModel.on.ResizeRight, resizeWin)
+            const bottomResize = new MoveController(borders[2],viewModel.on.ResizeBottom, resizeWin)
+            const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,bottomResize,rightResize)
+            Object.assign(controllers, { resizeWin, rightResize, bottomResize, bottomRightResize })
          }
-         setStyles(htmlElem,{ contain: "size layout" })
+         setStyles(htmlElem,{ contain: "layout" })
 
-         return { borders, /* TODO: store controllers */ }
+         return { borders, controllers }
+      }
+      class ViewModelValues {
+         #htmlElem
+         constructor(htmlElem) {
+            this.#htmlElem = htmlElem
+         }
+         get htmlElem() {
+            return this.#htmlElem
+         }
       }
       /**
        * Model which is bound to a single view and manages its state.
        */
       class ViewModel {
          #modelName
-         #properties = {}
-         #proxy
-         #proxyKeepView
+         #htmlElem
+         #values
          #on = {}
-         constructor(modelName) {
+         constructor(htmlElem, modelName) {
+            this.#htmlElem = htmlElem
             this.#modelName = modelName
-            this.#proxy = new Proxy(this, {
-               get(target, p) {
-                  return target.getValue(p)
-               },
-               set(target, p, value) {
-                  return target.setValue(p, value), true
-               }
-            })
-            this.#proxyKeepView = new Proxy(this, {
-               get(target, p) {
-                  return target.getValue(p)
-               },
-               set(target, p, value) {
-                  return target.setValueKeepView(p, value), true
-               }
-            })
+            this.#values = new ViewModelValues(htmlElem)
          }
          error(msg) {
-            throw Error(`ViewModel-${this.#modelName} error: ${msg}`)
+            throw Error(`${this.#modelName}-View-Model error: ${msg}`)
          }
-         isProperty(name) {
-            return (name in this.#properties)
+         isValue(name) {
+            return (name in this.#values)
          }
          isEventHandler(name) {
             return (name in this.#on)
          }
          get values() {
-            return this.#proxy
-         }
-         get valuesKeepView() {
-            return this.#proxyKeepView
+            return this.#values
          }
          get on() {
             return this.#on
          }
-         /**
-          * Adds new property to view model wuth default value and data Accessor mechanism.
-          *
-          * @param {string} name Name of view model property.
-          * @param {any} value Start value assigned to property.
-          * @param {ViewValueAccessor} viewvalue Implements accessing a single data value of a HTML view.
-          */
-         addProperty(name, value, viewvalue) {
-            if (this.isProperty(name))
-               this.error(`Can not add property ${String(name)} twice.`)
-            this.#properties[name] = { name, value, viewvalue, htmlElem:null }
+         defineValues(valuesObject) {
+            const propertyDescriptors = Object.getOwnPropertyDescriptors(valuesObject)
+            for (const name of Reflect.ownKeys(propertyDescriptors)) {
+               if (this.isValue())
+                  this.error(`Can not define view-model value ${String(name)} twice.`)
+            }
+            Object.defineProperties(this.#values, propertyDescriptors)
          }
          bindEventHandler(name, eventHandler, thisValue=null) {
             if (this.isEventHandler(name))
@@ -699,115 +760,27 @@
          bindEventHandlers(prototype) {
             for (const name of Reflect.ownKeys(prototype))
                if (String(name).startsWith("on"))
-                  this.bindEventHandler(name.substring(2,3).toLowerCase()+name.substring(3),prototype[name])
-         }
-         #getProperty(name) {
-            const prop = this.#properties[name]
-            if (!prop)
-               this.error(`Missing property ${String(name)}.`)
-            return prop
-         }
-         #bindView(prop, htmlElem) {
-            if (prop.htmlElem !== htmlElem)
-               return this.#properties[prop.name] = { ...prop, htmlElem }
-            else
-               return prop
-         }
-         #setValueKeepView(prop, value) {
-            if (prop.value !== value)
-               return this.#properties[prop.name] = { ...prop, value }
-            else
-               return prop
-         }
-         #setValue(prop, value) {
-            this.#updateView(this.#setValueKeepView(prop, value))
-         }
-         #updateView(prop) {
-            if (prop.htmlElem) {
-               asyncUIUpdate(
-                  () => prop.viewvalue.set(prop.htmlElem, prop.value)
-               )
-            }
-         }
-         /**
-          * Binds all view model properties to a html view.
-          * To sync values call either {@link ViewModel.setValuesFromView}
-          * or {@link ViewModel.updateView} after this method.
-          *
-          * @param {HTMLElement} htmlElem The default html view all properties are bound to.
-          * @param {{"propName":HTMLElement}=} propNameHtmlElemMap Oprional key value map which overwrites the default html view with a more specific subview.
-          */
-         bindView(htmlElem, propNameHtmlElemMap) {
-            for (const name of Reflect.ownKeys(this.#properties)) {
-               const prop = this.#bindView(this.#getProperty(name), (propNameHtmlElemMap && propNameHtmlElemMap[name]) || htmlElem)
-               if (prop.htmlElem)
-                  prop.viewvalue.bindView(prop.htmlElem)
-            }
-         }
-         /**
-          * Returns true if any property of model is bound to a HTML view.
-          */
-         isBound() {
-            for (const name of Reflect.ownKeys(this.#properties)) {
-               const prop = this.#getProperty(name)
-               if (prop.htmlElem)
-                  return true
-            }
-            return false
-         }
-         /**
-          * Sets every property value to value read from its bound HTML view.
-          * Properties which are not bound (htmlElem == null) are skipped.
-          */
-         setValuesFromView() {
-            for (const name of Reflect.ownKeys(this.#properties))
-               this.setValueFromView(name)
-         }
-         /**
-          * Sets a single property value from to value read from its bound HTML view.
-          * If no view is bound nothing is done.
-          * Call this function from a bound view in case a view value has changed.
-          *
-          * @param {string} name Name of view model property.
-          */
-         setValueFromView(name) {
-            const prop = this.#getProperty(name)
-            if (prop.htmlElem)
-               this.#setValueKeepView(prop, prop.viewvalue.get(prop.htmlElem))
-         }
-         /**
-          * Assigns all property values to the bound HTML view.
-          */
-         updateView() {
-            for (const name of Reflect.ownKeys(this.#properties))
-               this.#updateView(this.#getProperty(name))
-         }
-         getValue(name, value) {
-            return this.#getProperty(name).value
-         }
-         setValue(name, value) {
-            this.#setValue(this.#getProperty(name), value)
-         }
-         /**
-          * Sets a property value without updating the bound HTML view.
-          * Call this function from a view listener in case user has input new value.
-          *
-          * @param {string} name Name of view model property.
-          * @param {any} value Value of HTML view property.
-          */
-         setValueKeepView(name, value) {
-            this.#setValueKeepView(this.#getProperty(name), value)
+                  this.bindEventHandler(name.substring(2),prototype[name])
          }
          getEventHandler(name) {
             return this.#on[name]
          }
+         get htmlElem() {
+            return this.#htmlElem
+         }
+         getMarkers(name) {
+            return [...this.htmlElem.querySelectorAll("[data-marker]")].filter(
+                  node => node.dataset.marker === name
+            )
+         }
       }
 
-      class ViewValueAccessor {
-         bindView(htmlElem) { /* subtype should could overwrite to prepare view (calling needsBorderBox) */ }
-         set(htmlElem, value) { throw Error("Not implemented") }
-         get(htmlElem) { throw Error("Not implemented") }
-         needsBorderBox(htmlElem) {
+      class TemplateVM {
+
+      }
+
+      class HTMLView {
+         static needsBorderBox(htmlElem) {
             const needValue = "border-box"
             const styleProp = "box-sizing"
             const value = getComputedStyle(htmlElem)[styleProp]
@@ -816,34 +789,80 @@
                htmlElem.style.setProperty(styleProp,needValue)
             }
          }
-      }
-      class TopStyleAccessor extends ViewValueAccessor {
-         set(htmlElem, value) { htmlElem.style.top = value+"px" }
-         get(htmlElem) { return htmlElem.offsetTop }
-      }
-      class LeftStyleAccessor extends ViewValueAccessor {
-         set(htmlElem, value) { htmlElem.style.left = value+"px" }
-         get(htmlElem) { return htmlElem.offsetLeft }
-      }
-      class WidthStyleAccessor extends ViewValueAccessor {
-         bindView(htmlElem) { this.needsBorderBox(htmlElem) }
-         set(htmlElem, value) { htmlElem.style.width = value+"px" }
-         get(htmlElem) { return htmlElem.offsetWidth }
-      }
-      class HeightStyleAccessor extends ViewValueAccessor {
-         bindView(htmlElem) { this.needsBorderBox(htmlElem) }
-         set(htmlElem, value) { htmlElem.style.height = value+"px" }
-         get(htmlElem) { return htmlElem.offsetHeight }
+         static isEmptyTextNode(htmlElem) {
+            return !htmlElem || (htmlElem.nodeType === 3/*Node.TEXT_NODE*/ && htmlElem.textContent.trim() === "")
+         }
+         static isDocumentFragment(htmlElem) {
+            return htmlElem && htmlElem.nodeType === 11/*Node.DOCUMENT_FRAGMENT_NODE*/
+         }
+         static selectHtmlElement(htmlElemOrCssSelector) {
+            const htmlElem = typeof htmlElemOrCssSelector === "string"
+                     ? document.querySelector(htmlElemOrCssSelector)
+                     : htmlElemOrCssSelector
+            return (htmlElem?.localName === "template")
+                  ? htmlElem.content.children[0]
+                  : htmlElem
+         }
+         static cloneWindowTemplate(htmlElemOrCssSelector) {
+            const rootNode = this.selectHtmlElement(htmlElemOrCssSelector)
+            if (!rootNode)
+               this.error(`Selector '${String(htmlElemOrCssSelector)}' results in empty window template.`)
+            return rootNode.cloneNode(true)
+         }
+         static getSlots(htmlElem, ...ensuredNames) {
+            const slots = new Map()
+            const nodes = [...htmlElem.querySelectorAll("[data-slot]")]
+            nodes.reduce((map, node) => map.set(node.dataset.slot,node),slots)
+            if (ensuredNames.length)
+               this.ensureSlots(htmlElem, slots, ...ensuredNames)
+            return slots
+         }
+         static ensureSlots(htmlElem, slots, ...names) {
+            for (const name of names)
+               if (!slots.has(name)) {
+                  console.log("HTML of template",htmlElem.innerHTML)
+                  this.error(`Window template has no data-slot='${name}'.`)
+               }
+         }
       }
 
-      class WindowResizeVM extends ViewModel {
-         constructor({top=0, left=0, width=100, height=100}={}) {
-            super("WindowResize")
-            this.addProperty("top", top, new TopStyleAccessor())
-            this.addProperty("left", left, new LeftStyleAccessor())
-            this.addProperty("width", width, new WidthStyleAccessor())
-            this.addProperty("height", height, new HeightStyleAccessor())
-            this.bindEventHandlers(WindowResizeVM.prototype)
+      class ResizeVM extends ViewModel {
+         constructor(htmlElem, modelName) {
+            super(htmlElem, modelName || "Resize")
+            super.defineValues(ResizeVM.values)
+            super.bindEventHandlers(ResizeVM.prototype)
+            HTMLView.needsBorderBox(htmlElem)
+         }
+
+         static values = {
+            set height(value/*number value in pixels*/) {
+               if (value < 0)
+                  value = 0
+               this.htmlElem.style.height = value+"px"
+            },
+            get height() {
+               return this.htmlElem.offsetHeight // in pixel (could be a fraction)
+            },
+            set width(value/*number value in pixels*/) {
+               if (value < 0)
+                  value = 0
+               this.htmlElem.style.width = value+"px"
+            },
+            get width() {
+               return this.htmlElem.offsetWidth // in pixel (could be a fraction)
+            },
+            set top(value/*number value in pixels*/) {
+               this.htmlElem.style.top = value+"px"
+            },
+            get top() {
+               return this.htmlElem.offsetTop // in pixel (could be a fraction)
+            },
+            set left(value/*number value in pixels*/) {
+               this.htmlElem.style.left = value+"px"
+            },
+            get left() {
+               return this.htmlElem.offsetLeft
+            },
          }
 
          move(deltax,deltay) { this.values.left += deltax; this.values.top += deltay; }
@@ -873,13 +892,161 @@
          onResizeStatic(e) { this.resizeStatic(e.dx,e.dy) }
       }
 
-      decorateElement(div1, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
-      decorateElement(div2, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
-      decorateElement(div3, ResizeDecorator, new WindowResizeVM()).viewModel.setValuesFromView()
+      class ViewStyleModel {
+         #htmlElem
+         constructor(htmlElem) {
+            this.#htmlElem = htmlElem
+         }
+         getAvailableStyles() {
+            return getComputedStyles(this.#htmlElem)
+         }
+         getComputedStyles(styles) {
+            const computedStyles = getComputedStyles(this.#htmlElem)
+            const styleValues = {}
+            for (const key in styles) {
+               styleValues[key] = computedStyles[key]
+            }
+            return styleValues
+         }
+         getStyles(styles) {
+            const elemStyle = this.#htmlElem.style
+            const styleValues = {}
+            for (const key in styles) {
+               styleValues[key] = elemStyle.getPropertyValue(key)
+            }
+            return styleValues
+         }
+         setStyles(styles) {
+            const elemStyle = this.#htmlElem.style
+            const prevValues = {}
+            for (const key in styles) {
+               prevValues[key] = elemStyle.getPropertyValue(key)
+               elemStyle.setProperty(key, styles[key])
+            }
+            return prevValues
+         }
+      }
+
+      class TransitionController extends ViewController {
+         constructor(htmlElem, endCallback, ...inhibitedControllers) {
+            super()
+            this.add(htmlElem, endCallback, ...inhibitedControllers)
+         }
+
+         add(htmlElem, endCallback, ...inhibitedControllers) {
+            super.add(htmlElem, endCallback, ...inhibitedControllers)
+            const onEnd = this.onTransitionEnd.bind(this)
+            super.addListener(htmlElem, "transitionend", onEnd)
+            super.addListener(htmlElem, "transitioncancel", onEnd)
+         }
+
+         endIfNoTransition(htmlElem) {
+            asyncUIUpdate( () => {
+               const animations = htmlElem.getAnimations()
+               const hasTransition = animations.some( anim => anim instanceof CSSTransition)
+               if (!hasTransition) {
+                  htmlElem.dispatchEvent(new Event("transitioncancel"))
+               }
+            })
+         }
+
+         onTransitionEnd(e) {
+            super.callAction()
+            this.remove()
+         }
+      }
+
+      const xxx = {
+            htmlElem: null,
+            oldTransitionStyles: {},
+            oldPosStyles: {},
+      }
+
+      function doMinimize(htmlElem) {
+         const windowStack = document.querySelector(".js-window-stack")
+         const top = (windowStack.offsetTop - 0) + "px"
+         xxx.htmlElem = htmlElem
+         xxx.oldTransitionStyles = new ViewStyleModel(htmlElem).setStyles({
+                  "transition-delay":"0s", "transition-duration":".2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out"
+         })
+         xxx.oldPosStyles = new ViewStyleModel(htmlElem).setStyles({
+                  width:"8em", height:"20px", top, left: "5px", overflow: "hidden"
+         })
+      }
+
+      function doRestore() {
+         if (xxx.htmlElem) {
+            const htmlElem = xxx.htmlElem
+            const oldTransitionStyles = xxx.oldTransitionStyles
+            const oldPosStyles = xxx.oldPosStyles
+            xxx.htmlElem = null
+            xxx.oldTransitionStyles = {}
+            xxx.oldPosStyles = {}
+            new ViewStyleModel(htmlElem).setStyles(oldPosStyles)
+            new TransitionController(htmlElem, () => {
+               new ViewStyleModel(htmlElem).setStyles(oldTransitionStyles)
+            }).endIfNoTransition(htmlElem)
+         }
+      }
+
+      function WindowDecorator(htmlElem, viewModel) {
+         const rootNode = viewModel.htmlElem
+         document.body.append(rootNode)
+         viewModel.slotAppend("window-child", htmlElem)
+         decorateElement(rootNode, ResizeDecorator, viewModel)
+
+         // TODO: !! place it somewhere else !!
+
+      }
+
+      class WindowVM extends ResizeVM {
+         #slots
+         constructor(htmlElem, modelName) {
+            super(htmlElem, modelName || "Window")
+            super.defineValues(WindowVM.values)
+            super.bindEventHandlers(WindowVM.prototype)
+            this.#slots = HTMLView.getSlots(htmlElem, "window-title", "window-child")
+         }
+
+         static values = {
+
+         }
+
+         getSlot(name) {
+            const slot = this.#slots.get(name)
+            if (!slot)
+               this.error(`Unknown slot '${String(name)}'.`)
+            return slot
+         }
+
+         slotSetHTML(name, html) {
+            this.getSlot(name).innerHTML = html
+            return this
+         }
+
+         slotAppend(name, node) {
+            this.getSlot(name).append(node)
+            return this
+         }
+
+      }
+
+      /*
+         TODO:
+         Title
+         content - child
+      */
+      decorateElement(div1, WindowDecorator, new WindowVM(HTMLView.cloneWindowTemplate("#js-window-template")))
+         .viewModel.slotSetHTML("window-title", "Hello Title")
+      // decorateElement(div1, ResizeDecorator, new ResizeVM(div1))
+      decorateElement(div2, ResizeDecorator, new ResizeVM(div2))
+      decorateElement(div3, ResizeDecorator, new ResizeVM(div3))
+      decorateElement(window4, ResizeDecorator, new ResizeVM(window4))
       var vm3 = htmlDecorators.getDecoratorViewModel(div3,ResizeDecorator)
-      window.addEventListener("error", (e) => logError("line "+e.lineno+":"+e.message))
 
       console.log(htmlListeners.getListenedElements(document))
+
    </script>
+
 </body>
 </html>

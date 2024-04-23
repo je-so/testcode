@@ -15,13 +15,14 @@
       }
       .js-window .js-head {
          flex: 0 0 auto;
+         box-sizing: border-box;
+         border-bottom: 1px var(--border-color) solid;
          display: flex; flex-flow: row nowrap;
          overflow: hidden;
       }
       .js-window .js-body {
          flex: 1 1 auto;
          background-color: lightcoral;
-         border-top: 1px var(--border-color) solid;
          box-sizing: border-box;
          overflow: hidden; contain: layout;
          display: grid; place-items: stretch;
@@ -37,16 +38,16 @@
          max-width: calc(100% - 3 * (1.5em + 2 * 3px)); overflow: hidden;
          white-space: nowrap;
       }
-      .js-controls .js-min, .js-controls .js-max, .js-controls .js-close {
+      .js-controls [data-vm='min'], .js-controls [data-vm='max'], .js-controls [data-vm='close'] {
          margin-left: 0.5em; padding: 2px 3px;
          box-sizing: border-box;
          width: 1em;
       }
-      .js-controls .js-min:hover, .js-controls .js-max:hover, .js-controls .js-close:hover {
+      .js-controls [data-vm='min']:hover, .js-controls [data-vm='max']:hover, .js-controls [data-vm='close']:hover {
          padding-left: 4px; padding-right: 2px;
          background-color: lightslategray;
       }
-      .js-controls .js-close:hover {
+      .js-controls [data-vm='close']:hover {
          background-color: lightcoral;
       }
 
@@ -54,7 +55,7 @@
          border: 1px darkgrey solid; background-color: lemonchiffon;
          padding: 3px;
          position: fixed; left: 5px; bottom: 5px;
-         display: grid; grid-gap: 5px;
+         display: flex; flex-flow: column-reverse nowrap; place-items: stretch; gap: 5px;
       }
       .js-window-stack .js-window .js-body {
          display: none;
@@ -64,19 +65,38 @@
          cursor: pointer;
       }
 
+      .js-window-stack button {
+         color:white; background-color:cadetblue;
+         border:1px darkgoldenrod solid;
+         padding:3px;
+      }
+
+      .js-window-stack button:hover {
+         color:#fafafa;
+         outline:1px darkgoldenrod solid;
+         padding:4px 2px 2px 4px;
+      }
+
    </style>
 </head>
 <body>
    <template id="js-window-template">
       <div class="js-window">
-         <div class="js-head">
-            <div class="js-title" data-marker="move" data-slot="window-title"></div>
-            <div class="js-controls"><i class="bi-dash-lg js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+         <div class="js-head" data-vm="minimized-height">
+            <div class="js-title" data-vm="window-title"></div>
+            <div class="js-controls"><i data-vm="min" class="bi-dash-lg"></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
          </div>
-         <div class="js-body" data-slot="window-child"></div>
+         <div class="js-body" data-vm="window-child"></div>
       </div>
    </template>
-
+   <template id="js-minimized-window-template">
+      <div class="js-window">
+         <div class="js-head">
+            <div class="js-title" data-vm="window-title"></div>
+            <div class="js-controls"><i data-vm="min" class="bi-arrow-up"></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
+         </div>
+      </div>
+   </template>
    <h3>Test Move & Resize Divs</h3>
    <div id="LOG"></div>
    <dl>
@@ -112,27 +132,14 @@
 
    <div id="window4" class="js-window" style="width:250px; height:250px; background-color:black; border-radius: 10px 10px 0 0; color:white; box-sizing:border-box;">
       <div class="js-head">
-         <div class="js-controls"><i class="bi-dash-lg js-min";></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
+         <div class="js-controls"><i data-vm="min" class="bi-dash-lg";></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
          <div class="js-title">Fixed Win</div>
       </div>
       <div style="background-color:white; margin: 1px;">sss</div>
    </div>
 
    <div class="js-window-stack">
-      <div class="js-window" style="display:block; width:13em; background-color:black; border-radius: 10px 10px 0 0; color:white;">
-         <div class="js-head">
-            <div class="js-controls"><i class="bi-arrow-up js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
-            <div class="js-title">Fixed Win</div>
-         </div>
-         <div class="js-body" style="background-color:white; margin: 1px;">sss</div>
-      </div>
-      <div class="js-window" style="display:block; width:13em; background-color:black; border-radius: 10px 10px 0 0; color:white;">
-         <div class="js-head">
-            <div class="js-controls"><i class="bi-arrow-up js-min"></i><i class="bi-square js-max"></i><i class="bi-x-lg js-close"></i></div>
-            <div class="js-title">Other Win</div>
-         </div>
-         <div class="js-body" style="background-color:red; margin: 1px;">sss</div>
-      </div>
+      <button>Add Mini Win</button>
    </div>
 
    <div style="height:1000px;"></div>
@@ -152,7 +159,11 @@
          }
          document.getElementById("LOG").innerHTML = logLines + " " + msg + "<br>" + append
       }
-      window.addEventListener("error", (e) => logError("line "+e.lineno+":"+e.message))
+      window.addEventListener("error", (e) => {
+         if (e.error?.stack)
+            e.error.stack.toString().split("\n").reverse().forEach(traceLine => traceLine.trim() && logError("&nbsp; "+traceLine))
+         logError(`line ${e.lineno}: ${e.message}`)
+      })
 
       /**
        * Function which decorates the provided HTML element with additional functionality
@@ -178,7 +189,8 @@
        * @property {string} eventType - The event type ("click","touchstart",...).
        * @property {(e:Event)=>void} eventHandler - Registered callback which handles event type for an html element.
        * @property {bigint} ID - Unique number which identifies the added event listener.
-       * @property {AddedListener[]} blockedListeners - An array of listeners which have lower priority and are suppressed if this listeners is also executed.
+       * @property {object|undefined} owner - Owner of the listener (used for blocking).
+       * @property {object[]} blockedOwners - An array of owners of listeners which have lower priority and are suppressed if this listener is processed.
        * @property {boolean} TARGET_ONLY - If set to true all other event handlers not registered for this target (capture / bubbling phase) are ignored.
        */
 
@@ -187,6 +199,59 @@
          // Options //
          /////////////
          static TARGET_ONLY = true
+      }
+
+      /**
+       * Either an HTMLElement or a CSS selector to query for HTMLElement(s).
+       * The name of the variable is abbreviated as htmlElemSel
+       */
+      class HTMLElemSel {
+         #htmlElem
+         #htmlElemSel
+         #clone
+         constructor(htmlElemSel, {CLONE}={}) {
+            if (htmlElemSel instanceof HTMLElemSel) {
+               this.#htmlElem = htmlElemSel.#htmlElem
+               this.#htmlElemSel = htmlElemSel.#htmlElemSel
+               this.#clone = CLONE ?? htmlElemSel.#clone
+            }
+            else {
+               this.#htmlElem = HTMLElemSel.htmlElem(htmlElemSel)
+               this.#htmlElemSel = htmlElemSel
+               this.#clone = Boolean(CLONE)
+            }
+         }
+         get htmlElem() {
+            return this.#clone
+                  ? this.#htmlElem.cloneNode(true)
+                  : this.#htmlElem
+         }
+         get isClone() {
+            return this.#clone
+         }
+         get htmlElemSel() {
+            return this.#htmlElemSel
+         }
+         static error() {
+            throw Error(`HTMLElemSel error: ${msg}`)
+         }
+         static htmlElem(htmlElemSel) {
+            if (typeof htmlElemSel === "string") {
+               const htmlElem = document.querySelector(htmlElemSel)
+               if (!htmlElem)
+                  this.error(`Found no html node matching '${htmlElemSel}'.`)
+               if (htmlElem.localName === "template")
+                  return htmlElem.content.children[0]
+               return htmlElem
+            }
+            else if (htmlElemSel instanceof HTMLElemSel)
+               return htmlElemSel.htmlElem
+            else
+               return htmlElemSel
+         }
+         static clone(htmlElemSel) {
+            return new HTMLElemSel(htmlElemSel,{CLONE:true}).htmlElem
+         }
       }
 
       /**
@@ -201,11 +266,14 @@
          uniqueID: 0n,
          bubbleEvent: null,
          captureEvent: null,
-         blockedListeners: null,
+         blockedOwners: null,
          capturedTargets: null,
+         capturedListeners: null,
+         processedListener: null,
          TARGET_ONLY: false,
          onCaptureBind: null,
          onBubbleBind: null,
+         DEBUG: true,
          error(msg) {
             throw Error(`htmlListener error: ${msg}`)
          },
@@ -213,8 +281,12 @@
             if (!this.captureEvent) {
                this.captureEvent = e
                this.bubbleEvent = null
-               this.blockedListeners = new Set()
+               this.blockedOwners = new Set()
                this.capturedTargets = new WeakSet()
+               if (this.DEBUG) {
+                  this.capturedListeners = new Set()
+                  this.processedListeners = new Set()
+               }
                this.TARGET_ONLY = false
             }
             else if (e !== this.captureEvent)
@@ -226,15 +298,13 @@
                this.capturedTargets.add(e.currentTarget)
                const listeners = this.get(e.currentTarget,e.type)
                for (const listener of listeners) {
-                  for (const blockedListener of listener.blockedListeners) {
-                     this.blockedListeners.add(blockedListener)
+                  for (const owner of listener.blockedOwners) {
+                     this.blockedOwners.add(owner)
                   }
-                  if (listener.TARGET_ONLY) {
-                     if (e.target === listener.htmlElem)
-                        this.TARGET_ONLY = true
-                     else
-                        this.blockedListeners.add(listener)
-                  }
+                  if (listener.TARGET_ONLY && e.target === e.currentTarget)
+                     this.TARGET_ONLY = true
+                  if (this.DEBUG)
+                     this.capturedListeners.add(listener)
                }
             }
          },
@@ -242,27 +312,32 @@
             if (!this.bubbleEvent) {
                this.bubbleEvent = e
                this.captureEvent = null
+               if (this.DEBUG && !this.capturedListeners.size)
+                  console.warn("Internal: capture phase found no listener(s).")
             }
             else if (e !== this.bubbleEvent)
                this.error("Internal: Event loop processes two bubble events at same time.")
             if (  this.capturedTargets.has(e.currentTarget)
                && (!this.TARGET_ONLY || e.currentTarget === e.target)) {
-               this.capturedTargets.delete(e.currentTarget)
                const listeners = this.get(e.currentTarget,e.type)
                for (const listener of listeners) {
-                  if (!this.blockedListeners.has(listener)) {
+                  if (!this.blockedOwners.has(listener.owner)) {
                      listener.eventHandler(e)
+                     if (this.DEBUG)
+                        this.processedListeners.add(listener)
                   }
                }
             }
+            this.capturedTargets.delete(e.currentTarget)
+            if (this.DEBUG && !this.capturedTargets.size && !this.processedListeners.size)
+               console.warn("Internal: bubble phase processed no listener (all blocked).")
          },
-         addListener(htmlElem, eventType, eventHandler, options={}) {
-            const blockedListeners = options.blockedListeners || []
-            const TARGET_ONLY = Boolean(options.TARGET_ONLY)
+         addListener(htmlElem, eventType, eventHandler, {blockedOwners=[], owner, TARGET_ONLY=false}={}) {
             const eventTypes = this.htmlElements.get(htmlElem) || {}
             const map = eventTypes[eventType] || new Map()
             if (!map.has(eventHandler)) {
-               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, blockedListeners, TARGET_ONLY }
+               blockedOwners = blockedOwners.filter(o => o != null)
+               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, owner, blockedOwners, TARGET_ONLY }
                if (map.size === 0) {
                   this.onCaptureBind ??= this.onCapture.bind(this)
                   this.onBubbleBind ??= this.onBubble.bind(this)
@@ -448,14 +523,11 @@
          #isActive=false
          #listeners=[]
          #activeListeners=[]
-         #inhibitedControllers=[]
-         #otherControllersInhibited=false
-         #inhibitedCount=0
+         #blockedControllers=[]
+         #blockingCount = 0
+         #othersBlocked = false
          #actionCallback
          constructor() {
-         }
-         getInhibitedControllers() {
-            return this.#inhibitedControllers
          }
          get actionCallback() {
             return this.#actionCallback
@@ -463,63 +535,88 @@
          get isActive() {
             return this.#isActive
          }
-         get isInhibited() {
-            return this.#inhibitedCount > 0
+         get isBlocked() {
+            return Boolean(this.#blockingCount)
          }
          callAction(e) {
-            if (!this.isInhibited && this.#actionCallback)
+            if (!this.isBlocked && this.#actionCallback)
                this.#actionCallback(e)
-         }
-         inhibitControllers(turnInhibitionOn) {
-            if (this.#otherControllersInhibited != turnInhibitionOn) {
-               this.#otherControllersInhibited = turnInhibitionOn
-               const countDelta = turnInhibitionOn ? 1 : -1
-               for (const ic of this.#inhibitedControllers) {
-                  ic.#inhibitedCount += countDelta
-               }
-            }
-         }
-         getTouchById(touches, id) {
-            for (const t of (touches||[]))
-               if (t.identifier === id)
-                  return t
          }
          removeListeners(listenersArray) {
             removeListeners(listenersArray)
             listenersArray.length = 0
          }
+         blockOthers(switchOn) {
+            if (this.#othersBlocked !== Boolean(switchOn)) {
+               this.#othersBlocked = Boolean(switchOn)
+               if (this.#othersBlocked) {
+                  for (const contr of this.#blockedControllers)
+                     if ((++contr.#blockingCount) == 1)
+                        contr.onBlock()
+               }
+               else {
+                  for (const contr of this.#blockedControllers)
+                     if ((--contr.#blockingCount) == 0)
+                        contr.onUnblock()
+               }
+            }
+         }
          deactivate() {
             if (this.#isActive) {
                this.#isActive = false
                this.removeListeners(this.#activeListeners)
-               this.inhibitControllers(false)
+               this.blockOthers(false)
             }
          }
-         activate(addListenersCallback) {
+         activate(onActivateCallback) {
             if (!this.#isActive) {
                this.#isActive = true
-               this.#activeListeners = addListenersCallback?.() || []
-               this.inhibitControllers(true)
+               this.blockOthers(true)
+               onActivateCallback?.()
             }
+         }
+         #addListener(htmlElem, eventType, eventHandler, options) {
+            return addListener(htmlElem, eventType, eventHandler,
+               { ...options, owner: this, blockedOwners: this.#blockedControllers }
+            )
+         }
+         addListener(htmlElem, eventType, eventHandler, options) {
+            this.#listeners.push(this.#addListener(htmlElem,eventType,eventHandler,options))
+            return this.#listeners.at(-1)
+         }
+         addActiveListener(htmlElem, eventType, eventHandler, options) {
+            this.#activeListeners.push(this.#addListener(htmlElem,eventType,eventHandler,options))
+            return this.#activeListeners.at(-1)
          }
          /////////////////////////////
          // overwritten in subclass //
          /////////////////////////////
-         add(htmlElem, actionCallback, ...inhibitedControllers) {
+         add(htmlElem, actionCallback, ...blockedControllers) {
             this.remove()
             this.#actionCallback = actionCallback
-            this.#inhibitedControllers = inhibitedControllers.filter(c => c != null)
+            this.#blockedControllers = blockedControllers.flat(Infinity).filter(cntrl => cntrl instanceof ViewController)
             return this
-         }
-         addListener(htmlElem, eventType, eventHandler, options) {
-            this.#listeners.push(addListener(htmlElem, eventType, eventHandler, options))
          }
          remove() {
             this.deactivate()
             this.removeListeners(this.#listeners)
             this.#actionCallback = null
-            this.#inhibitedControllers = []
+            this.#blockedControllers = []
             return this
+         }
+         onBlock() {
+            // do nothing
+         }
+         onUnblock() {
+            // do nothing
+         }
+         ////////////
+         // Helper //
+         ////////////
+         getTouchById(touches, id) {
+            for (const t of (touches||[]))
+               if (t.identifier === id)
+                  return t
          }
       }
 
@@ -530,13 +627,13 @@
 
          debug = false
 
-         constructor(htmlElem, moveCallback, ...inhibitedControllers) {
+         constructor(htmlElem, moveCallback, ...blockedControllers) {
             super()
-            return this.add(htmlElem, moveCallback, ...inhibitedControllers)
+            return this.add(htmlElem, moveCallback, ...blockedControllers)
          }
 
-         add(htmlElem, moveCallback, ...inhibitedControllers) {
-            super.add(htmlElem, moveCallback, ...inhibitedControllers)
+         add(htmlElem, moveCallback, ...blockedControllers) {
+            super.add(htmlElem, moveCallback, ...blockedControllers)
             this.addListener(htmlElem,"mousedown",this.onStart.bind(this))
             this.addListener(htmlElem,"touchstart",this.onStart.bind(this))
             return this
@@ -549,7 +646,7 @@
          onStart(e) {
             if (this.debug && e.touches)
                logError(`${this.debug}: start ${e.targetTouches.length} id:${e.targetTouches[0].identifier}`)
-            if (this.isInhibited || this.isActive || (e.touches && e.targetTouches.length !== 1)) {
+            if (this.isActive || (e.touches && e.targetTouches.length !== 1)) {
                return
             }
             const touch = (e.targetTouches && e.targetTouches[0])
@@ -558,11 +655,11 @@
             this.#truncxy = { x:0, y:0 }
             e.preventDefault()
             this.activate( () => touch
-                  ?  [  addListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}),
-                        addListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}),
-                        addListener(e.target,"touchcancel",this.onEnd.bind(this)) ]
-                  :  [  addListener(document,"mousemove",this.onMove.bind(this)),
-                        addListener(document,"mouseup",this.onEnd.bind(this)) ])
+                  ?  [  this.addActiveListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}),
+                        this.addActiveListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}),
+                        this.addActiveListener(e.target,"touchcancel",this.onEnd.bind(this)) ]
+                  :  [  this.addActiveListener(document,"mousemove",this.onMove.bind(this)),
+                        this.addActiveListener(document,"mouseup",this.onEnd.bind(this)) ])
          }
 
          onMove(e) {
@@ -596,13 +693,13 @@
          #totalxy
          #truncxy
 
-         constructor(htmlElem, moveCallback, ...inhibitedControllers) {
+         constructor(htmlElem, moveCallback, ...blockedControllers) {
             super()
-            return this.add(htmlElem, moveCallback, ...inhibitedControllers)
+            return this.add(htmlElem, moveCallback, ...blockedControllers)
          }
 
-         add(htmlElem, resizeCallback, ...inhibitedControllers) {
-            super.add(htmlElem, resizeCallback, ...inhibitedControllers)
+         add(htmlElem, resizeCallback, ...blockedControllers) {
+            super.add(htmlElem, resizeCallback, ...blockedControllers)
             this.addListener(htmlElem,"touchstart",this.onStart.bind(this))
             return this
          }
@@ -620,9 +717,9 @@
             this.#truncxy = { x:0, y:0 }
             e.preventDefault()
             this.activate( () =>
-               [  addListener(e.target,"touchmove",this.onMove.bind(this)),
-                  addListener(e.target,"touchend",this.onEnd.bind(this)),
-                  addListener(e.target,"touchcancel",this.onEnd.bind(this)) ])
+               [  this.addActiveListener(e.target,"touchmove",this.onMove.bind(this)),
+                  this.addActiveListener(e.target,"touchend",this.onEnd.bind(this)),
+                  this.addActiveListener(e.target,"touchcancel",this.onEnd.bind(this)) ])
          }
 
          onMove(e) {
@@ -652,13 +749,13 @@
 
       function newDiv(styles){
          const newDiv = document.createElement("div")
-         ElementView.setStyles(newDiv,styles)
+         ViewElem.setStyles(newDiv,styles)
          return newDiv
       }
 
       function ResizeDecorator(htmlElem, viewModel) {
          const isMoveable = (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
-         const display = isMoveable ? "initial" : "none"
+         const display = isMoveable ? "" : "none"
          const outerWidth = 8
          const innerWidth = 4
          const borderSize = (outerWidth+innerWidth)+"px"
@@ -677,20 +774,19 @@
          htmlElem.append(...borders)
          const controllers = {}
          if (isMoveable) {
-            const moveMarkers = viewModel.view.getMarkers("move")
-            const moveWinBase = (ElementView.setStyles(htmlElem,{cursor: "move"}), new MoveController(htmlElem,viewModel.on.Move))
-            const moveWin = [moveWinBase].concat(moveMarkers.map( node => (ElementView.setStyles(node,{cursor: "move"}), new MoveController(node,viewModel.on.Move,moveWinBase))))
-            moveWin[0].debug = "movewin"
+            const moveWin = (ViewElem.setStyles(htmlElem,{cursor: "move"}), new MoveController(htmlElem,viewModel.on.Move))
+            moveWin.debug = "movewin"
             const resizeWin = new TouchResizeController(htmlElem,viewModel.on.Resize)
             resizeWin.debug = "resizewin"
-            const topResize = new MoveController(borders[0],viewModel.on.ResizeTop,...moveWin,resizeWin)
-            const rightResize = new MoveController(borders[1],viewModel.on.ResizeRight,...moveWin,resizeWin)
-            const bottomResize = new MoveController(borders[2],viewModel.on.ResizeBottom,...moveWin,resizeWin)
-            const leftResize = new MoveController(borders[3],viewModel.on.ResizeLeft,...moveWin,resizeWin)
-            const topLeftResize = new MoveController(borders[4],viewModel.on.ResizeTopLeft,...moveWin,resizeWin,topResize,leftResize)
-            const topRightResize = new MoveController(borders[5],viewModel.on.ResizeTopRight,...moveWin,resizeWin,topResize,rightResize)
-            const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,...moveWin,resizeWin,bottomResize,rightResize)
-            const bottomLeftResize = new MoveController(borders[7],viewModel.on.ResizeBottomLeft,...moveWin,resizeWin,bottomResize,leftResize)
+            const moveResizeGroup = [moveWin,resizeWin]
+            const topResize = new MoveController(borders[0],viewModel.on.ResizeTop,moveResizeGroup)
+            const rightResize = new MoveController(borders[1],viewModel.on.ResizeRight,moveResizeGroup)
+            const bottomResize = new MoveController(borders[2],viewModel.on.ResizeBottom,moveResizeGroup)
+            const leftResize = new MoveController(borders[3],viewModel.on.ResizeLeft,moveResizeGroup)
+            const topLeftResize = new MoveController(borders[4],viewModel.on.ResizeTopLeft,moveResizeGroup,topResize,leftResize)
+            const topRightResize = new MoveController(borders[5],viewModel.on.ResizeTopRight,moveResizeGroup,topResize,rightResize)
+            const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,moveResizeGroup,bottomResize,rightResize)
+            const bottomLeftResize = new MoveController(borders[7],viewModel.on.ResizeBottomLeft,moveResizeGroup,bottomResize,leftResize)
             Object.assign(controllers, { moveWin, resizeWin, topResize, rightResize, bottomResize, leftResize, topLeftResize, topRightResize, bottomRightResize, bottomLeftResize })
          }
          else {
@@ -700,12 +796,12 @@
             const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,bottomResize,rightResize)
             Object.assign(controllers, { resizeWin, rightResize, bottomResize, bottomRightResize })
          }
-         ElementView.setStyles(htmlElem,{ contain: "layout" })
+         ViewElem.setStyles(htmlElem,{ contain: "layout" })
 
          return { borders, controllers }
       }
 
-      class ElementView {
+      class ViewElem {
          #htmlElem
          constructor(htmlElem) {
             this.#htmlElem = htmlElem
@@ -729,13 +825,13 @@
             return this
          }
          getComputedStyles(styles) {
-            return ElementView.getComputedStyles(this.htmlElem, styles)
+            return ViewElem.getComputedStyles(this.htmlElem, styles)
          }
          getStyles(styles) {
-            return ElementView.getStyles(this.htmlElem, styles)
+            return ViewElem.getStyles(this.htmlElem, styles)
          }
          setStyles(styles) {
-            return ElementView.setStyles(this.htmlElem, styles)
+            return ViewElem.setStyles(this.htmlElem, styles)
          }
          static needsBorderBox(htmlElem) {
             const needValue = "border-box"
@@ -781,7 +877,7 @@
          }
       }
 
-      class View extends ElementView {
+      class View extends ViewElem {
          #vm
          #slots
          constructor(htmlElem, vm) {
@@ -791,100 +887,63 @@
          error(msg) {
             throw Error(`${this.#vm?this.#vm.name+"-VM-":''}View error: ${msg}`)
          }
-         getMarkers(name) {
-            return View.getMarkers(this.htmlElem,name)
-         }
          getSlot(name) {
-            return this.getSlots(name).get(name)
+            this.assertSlotNames(name)
+            return this.#slots.get(name)[0]
          }
-         getSlots(...assertSlotNames) {
+         getSlots(name) {
+            this.assertSlotNames(name)
+            return this.#slots.get(name)
+         }
+         getSlotNames() {
+            this.assertSlotNames()
+            return [...this.#slots.keys()]
+         }
+         assertSlotNames(...slotNames) {
             if (!this.#slots)
                this.#slots = View.getSlots(this.htmlElem)
-            if (assertSlotNames.length > 0) {
-               for (const name of assertSlotNames) {
+            if (slotNames.length > 0) {
+               for (const name of slotNames) {
                   if (!this.#slots.has(name)) {
-                     console.log("HTML of view",this.htmlElem.innerHTML)
-                     this.error(`HTML contains has data-slot='${name}'.`)
+                     console.log("HTML",this.htmlElem,this.htmlElem.innerHTML)
+                     this.error(`Expect attribute data-vm='${name}' in HTML.`)
                   }
                }
             }
-            return this.#slots
-         }
-         assertSlotNames(...slotNames) {
-            this.getSlots(...slotNames)
             return this
-         }
-         // TODO: connect target (VIEW <=> SUBVIEW)
-         connect() {
-            const elem = this.htmlElem
-            if (!elem.isConnected) {
-               elem.style.visibility = "hidden"
-               document.body.append(elem)
-            }
-         }
-         show() {
-            this.htmlElem.style.visibility = ""
-         }
-         static error(msg) {
-            throw Error(`View error: ${msg}`)
          }
          static getSlots(htmlElem) {
             const slots = new Map()
-            const nodes = [...htmlElem.querySelectorAll("[data-slot]")]
-            nodes.reduce((map, node) => map.set(node.dataset.slot, new ElementView(node)),slots)
+            const nodes = [...htmlElem.querySelectorAll("[data-vm]")]
+            nodes.forEach(node => {
+               const name = node.dataset.vm
+               const views = slots.get(name) ?? []
+               views.push(new ViewElem(node))
+               slots.set(name, views)
+            })
             return slots
          }
-         static getMarkers(htmlElem, name) {
-            return [...htmlElem.querySelectorAll("[data-marker]")].filter(
-                  node => node.dataset.marker === name
-            )
+         static htmlElem(htmlElemSel) {
+            return HTMLElemSel.htmlElem(htmlElemSel)
          }
-         static select(htmlElemOrCssSelector) {
-            if (typeof htmlElemOrCssSelector === "string") {
-               const htmlElem = document.querySelector(htmlElemOrCssSelector)
-               if (!htmlElem)
-                  this.error(`Found no html node matching '${htmlElemOrCssSelector}'.`)
-               if (htmlElem.localName === "template")
-                  return htmlElem.content.children[0]
-               return htmlElem
-            }
-            return htmlElemOrCssSelector
-         }
-         static clone(htmlElemOrCssSelector) {
-            const htmlElem = this.select(htmlElemOrCssSelector).cloneNode(true)
-            return htmlElem
+         static clone(htmlElemSel) {
+            return HTMLElemSel.clone(htmlElemSel)
          }
       }
 
-      class ViewModelValues {
-         #htmlElem
-         #vm
-         constructor(htmlElem,vm) {
-            this.#htmlElem = htmlElem
-            this.#vm = vm
-         }
-         get htmlElem() {
-            return this.#htmlElem
-         }
-         get view() {
-            return this.#vm.view
-         }
-      }
       /**
        * Model which is bound to a single view and manages its state.
        */
       class ViewModel {
          #modelName
          #htmlElem
-         #values
          #on = {}
          #view
          constructor(htmlElem, modelName) {
             this.#htmlElem = htmlElem
             this.#modelName = modelName
-            this.#values = new ViewModelValues(htmlElem,this)
             this.#view = new View(htmlElem,this)
-            this.#view.connect()
+            this.connect()
          }
          error(msg) {
             throw Error(`${this.#modelName}-View-Model error: ${msg}`)
@@ -898,85 +957,84 @@
          get view() {
             return this.#view
          }
-         isValue(name) {
-            return (name in this.#values)
-         }
          isEventHandler(name) {
             return (name in this.#on)
-         }
-         get values() {
-            return this.#values
          }
          get on() {
             return this.#on
          }
-         defineValues(valuesObject) {
-            const propertyDescriptors = Object.getOwnPropertyDescriptors(valuesObject)
-            for (const name of Reflect.ownKeys(propertyDescriptors)) {
-               if (this.isValue())
-                  this.error(`Can not define view-model value ${String(name)} twice.`)
-            }
-            Object.defineProperties(this.#values, propertyDescriptors)
+         getEventHandler(name) {
+            return this.on[name]
          }
          bindEventHandler(name, eventHandler, thisValue=null) {
-            if (this.isEventHandler(name))
-               this.error(`Can not add event handler ${String(name)} twice.`)
             this.#on[name] = eventHandler.bind(thisValue||this)
          }
          bindEventHandlers(prototype) {
-            for (const name of Reflect.ownKeys(prototype))
-               if (String(name).startsWith("on"))
-                  this.bindEventHandler(name.substring(2),prototype[name])
+            const overwritten = []
+            for (const key of Reflect.ownKeys(prototype))
+               if (String(key).startsWith("on")) {
+                  const name = key.substring(2)
+                  if (this.isEventHandler(name))
+                     overwritten.push(key)
+                  this.bindEventHandler(name,prototype[key])
+               }
+            return overwritten
          }
-         getEventHandler(name) {
-            return this.#on[name]
+         connect() {
+            if (!this.htmlElem.isConnected) {
+               this.visibility = false
+               document.body.append(this.htmlElem)
+            }
+         }
+         get visibility() {
+            return getComputedStyle(this.htmlElem).visibility === "visible"
+         }
+         set visibility(isVisible) {
+            this.htmlElem.style.visibility = (isVisible ? "" : "hidden")
          }
       }
 
       class ResizeVM extends ViewModel {
          constructor(htmlElem, modelName) {
             super(htmlElem, modelName || "Resize")
-            super.defineValues(ResizeVM.values)
             super.bindEventHandlers(ResizeVM.prototype)
-            ElementView.needsBorderBox(htmlElem)
+            ViewElem.needsBorderBox(htmlElem)
          }
 
-         static values = {
-            set height(value/*number value in pixels*/) {
-               if (value < 0)
-                  value = 0
-               this.htmlElem.style.height = value+"px"
-            },
-            get height() {
-               return this.htmlElem.offsetHeight // in pixel (could be a fraction)
-            },
-            set width(value/*number value in pixels*/) {
-               if (value < 0)
-                  value = 0
-               this.htmlElem.style.width = value+"px"
-            },
-            get width() {
-               return this.htmlElem.offsetWidth // in pixel (could be a fraction)
-            },
-            set top(value/*number value in pixels*/) {
-               this.htmlElem.style.top = value+"px"
-            },
-            get top() {
-               return this.htmlElem.offsetTop // in pixel (could be a fraction)
-            },
-            set left(value/*number value in pixels*/) {
-               this.htmlElem.style.left = value+"px"
-            },
-            get left() {
-               return this.htmlElem.offsetLeft
-            },
+         set vheight(value/*number value in pixels*/) {
+            if (value < 0)
+               value = 0
+            this.htmlElem.style.height = value+"px"
+         }
+         get vheight() {
+            return this.htmlElem.offsetHeight // in pixel (could be a fraction)
+         }
+         set vwidth(value/*number value in pixels*/) {
+            if (value < 0)
+               value = 0
+            this.htmlElem.style.width = value+"px"
+         }
+         get vwidth() {
+            return this.htmlElem.offsetWidth // in pixel (could be a fraction)
+         }
+         set vtop(value/*number value in pixels*/) {
+            this.htmlElem.style.top = value+"px"
+         }
+         get vtop() {
+            return this.htmlElem.offsetTop // in pixel (could be a fraction)
+         }
+         set vleft(value/*number value in pixels*/) {
+            this.htmlElem.style.left = value+"px"
+         }
+         get vleft() {
+            return this.htmlElem.offsetLeft
          }
 
-         move(deltax,deltay) { this.values.left += deltax; this.values.top += deltay; }
-         resizeTop(deltay) { this.values.top -= deltay; this.values.height += deltay; }
-         resizeRight(deltax) { this.values.width += deltax; }
-         resizeBottom(deltay) { this.values.height += deltay; }
-         resizeLeft(deltax) { this.values.left -= deltax; this.values.width += deltax; }
+         move(deltax,deltay) { this.vleft += deltax; this.vtop += deltay; }
+         resizeTop(deltay) { this.vtop -= deltay; this.vheight += deltay; }
+         resizeRight(deltax) { this.vwidth += deltax; }
+         resizeBottom(deltay) { this.vheight += deltay; }
+         resizeLeft(deltax) { this.vleft -= deltax; this.vwidth += deltax; }
          resizeTopLeft(deltax,deltay) { this.resizeLeft(deltax); this.resizeTop(deltay); }
          resizeTopRight(deltax,deltay) { this.resizeRight(deltax); this.resizeTop(deltay); }
          resizeBottomRight(deltax,deltay) { this.resizeRight(deltax); this.resizeBottom(deltay); }
@@ -1000,13 +1058,13 @@
       }
 
       class TransitionController extends ViewController {
-         constructor(htmlElem, endCallback, ...inhibitedControllers) {
+         constructor(htmlElem, endCallback, ...blockedControllers) {
             super()
-            this.add(htmlElem, endCallback, ...inhibitedControllers)
+            this.add(htmlElem, endCallback, ...blockedControllers)
          }
 
-         add(htmlElem, endCallback, ...inhibitedControllers) {
-            super.add(htmlElem, endCallback, ...inhibitedControllers)
+         add(htmlElem, endCallback, ...blockedControllers) {
+            super.add(htmlElem, endCallback, ...blockedControllers)
             const onEnd = this.onTransitionEnd.bind(this)
             super.addListener(htmlElem, "transitionend", onEnd)
             super.addListener(htmlElem, "transitioncancel", onEnd)
@@ -1028,68 +1086,123 @@
          }
       }
 
-      const xxx = {
-            htmlElem: null,
-            oldTransitionStyles: {},
-            oldPosStyles: {},
-      }
-
-      function doMinimize(htmlElem) {
-         const windowStack = document.querySelector(".js-window-stack")
-         const top = (windowStack.offsetTop - 0) + "px"
-         xxx.htmlElem = htmlElem
-         xxx.oldTransitionStyles = ElementView.setStyles(htmlElem, {
-                  "transition-delay":"0s", "transition-duration":".2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out"
-         })
-         xxx.oldPosStyles = ElementView.setStyles(htmlElem, {
-                  width:"8em", height:"20px", top, left: "5px", overflow: "hidden"
-         })
-      }
-
-      function doRestore() {
-         if (xxx.htmlElem) {
-            const htmlElem = xxx.htmlElem
-            const oldTransitionStyles = xxx.oldTransitionStyles
-            const oldPosStyles = xxx.oldPosStyles
-            xxx.htmlElem = null
-            xxx.oldTransitionStyles = {}
-            xxx.oldPosStyles = {}
-            ElementView.setStyles(htmlElem,oldPosStyles)
-            new TransitionController(htmlElem, () => {
-               ElementView.setStyles(htmlElem,oldTransitionStyles)
-            }).endIfNoTransition(htmlElem)
-         }
-      }
-
       function WindowDecorator(htmlElem, viewModel) {
-         ElementView.setStyles(htmlElem,{position: "fixed"})
-         viewModel.values.top = 40
-         viewModel.values.left = 330
-         viewModel.values.width = 400
-         viewModel.values.height = 400
+         ViewElem.setStyles(htmlElem,{position: "fixed"})
+         viewModel.vtop = 40
+         viewModel.vleft = 330
+         viewModel.vwidth = 400
+         viewModel.vheight = 400
          decorateElement(htmlElem, ResizeDecorator, viewModel)
       }
 
       class WindowVM extends ResizeVM {
+         #windowState
+         #visiblePosStyle
+
+         // window state
+         static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"
+         // transition style for animation
+         static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":".1s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
+
          constructor(htmlElem, modelName) {
             super(htmlElem, modelName || "Window")
-            super.defineValues(WindowVM.values)
             super.bindEventHandlers(WindowVM.prototype)
+            this.#windowState = getComputedStyle(this.htmlElem).visibility
          }
 
-         static values = {
+         vMinimizedHeight() {
+            const titleBarHeight = 2*parseFloat(getComputedStyle(this.htmlElem)["border-top"])
+                  +this.view.getSlot("minimized-height").htmlElem.offsetHeight
+            return isNaN(titleBarHeight) ? 20 : titleBarHeight
+         }
 
+         get vWindowState() {
+            return this.#windowState
+         }
+
+         set vWindowState(state) {
+            const oldState = this.#windowState
+            if (oldState === state)
+               return
+            if (oldState === WindowVM.VISIBLE)
+               this.#visiblePosStyle = ViewElem.getStyles(this.htmlElem, ["width","height","top","left"])
+            if (state === WindowVM.VISIBLE) {
+               this.#windowState = WindowVM.VISIBLE
+               asyncUIUpdate( () => {
+                  const htmlElem = this.htmlElem
+                  this.visibility = true
+                  if (this.#visiblePosStyle) {
+                     const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                     ViewElem.setStyles(htmlElem, this.#visiblePosStyle)
+                     new TransitionController(htmlElem, () => {
+                        ViewElem.setStyles(htmlElem, oldTransitionStyle)
+                     }).endIfNoTransition(htmlElem)
+                  }
+               })
+            }
+            else if (state === WindowVM.HIDDEN) {
+               this.#windowState = WindowVM.HIDDEN
+               asyncUIUpdate( () => this.visibility = false)
+            }
+            else if (state === WindowVM.MINIMIZED) {
+               this.#windowState = WindowVM.MINIMIZED
+               asyncUIUpdate( () => {
+                  const htmlElem = this.htmlElem
+                  const minHeight = this.vMinimizedHeight()
+                  const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                  ViewElem.setStyles(htmlElem, {
+                     width:(2*minHeight)+"px", height:minHeight+"px", top:(window.innerHeight-2*minHeight)+"px", left:"5px"
+                  })
+                  new TransitionController(htmlElem, () => {
+                     this.visibility = false
+                     ViewElem.setStyles(htmlElem, oldTransitionStyle)
+                  }).endIfNoTransition(htmlElem)
+               })
+            }
+            else if (state === WindowVM.MAXIMIZED) {
+               this.#windowState = WindowVM.MAXIMIZED
+               asyncUIUpdate( () => {
+                  const htmlElem = this.htmlElem
+                  const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                  this.visibility = true
+                  ViewElem.setStyles(htmlElem, {
+                     width:window.innerWidth+"px", height:window.innerHeight+"px", top:"0px", left:"0px"
+                  })
+                  new TransitionController(htmlElem, () => {
+                     ViewElem.setStyles(htmlElem, oldTransitionStyle)
+                  }).endIfNoTransition(htmlElem)
+               })
+            }
+            else
+               this.error(`Unsupported window state: ${state}`)
          }
       }
 
-      {
-         const winVM = new WindowVM(View.clone("#js-window-template"))
-         winVM.view.getSlot("window-title").setHTML("Hello Title")
-         winVM.view.getSlot("window-child").setChild(div1)
-         decorateElement(winVM.htmlElem, WindowDecorator, winVM).viewModel.view.show()
-         // TODO: add options
-         // decorateElement(WindowDecorator, { vm: winVM, htmlElem: vm.htmlElem /* default */ })
+      class WindowStackVM extends ViewModel {
+         #templateSel="#js-minimized-window-template"
+
+         constructor(htmlElem, modelName) {
+            super(htmlElem, modelName || "WindowStack")
+            super.bindEventHandlers(WindowStackVM.prototype)
+         }
+
+         setTemplate(htmlElemSel) {
+            this.#templateSel = htmlElemSel
+         }
+
+         addMinimized(title) {
+            const view = new View(View.clone(this.#templateSel))
+            view.getSlot("window-title").setHTML(title)
+            this.htmlElem.append(view.htmlElem)
+         }
       }
+
+      const winVM = new WindowVM(View.clone("#js-window-template"))
+      winVM.view.getSlot("window-title").setHTML("Hello Title")
+      winVM.view.getSlot("window-child").setChild(div1)
+      decorateElement(winVM.htmlElem, WindowDecorator, winVM).viewModel.vWindowState = WindowVM.VISIBLE
+      // TODO: add options
+      // decorateElement(WindowDecorator, { vm: winVM, htmlElem: vm.htmlElem /* default */ })
       // decorateElement(div1, ResizeDecorator, new ResizeVM(div1))
       decorateElement(div2, ResizeDecorator, new ResizeVM(div2))
       decorateElement(div3, ResizeDecorator, new ResizeVM(div3))
@@ -1098,7 +1211,15 @@
 
       console.log(htmlListeners.getListenedElements(document))
 
+      const winstackVM = new WindowStackVM(View.htmlElem("[class='js-window-stack']"))
+
+      winstackVM.count = 0
+      View.htmlElem("[class='js-window-stack'] button").addEventListener("click", (e) => {
+         winstackVM.addMinimized(`Mini Win ${++winstackVM.count}`)
+      })
+
    </script>
+
 
 </body>
 </html>

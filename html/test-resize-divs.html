@@ -29,19 +29,18 @@
       }
       .js-window .js-head .js-controls {
          flex: 0 0 auto; align-self: center; order: 2;
-         padding: 3px 5px 3px 0px;
+         padding: 3px 5px 3px 3px;
       }
       .js-window .js-head .js-title {
          flex: 1 1 auto; align-self: center; order: 1;
-         padding: 3px 0px 3px 10px;
-         box-sizing: border-box;
-         max-width: calc(100% - 3 * (1.5em + 2 * 3px)); overflow: hidden;
-         white-space: nowrap;
+         border-radius: 12px 0 0 0; padding: 3px 0px 3px 10px;
+         box-sizing: border-box; overflow: hidden; white-space: nowrap;
       }
       .js-controls [data-vm='min'], .js-controls [data-vm='max'], .js-controls [data-vm='close'] {
          margin-left: 0.5em; padding: 2px 3px;
          box-sizing: border-box;
          width: 1em;
+         cursor: pointer;
       }
       .js-controls [data-vm='min']:hover, .js-controls [data-vm='max']:hover, .js-controls [data-vm='close']:hover {
          padding-left: 4px; padding-right: 2px;
@@ -76,7 +75,6 @@
          outline:1px darkgoldenrod solid;
          padding:4px 2px 2px 4px;
       }
-
    </style>
 </head>
 <body>
@@ -86,19 +84,18 @@
             <div class="js-title" data-vm="window-title"></div>
             <div class="js-controls"><i data-vm="min" class="bi-dash-lg"></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
          </div>
-         <div class="js-body" data-vm="window-child"></div>
+         <div class="js-body" data-vm="window-content"></div>
       </div>
    </template>
    <template id="js-minimized-window-template">
       <div class="js-window">
          <div class="js-head">
             <div class="js-title" data-vm="window-title"></div>
-            <div class="js-controls"><i data-vm="min" class="bi-arrow-up"></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
+            <div class="js-controls"></i><i data-vm="close" class="bi-x-lg"></i></div>
          </div>
       </div>
    </template>
    <h3>Test Move & Resize Divs</h3>
-   <div id="LOG"></div>
    <dl>
       <dt>Components</dt>
       <dd>
@@ -118,7 +115,7 @@
       </dd>
    </dl>
 
-   <div id=window style="min-width:150px;min-height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box">
+   <div id=window style="width:150px;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;position:static;">
       Resize div<br>(static)
    </div>
 
@@ -130,18 +127,12 @@
       Move or resize div<br>(fixed)
    </div>
 
-   <div id="window4" class="js-window" style="width:250px; height:250px; background-color:black; border-radius: 10px 10px 0 0; color:white; box-sizing:border-box;">
-      <div class="js-head">
-         <div class="js-controls"><i data-vm="min" class="bi-dash-lg";></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
-         <div class="js-title">Fixed Win</div>
-      </div>
-      <div style="background-color:white; margin: 1px;">sss</div>
-   </div>
-
    <div class="js-window-stack">
-      <button>Add Mini Win</button>
+      <button>Restore closed window</button>
    </div>
 
+   <div style="height:10px;"></div>
+   <div id="LOG"></div>
    <div style="height:1000px;"></div>
 
    <script>
@@ -203,54 +194,56 @@
 
       /**
        * Either an HTMLElement or a CSS selector to query for HTMLElement(s).
-       * The name of the variable is abbreviated as htmlElemSel
+       * The name of the variable is abbreviated as elemSel
        */
-      class HTMLElemSel {
+      class ElemSel {
          #htmlElem
-         #htmlElemSel
-         #clone
-         constructor(htmlElemSel, {CLONE}={}) {
-            if (htmlElemSel instanceof HTMLElemSel) {
-               this.#htmlElem = htmlElemSel.#htmlElem
-               this.#htmlElemSel = htmlElemSel.#htmlElemSel
-               this.#clone = CLONE ?? htmlElemSel.#clone
+         #elemSel
+         #cloning
+         constructor(elemSel, {CLONING}={}) {
+            if (elemSel instanceof ElemSel) {
+               this.#htmlElem = elemSel.#htmlElem
+               this.#elemSel = elemSel.#elemSel
+               this.#cloning = CLONING ?? elemSel.#cloning
             }
             else {
-               this.#htmlElem = HTMLElemSel.htmlElem(htmlElemSel)
-               this.#htmlElemSel = htmlElemSel
-               this.#clone = Boolean(CLONE)
+               this.#htmlElem = ElemSel.htmlElem(elemSel)
+               this.#elemSel = elemSel
+               this.#cloning = Boolean(CLONING)
             }
          }
          get htmlElem() {
-            return this.#clone
+            return this.#cloning
                   ? this.#htmlElem.cloneNode(true)
                   : this.#htmlElem
          }
-         get isClone() {
-            return this.#clone
+         get isCloning() {
+            return this.#cloning
          }
-         get htmlElemSel() {
-            return this.#htmlElemSel
+         get elemSel() {
+            return this.#elemSel
          }
          static error() {
-            throw Error(`HTMLElemSel error: ${msg}`)
+            throw Error(`ElemSel error: ${msg}`)
          }
-         static htmlElem(htmlElemSel) {
-            if (typeof htmlElemSel === "string") {
-               const htmlElem = document.querySelector(htmlElemSel)
+         static htmlElem(elemSel) {
+            if (typeof elemSel === "string") {
+               const htmlElem = document.querySelector(elemSel)
                if (!htmlElem)
-                  this.error(`Found no html node matching '${htmlElemSel}'.`)
+                  this.error(`Found no html node matching '${elemSel}'.`)
                if (htmlElem.localName === "template")
                   return htmlElem.content.children[0]
                return htmlElem
             }
-            else if (htmlElemSel instanceof HTMLElemSel)
-               return htmlElemSel.htmlElem
+            else if (elemSel instanceof ElemSel)
+               return elemSel.htmlElem
+            else if (elemSel instanceof ViewModel)
+               return elemSel.htmlElem
             else
-               return htmlElemSel
+               return elemSel
          }
-         static clone(htmlElemSel) {
-            return new HTMLElemSel(htmlElemSel,{CLONE:true}).htmlElem
+         static clone(elemSel) {
+            return new ElemSel(elemSel,{CLONING:true}).htmlElem
          }
       }
 
@@ -423,17 +416,18 @@
          },
          /**
           * Applies decorator by calling it and adds it to list of applied docorators for htmlElem.
-          * @param {HTMLElement} htmlElem
+          * @param {HTMLElement|ViewModel|ElemSel|string} elemSel
           * @param {Decorator} decorator
           * @param {ViewModel} viewModel
           */
-         decorate(htmlElem, decorator, viewModel) {
-            if (!(htmlElem instanceof HTMLElement)) this.error("htmlElem argument expects type HTMLElement.")
+         decorate(elemSel, decorator, options) {
+            const viewModel = elemSel instanceof ViewModel ? elemSel : undefined
+            const htmlElem = ElemSel.htmlElem(elemSel)
+            if (!(htmlElem instanceof HTMLElement)) this.error("elemSel references no HTMLElement.")
             if (!(decorator instanceof Function)) this.error("decorator argument expects type Function.")
-            if (!(viewModel instanceof ViewModel)) this.error("viewModel argument expects type ViewModel.")
             if (!this.isDecorated(htmlElem, decorator)) {
-               const decoratorState = decorator(htmlElem, viewModel)
-               const newDecorator = { decorator, decoratorState, htmlElem, viewModel }
+               const decoratorState = decorator(htmlElem, viewModel, options)
+               const newDecorator = { decorator, decoratorState, htmlElem, viewModel:decoratorState.viewModel }
                this.htmlElements.set(htmlElem,
                   (this.htmlElements.get(htmlElem) || []).concat(newDecorator)
                )
@@ -490,8 +484,8 @@
             return result
          },
       }
-      function decorateElement(htmlElem, decorator, viewModel) {
-         return htmlDecorators.decorate(htmlElem, decorator, viewModel)
+      function decorateElement(elemSel, decorator, options) {
+         return htmlDecorators.decorate(elemSel, decorator, options)
       }
       const UIupdates = {
          callbacks: [],
@@ -526,11 +520,15 @@
          #blockedControllers=[]
          #blockingCount = 0
          #othersBlocked = false
-         #actionCallback
+         #htmlElem
+         #callback
          constructor() {
          }
-         get actionCallback() {
-            return this.#actionCallback
+         get htmlElem() {
+            return this.#htmlElem
+         }
+         get callback() {
+            return this.#callback
          }
          get isActive() {
             return this.#isActive
@@ -539,8 +537,8 @@
             return Boolean(this.#blockingCount)
          }
          callAction(e) {
-            if (!this.isBlocked && this.#actionCallback)
-               this.#actionCallback(e)
+            if (!this.isBlocked && this.#callback)
+               this.#callback(e)
          }
          removeListeners(listenersArray) {
             removeListeners(listenersArray)
@@ -591,16 +589,18 @@
          /////////////////////////////
          // overwritten in subclass //
          /////////////////////////////
-         add(htmlElem, actionCallback, ...blockedControllers) {
+         add(htmlElem, callback, ...blockedControllers) {
             this.remove()
-            this.#actionCallback = actionCallback
+            this.#htmlElem = htmlElem
+            this.#callback = callback
             this.#blockedControllers = blockedControllers.flat(Infinity).filter(cntrl => cntrl instanceof ViewController)
             return this
          }
          remove() {
             this.deactivate()
             this.removeListeners(this.#listeners)
-            this.#actionCallback = null
+            this.#htmlElem = null
+            this.#callback = null
             this.#blockedControllers = []
             return this
          }
@@ -617,6 +617,40 @@
             for (const t of (touches||[]))
                if (t.identifier === id)
                   return t
+         }
+      }
+
+      class ClickController extends ViewController {
+         constructor(htmlElem, clickCallback, ...blockedControllers) {
+            super()
+            return this.add(htmlElem, clickCallback, ...blockedControllers)
+         }
+
+         add(htmlElem, clickCallback, ...blockedControllers) {
+            super.add(htmlElem, clickCallback, ...blockedControllers)
+            this.addListener(htmlElem,"click",this.onClick.bind(this))
+            this.addListener(htmlElem,"touchstart",this.onStart.bind(this))
+            return this
+         }
+
+         onStart(e) {
+            logError(`ClickController activate`)
+            this.activate( () => [
+               this.addActiveListener(e.target,"touchend",this.onEnd.bind(this)),
+               this.addActiveListener(e.target,"touchcancel",this.onEnd.bind(this))
+            ])
+         }
+
+         onClick(e) {
+            logError(`ClickController click active:${this.isActive}`)
+            this.callAction({controller:this, target:e.target})
+         }
+
+         onEnd(e) {
+            if (e?.targetTouches?.length !== 0)
+               return
+            logError(`ClickController deactivate`)
+            this.deactivate()
          }
       }
 
@@ -645,7 +679,7 @@
 
          onStart(e) {
             if (this.debug && e.touches)
-               logError(`${this.debug}: start ${e.targetTouches.length} id:${e.targetTouches[0].identifier}`)
+               logError(`${this.debug}: start ${e.targetTouches.length} active:${this.isActive} block:${this.isBlocked}`)
             if (this.isActive || (e.touches && e.targetTouches.length !== 1)) {
                return
             }
@@ -655,8 +689,8 @@
             this.#truncxy = { x:0, y:0 }
             e.preventDefault()
             this.activate( () => touch
-                  ?  [  this.addActiveListener(e.target,"touchmove",this.onMove.bind(this),{TARGET_ONLY:true}),
-                        this.addActiveListener(e.target,"touchend",this.onEnd.bind(this),{TARGET_ONLY:true}),
+                  ?  [  this.addActiveListener(e.target,"touchmove",this.onMove.bind(this)),
+                        this.addActiveListener(e.target,"touchend",this.onEnd.bind(this)),
                         this.addActiveListener(e.target,"touchcancel",this.onEnd.bind(this)) ]
                   :  [  this.addActiveListener(document,"mousemove",this.onMove.bind(this)),
                         this.addActiveListener(document,"mouseup",this.onEnd.bind(this)) ])
@@ -749,12 +783,12 @@
 
       function newDiv(styles){
          const newDiv = document.createElement("div")
-         ViewElem.setStyles(newDiv,styles)
+         View.setStyles(newDiv,styles)
          return newDiv
       }
 
-      function ResizeDecorator(htmlElem, viewModel) {
-         const isMoveable = (["absolute","fixed"].includes(getComputedStyle(htmlElem)["position"]))
+      function ResizeDecorator(htmlElem, viewModel=new ResizeVM(htmlElem)) {
+         const isMoveable = viewModel.isMoveable()
          const display = isMoveable ? "" : "none"
          const outerWidth = 8
          const innerWidth = 4
@@ -774,7 +808,7 @@
          htmlElem.append(...borders)
          const controllers = {}
          if (isMoveable) {
-            const moveWin = (ViewElem.setStyles(htmlElem,{cursor: "move"}), new MoveController(htmlElem,viewModel.on.Move))
+            const moveWin = (View.setStyles(htmlElem,{cursor: "move"}), new MoveController(htmlElem,viewModel.on.Move))
             moveWin.debug = "movewin"
             const resizeWin = new TouchResizeController(htmlElem,viewModel.on.Resize)
             resizeWin.debug = "resizewin"
@@ -796,43 +830,12 @@
             const bottomRightResize = new MoveController(borders[6],viewModel.on.ResizeBottomRight,bottomResize,rightResize)
             Object.assign(controllers, { resizeWin, rightResize, bottomResize, bottomRightResize })
          }
-         ViewElem.setStyles(htmlElem,{ contain: "layout" })
+         View.setStyles(htmlElem,{ contain: "layout" })
 
-         return { borders, controllers }
+         return { viewModel, borders, controllers }
       }
 
-      class ViewElem {
-         #htmlElem
-         constructor(htmlElem) {
-            this.#htmlElem = htmlElem
-         }
-         get htmlElem() {
-            return this.#htmlElem
-         }
-         setHTML(htmlString) {
-            this.#htmlElem.innerHTML = htmlString
-            return this
-         }
-         append(htmlElem) {
-            this.#htmlElem.append(htmlElem)
-            return this
-         }
-         setChild(htmlElem) {
-            const elem = this.#htmlElem
-            while (elem.childNodes.length)
-               elem.childNodes[0].remove()
-            elem.append(htmlElem)
-            return this
-         }
-         getComputedStyles(styles) {
-            return ViewElem.getComputedStyles(this.htmlElem, styles)
-         }
-         getStyles(styles) {
-            return ViewElem.getStyles(this.htmlElem, styles)
-         }
-         setStyles(styles) {
-            return ViewElem.setStyles(this.htmlElem, styles)
-         }
+      class HTMLView {
          static needsBorderBox(htmlElem) {
             const needValue = "border-box"
             const styleProp = "box-sizing"
@@ -870,47 +873,17 @@
          }
          static setStyles(htmlElem, styles) {
             const elemStyle = htmlElem.style
-            const oldValues = this.getStyles(htmlElem,styles)
-            for (const key in styles)
+            const oldValues = { }
+            for (const key in styles) {
+               oldValues[key] = elemStyle.getPropertyValue(key)
                elemStyle.setProperty(key, styles[key])
+            }
             return oldValues
          }
-      }
-
-      class View extends ViewElem {
-         #vm
-         #slots
-         constructor(htmlElem, vm) {
-            super(htmlElem)
-            this.#vm = vm
-         }
-         error(msg) {
-            throw Error(`${this.#vm?this.#vm.name+"-VM-":''}View error: ${msg}`)
-         }
-         getSlot(name) {
-            this.assertSlotNames(name)
-            return this.#slots.get(name)[0]
-         }
-         getSlots(name) {
-            this.assertSlotNames(name)
-            return this.#slots.get(name)
-         }
-         getSlotNames() {
-            this.assertSlotNames()
-            return [...this.#slots.keys()]
-         }
-         assertSlotNames(...slotNames) {
-            if (!this.#slots)
-               this.#slots = View.getSlots(this.htmlElem)
-            if (slotNames.length > 0) {
-               for (const name of slotNames) {
-                  if (!this.#slots.has(name)) {
-                     console.log("HTML",this.htmlElem,this.htmlElem.innerHTML)
-                     this.error(`Expect attribute data-vm='${name}' in HTML.`)
-                  }
-               }
-            }
-            return this
+         static restoreStyles(htmlElem, oldValues) {
+            const elemStyle = htmlElem.style
+            for (const key in oldValues)
+               elemStyle.setProperty(key, oldValues[key])
          }
          static getSlots(htmlElem) {
             const slots = new Map()
@@ -918,23 +891,155 @@
             nodes.forEach(node => {
                const name = node.dataset.vm
                const views = slots.get(name) ?? []
-               views.push(new ViewElem(node))
+               views.push(node)
                slots.set(name, views)
             })
             return slots
          }
-         static htmlElem(htmlElemSel) {
-            return HTMLElemSel.htmlElem(htmlElemSel)
+      }
+
+      class View extends HTMLView {
+         #htmlElem
+         constructor(htmlElem) {
+            super()
+            this.#htmlElem = htmlElem
          }
-         static clone(htmlElemSel) {
-            return HTMLElemSel.clone(htmlElemSel)
+         error(msg) {
+            throw Error(`View error: ${msg}`)
          }
+         get htmlElem() {
+            return this.#htmlElem
+         }
+         get html() {
+            return this.#htmlElem.innerHTML
+         }
+         set html(htmlString) {
+            this.#htmlElem.innerHTML = htmlString
+         }
+         append(node) {
+            this.#htmlElem.append(node)
+            return this
+         }
+         get node() {
+            return this.#htmlElem.childNodes[0]
+         }
+         set node(node) {
+            const elem = this.#htmlElem
+            while (elem.childNodes.length)
+               elem.childNodes[0].remove()
+            elem.append(node)
+         }
+         getComputedStyles(styles) {
+            return HTMLView.getComputedStyles(this.htmlElem, styles)
+         }
+         getStyles(styles) {
+            return HTMLView.getStyles(this.htmlElem, styles)
+         }
+         setStyles(styles) {
+            return HTMLView.setStyles(this.htmlElem, styles)
+         }
+      }
+
+      class ViewSlots {
+         #slots
+         constructor(htmlElem,...assertedSlotNames) {
+            this.#slots = new Map()
+            HTMLView.getSlots(htmlElem).forEach( (slotElemArray, slotName) => {
+               this.#slots.set( slotName, slotElemArray.map( slotElem => new View(slotElem)))
+            })
+            this.assertSlotNames(assertedSlotNames, htmlElem)
+         }
+         error(msg) {
+            throw Error(`ViewSlots error: ${msg}`)
+         }
+         getSlot(name) {
+            this.assertSlotName(name)
+            return this.#slots.get(name)[0]
+         }
+         getSlots(name) {
+            this.assertSlotName(name)
+            return this.#slots.get(name)
+         }
+         getSlotNames() {
+            return [...this.#slots.keys()]
+         }
+         assertSlotName(name, htmlElem) {
+            if (!this.#slots.has(name)) {
+               if (htmlElem)
+                  console.log("HTML",htmlElem,htmlElem.innerHTML)
+               this.error(`Missing data-vm='${name}' in HTML.`)
+            }
+         }
+         assertSlotNames(slotNamesArray, htmlElem) {
+            for (const name of slotNamesArray) {
+               if (!this.#slots.has(name)) {
+                  if (htmlElem)
+                     console.log("HTML",htmlElem,htmlElem.innerHTML)
+                  this.error(`Missing data-vm='${name}' in HTML.`)
+               }
+            }
+         }
+      }
+
+      class ViewCoordinates {
+
+         /**
+          * Returns { top, left, width, height } in
+          * viewport (window) coordinates of htmlElem (top,left are relative coordinates to viewport).
+          * The coordinate denoting top left of the viewport is (0,0).
+          * The calculation includes padding and border size of htmlElem.
+          * The calculation does not take any transformations into account,
+          * use getBoundingClientRect in this case.
+          */
+         static windowRect(htmlElem) {
+            if (! (htmlElem instanceof HTMLElement))
+               throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
+            let top = 0, left = 0, elem = htmlElem;
+            do {
+               const offsetParent = elem.offsetParent
+               top += elem.offsetTop
+               left += elem.offsetLeft
+               if (offsetParent === document.body) {
+                  if ("fixed" !== getComputedStyle(htmlElem)["position"]) {
+                     top -= document.scrollingElement.scrollTop
+                     left -= document.scrollingElement.scrollLeft
+                  }
+               }
+               else if (offsetParent) {
+                  top -= offsetParent.scrollTop
+                  left -= offsetParent.scrollLeft
+               }
+               elem = offsetParent
+            } while (elem)
+            return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
+         }
+
+         static documentRect(htmlElem) {
+            if (! (htmlElem instanceof HTMLElement))
+               throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
+            let top = 0, left = 0, elem = htmlElem;
+            do {
+               const offsetParent = elem.offsetParent
+               top += elem.offsetTop
+               left += elem.offsetLeft
+               if (offsetParent === document.body) {
+                  if ("fixed" === getComputedStyle(htmlElem)["position"]) {
+                     top += document.scrollingElement.scrollTop
+                     left += document.scrollingElement.scrollLeft
+                  }
+               }
+               elem = offsetParent
+            } while (elem)
+            return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
+         }
+
       }
 
       /**
        * Model which is bound to a single view and manages its state.
        */
       class ViewModel {
+         static #validObserverNames = new Set(["hidden"])
          #modelName
          #htmlElem
          #on = {}
@@ -942,9 +1047,15 @@
          constructor(htmlElem, modelName) {
             this.#htmlElem = htmlElem
             this.#modelName = modelName
-            this.#view = new View(htmlElem,this)
-            this.connect()
+            this.#view = new View(htmlElem)
+            this.connected = true
          }
+         static get validObserverNames() { return ViewModel.#validObserverNames }
+         /**
+          * Returns valid names of prperties which could be observed for change.
+          * Should be overwritten in subclass if new properties should be supported.
+          */
+         get validObserverNames() { return ViewModel.#validObserverNames }
          error(msg) {
             throw Error(`${this.#modelName}-View-Model error: ${msg}`)
          }
@@ -980,61 +1091,119 @@
                }
             return overwritten
          }
-         connect() {
-            if (!this.htmlElem.isConnected) {
-               this.visibility = false
-               document.body.append(this.htmlElem)
+         detach() {
+            const htmlElem = this.htmlElem
+            this.#htmlElem = null
+            this.#on = {}
+            this.#view = null
+            return htmlElem
+         }
+         get connectedTo() {
+            // !htmlElem.isConnected ==> parent == nextSibling == null
+            const htmlElem = this.htmlElem
+            return { parent: htmlElem.parentNode, nextSibling: htmlElem.nextSibling }
+         }
+         set connectedTo(connectTo) {
+            const htmlElem = this.htmlElem
+            const isConnected = htmlElem.isConnected
+            if (!connectTo?.parent)
+               htmlElem.remove()
+            else if (htmlElem.parentNode !== connectTo.parent || htmlElem.nextSibling !== connectTo.nextSibling)
+               connectTo.parent.insertBefore(htmlElem, connectTo.nextSibling ?? null )
+            if (isConnected != htmlElem.isConnected)
+               this._update_connected?.(this,htmlElem.isConnected)
+         }
+         get connected() {
+            return this.htmlElem.isConnected
+         }
+         set connected(isConnect) {
+            const htmlElem = this.htmlElem
+            if (isConnect && !htmlElem.isConnected) {
+               document.body.append(htmlElem)
+               this._update_connected?.(this,true)
+            }
+            else if (!isConnect && htmlElem.isConnected) {
+               htmlElem.remove()
+               this._update_connected?.(this,true)
+            }
+         }
+         get hidden() {
+            return getComputedStyle(this.htmlElem).display === "none"
+         }
+         set hidden(isHidden) {
+            const style = this.htmlElem.style
+            if (isHidden === false && style.display === "none") {
+               style.display = style["--display"] ?? ""
+               style["--display"] = undefined
+               this._update_hidden?.(this,false)
+            }
+            else if (isHidden === true && style.display !== "none") {
+               style["--display"] = style.display
+               style.display = "none"
+               this._update_hidden?.(this,true)
             }
          }
          get visibility() {
             return getComputedStyle(this.htmlElem).visibility === "visible"
          }
          set visibility(isVisible) {
-            this.htmlElem.style.visibility = (isVisible ? "" : "hidden")
+            if (isVisible === true)
+               this.htmlElem.style.visibility = ""
+            else if (isVisible === false)
+               this.htmlElem.style.visibility = "hidden"
          }
+         assertObserverName(name) {
+            if (!this.validObserverNames.has(name))
+               this.error(`Observer with name '${name}' does not exist.`)
+         }
+         getUpdateObserver(name) { this.assertObserverName(name); return this["_update_"+name] }
+         setUpdateObserver(name,callback) { this.assertObserverName(name); this["_update_"+name] = callback }
+         deleteUpdateObserver(name) { this.assertObserverName(name); delete this["_update_"+name] }
       }
 
       class ResizeVM extends ViewModel {
          constructor(htmlElem, modelName) {
             super(htmlElem, modelName || "Resize")
             super.bindEventHandlers(ResizeVM.prototype)
-            ViewElem.needsBorderBox(htmlElem)
+            View.needsBorderBox(htmlElem)
          }
 
-         set vheight(value/*number value in pixels*/) {
+         set vHeight(value/*number value in pixels*/) {
             if (value < 0)
                value = 0
             this.htmlElem.style.height = value+"px"
          }
-         get vheight() {
+         get vHeight() {
             return this.htmlElem.offsetHeight // in pixel (could be a fraction)
          }
-         set vwidth(value/*number value in pixels*/) {
+         set vWidth(value/*number value in pixels*/) {
             if (value < 0)
                value = 0
             this.htmlElem.style.width = value+"px"
          }
-         get vwidth() {
+         get vWidth() {
             return this.htmlElem.offsetWidth // in pixel (could be a fraction)
          }
-         set vtop(value/*number value in pixels*/) {
+         set vTop(value/*number value in pixels*/) {
             this.htmlElem.style.top = value+"px"
          }
-         get vtop() {
+         get vTop() {
             return this.htmlElem.offsetTop // in pixel (could be a fraction)
          }
-         set vleft(value/*number value in pixels*/) {
+         set vLeft(value/*number value in pixels*/) {
             this.htmlElem.style.left = value+"px"
          }
-         get vleft() {
+         get vLeft() {
             return this.htmlElem.offsetLeft
          }
 
-         move(deltax,deltay) { this.vleft += deltax; this.vtop += deltay; }
-         resizeTop(deltay) { this.vtop -= deltay; this.vheight += deltay; }
-         resizeRight(deltax) { this.vwidth += deltax; }
-         resizeBottom(deltay) { this.vheight += deltay; }
-         resizeLeft(deltax) { this.vleft -= deltax; this.vwidth += deltax; }
+         isMoveable(position) { return ["fixed","absolute"].includes(position ?? getComputedStyle(this.htmlElem)["position"]) }
+
+         move(deltax,deltay) { this.vLeft += deltax; this.vTop += deltay; }
+         resizeTop(deltay) { this.vTop -= deltay; this.vHeight += deltay; }
+         resizeRight(deltax) { this.vWidth += deltax; }
+         resizeBottom(deltay) { this.vHeight += deltay; }
+         resizeLeft(deltax) { this.vLeft -= deltax; this.vWidth += deltax; }
          resizeTopLeft(deltax,deltay) { this.resizeLeft(deltax); this.resizeTop(deltay); }
          resizeTopRight(deltax,deltay) { this.resizeRight(deltax); this.resizeTop(deltay); }
          resizeBottomRight(deltax,deltay) { this.resizeRight(deltax); this.resizeBottom(deltay); }
@@ -1058,9 +1227,9 @@
       }
 
       class TransitionController extends ViewController {
-         constructor(htmlElem, endCallback, ...blockedControllers) {
+         constructor(htmlElem, callback, ...blockedControllers) {
             super()
-            this.add(htmlElem, endCallback, ...blockedControllers)
+            this.add(htmlElem, callback, ...blockedControllers)
          }
 
          add(htmlElem, endCallback, ...blockedControllers) {
@@ -1068,16 +1237,28 @@
             const onEnd = this.onTransitionEnd.bind(this)
             super.addListener(htmlElem, "transitionend", onEnd)
             super.addListener(htmlElem, "transitioncancel", onEnd)
+            return this
          }
 
-         endIfNoTransition(htmlElem) {
-            asyncUIUpdate( () => {
-               const animations = htmlElem.getAnimations()
-               const hasTransition = animations.some( anim => anim instanceof CSSTransition)
-               if (!hasTransition) {
-                  htmlElem.dispatchEvent(new Event("transitioncancel"))
-               }
-            })
+         isInTransition() {
+            if (this.htmlElem) {
+               const animations = this.htmlElem.getAnimations()
+               return animations.some( anim => anim instanceof CSSTransition)
+            }
+            return false
+         }
+
+         setTimeout(milliseconds) {
+            const htmlElem = this.htmlElem
+            if (htmlElem) {
+               setTimeout( () =>
+                  asyncUIUpdate( () => {
+                     if (this.htmlElem === htmlElem) {
+                        htmlElem.dispatchEvent(new Event("transitioncancel"))
+                     }
+                  })
+               , milliseconds)
+            }
          }
 
          onTransitionEnd(e) {
@@ -1086,137 +1267,274 @@
          }
       }
 
-      function WindowDecorator(htmlElem, viewModel) {
-         ViewElem.setStyles(htmlElem,{position: "fixed"})
-         viewModel.vtop = 40
-         viewModel.vleft = 330
-         viewModel.vwidth = 400
-         viewModel.vheight = 400
-         decorateElement(htmlElem, ResizeDecorator, viewModel)
+      function WindowDecorator(htmlElem, viewModel, {template, title}={}) {
+         const cstyle = getComputedStyle(htmlElem)
+         const position = cstyle["position"]
+         if (viewModel === undefined) {
+            const windowHtmlElem = template ?? ElemSel.clone("#js-window-template")
+            const height = htmlElem.offsetHeight || 100
+            const width = htmlElem.offsetWidth || 100
+            const top = ({ static:0, relative:parseFloat(cstyle.top)})[position] ?? htmlElem.offsetTop
+            const left = ({ static:0, relative:parseFloat(cstyle.left)})[position] ?? htmlElem.offsetLeft
+            htmlElem.parentElement.replaceChild(windowHtmlElem, htmlElem)
+            viewModel = new WindowVM(windowHtmlElem)
+            viewModel.vTop = top
+            viewModel.vLeft = left
+            viewModel.vWidth = width
+            viewModel.vHeight = height
+         }
+         viewModel.vTitle = title
+         viewModel.vContent = htmlElem
+         View.setStyles(htmlElem, { width:"100%", height:"100%", position:"static" })
+         View.setStyles(viewModel.htmlElem, { position: position === "static" ? "relative" : position })
+         const resizeState = decorateElement(viewModel, ResizeDecorator).decoratorState
+         const moveWin = resizeState.controllers.moveWin
+         const controllers = {
+            close: new ClickController(viewModel.getSlot("close").htmlElem, () => {
+               viewModel.vWindowState = WindowVM.CLOSED
+            },moveWin),
+            min: new ClickController(viewModel.getSlot("min").htmlElem, () => {
+               viewModel.vWindowState = WindowVM.MINIMIZED
+            },moveWin),
+            max: new ClickController(viewModel.getSlot("max").htmlElem, () => {
+               viewModel.vWindowState = (viewModel.vWindowState === WindowVM.MAXIMIZED)
+                                 ? WindowVM.VISIBLE
+                                 : WindowVM.MAXIMIZED
+            },moveWin)
+         }
+         return { viewModel, controllers, resizeState }
       }
 
       class WindowVM extends ResizeVM {
+         static #validObserverNames = new Set([...ResizeVM.validObserverNames,"vWindowState"])
          #windowState
-         #visiblePosStyle
+         #visibleState={}
+         #slots
 
          // window state
-         static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"
+         static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"; static CLOSED = "closed";
          // transition style for animation
-         static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":".1s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
+         static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
 
          constructor(htmlElem, modelName) {
             super(htmlElem, modelName || "Window")
             super.bindEventHandlers(WindowVM.prototype)
-            this.#windowState = getComputedStyle(this.htmlElem).visibility
+            this.#slots = new ViewSlots(htmlElem, "window-content","window-title","close","min","max")
+            this.#windowState = this.hidden ? WindowVM.HIDDEN : WindowVM.VISIBLE
          }
 
-         vMinimizedHeight() {
+         static get validObserverNames() { return WindowVM.#validObserverNames }
+         get validObserverNames() { return WindowVM.#validObserverNames }
+
+         getSlot(name) {
+            return this.#slots.getSlot(name)
+         }
+
+         minimizedHeight() {
             const titleBarHeight = 2*parseFloat(getComputedStyle(this.htmlElem)["border-top"])
-                  +this.view.getSlot("minimized-height").htmlElem.offsetHeight
+                  +this.getSlot("minimized-height").htmlElem.offsetHeight
             return isNaN(titleBarHeight) ? 20 : titleBarHeight
+         }
+
+         get vTitle() {
+            return this.getSlot("window-title").html
+         }
+         set vTitle(html) {
+            if (typeof html === "string")
+               this.getSlot("window-title").html = html
+         }
+
+         get vContent() {
+            return this.getSlot("window-content").node
+         }
+         set vContent(node) {
+            if (node instanceof Node)
+               this.getSlot("window-content").node = node
          }
 
          get vWindowState() {
             return this.#windowState
          }
-
          set vWindowState(state) {
             const oldState = this.#windowState
             if (oldState === state)
                return
+            if (oldState === WindowVM.CLOSED) {
+               if (!this.closedState?.connectedTo)
+                  return
+               this.connectedTo = this.closedState?.connectedTo
+               delete this.closedState
+            }
             if (oldState === WindowVM.VISIBLE)
-               this.#visiblePosStyle = ViewElem.getStyles(this.htmlElem, ["width","height","top","left"])
+               this.#visibleState = { style: View.getStyles(this.htmlElem, ["width","height","top","left"]) }
             if (state === WindowVM.VISIBLE) {
-               this.#windowState = WindowVM.VISIBLE
+               const htmlElem = this.htmlElem
                asyncUIUpdate( () => {
-                  const htmlElem = this.htmlElem
-                  this.visibility = true
-                  if (this.#visiblePosStyle) {
-                     const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
-                     ViewElem.setStyles(htmlElem, this.#visiblePosStyle)
-                     new TransitionController(htmlElem, () => {
-                        ViewElem.setStyles(htmlElem, oldTransitionStyle)
-                     }).endIfNoTransition(htmlElem)
-                  }
+                  this.hidden = false
+                  asyncUIUpdate( () => {
+                     if (this.#visibleState.style) {
+                        const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                        asyncUIUpdate( () => View.setStyles(htmlElem, this.#visibleState.style))
+                        new TransitionController(htmlElem, () => {
+                           View.setStyles(htmlElem, oldTransitionStyle)
+                        }).setTimeout(500)
+                     }
+                  })
                })
             }
             else if (state === WindowVM.HIDDEN) {
-               this.#windowState = WindowVM.HIDDEN
-               asyncUIUpdate( () => this.visibility = false)
+               asyncUIUpdate( () => this.hidden = true)
             }
             else if (state === WindowVM.MINIMIZED) {
-               this.#windowState = WindowVM.MINIMIZED
+               const htmlElem = this.htmlElem
                asyncUIUpdate( () => {
-                  const htmlElem = this.htmlElem
-                  const minHeight = this.vMinimizedHeight()
-                  const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
-                  ViewElem.setStyles(htmlElem, {
-                     width:(2*minHeight)+"px", height:minHeight+"px", top:(window.innerHeight-2*minHeight)+"px", left:"5px"
+                  this.hidden = false
+                  asyncUIUpdate( () => {
+                     const cstyle = getComputedStyle(htmlElem)
+                     const minHeight = this.minimizedHeight()
+                     const pos = htmlElem.getBoundingClientRect()
+                     const width = (2*minHeight)+"px", height = minHeight+"px"
+                     const top = window.innerHeight-2*minHeight, left = 5
+                     const newPos = cstyle.position === "relative"
+                                    ? { width, height, top:(top-pos.top+parseFloat(cstyle.top))+"px", left:(left-pos.left+parseFloat(cstyle.left))+"px" }
+                                    : { width, height, top:(top+htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:(left+htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
+                     const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                     View.setStyles(htmlElem, newPos)
+                     new TransitionController(htmlElem, () => {
+                        View.setStyles(htmlElem, oldTransitionStyle)
+                        this.hidden = true
+                     }).setTimeout(500)
                   })
-                  new TransitionController(htmlElem, () => {
-                     this.visibility = false
-                     ViewElem.setStyles(htmlElem, oldTransitionStyle)
-                  }).endIfNoTransition(htmlElem)
                })
             }
             else if (state === WindowVM.MAXIMIZED) {
-               this.#windowState = WindowVM.MAXIMIZED
+               const htmlElem = this.htmlElem
                asyncUIUpdate( () => {
-                  const htmlElem = this.htmlElem
-                  const oldTransitionStyle = ViewElem.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
-                  this.visibility = true
-                  ViewElem.setStyles(htmlElem, {
-                     width:window.innerWidth+"px", height:window.innerHeight+"px", top:"0px", left:"0px"
+                  this.hidden = false
+                  asyncUIUpdate( () => {
+                     const cstyle = getComputedStyle(htmlElem)
+                     const pos = htmlElem.getBoundingClientRect()
+                     const newPos = cstyle.position === "relative"
+                                 ? { width:"100%", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
+                                 : { width:"100%", height:"100vh", top:Math.max(0,htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:Math.max(0,htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
+                     const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                     View.setStyles(htmlElem, newPos)
+                     new TransitionController(htmlElem, () => {
+                        View.setStyles(htmlElem, oldTransitionStyle)
+                     }).setTimeout(500)
                   })
-                  new TransitionController(htmlElem, () => {
-                     ViewElem.setStyles(htmlElem, oldTransitionStyle)
-                  }).endIfNoTransition(htmlElem)
                })
+            }
+            else if (state == WindowVM.CLOSED) {
+               this.closedState = { connectedTo: this.connectedTo }
+               this.connected = false
             }
             else
                this.error(`Unsupported window state: ${state}`)
+            this.#windowState = state
+            this._update_vWindowState?.(this,state)
          }
       }
 
+
       class WindowStackVM extends ViewModel {
          #templateSel="#js-minimized-window-template"
+         #windowVMs=new Map()
 
          constructor(htmlElem, modelName) {
             super(htmlElem, modelName || "WindowStack")
             super.bindEventHandlers(WindowStackVM.prototype)
          }
 
-         setTemplate(htmlElemSel) {
-            this.#templateSel = htmlElemSel
+         setTemplate(elemSel) {
+            this.#templateSel = elemSel
          }
 
-         addMinimized(title) {
-            const view = new View(View.clone(this.#templateSel))
-            view.getSlot("window-title").setHTML(title)
-            this.htmlElem.append(view.htmlElem)
+         addMinimized(windowVM) {
+            const htmlElem = ElemSel.clone(this.#templateSel)
+            const slots = new ViewSlots(htmlElem)
+            slots.getSlot("window-title").html = windowVM.vTitle
+            const controllers = [
+               new ClickController(slots.getSlot("close").htmlElem, (e) => {
+                  this.setWindowState(windowVM, WindowVM.CLOSED)
+               }),
+               new ClickController(slots.getSlot("window-title").htmlElem, (e) => {
+                  this.setWindowState(windowVM)
+               }),
+            ]
+            this.htmlElem.append(htmlElem)
+            return { htmlElem, controllers }
          }
+
+         setWindowState(windowVM, vWindowState) {
+            const state = this.#windowVMs.get(windowVM)
+            if (state)
+               windowVM.vWindowState = vWindowState ?? state.vWindowState
+         }
+         removeMinimized(windowVM) {
+            const state = this.#windowVMs.get(windowVM)
+            if (state?.minimized) {
+               const minimized = state.minimized
+               minimized.htmlElem.remove()
+               minimized.controllers.forEach( cntrl => cntrl.remove())
+               state.minimized = null
+            }
+         }
+
+         unregister(windowVM) {
+            this.removeMinimized(windowVM)
+            this.#windowVMs.delete(windowVM)
+         }
+
+         register(windowVM) {
+            if (this.#windowVMs.has(windowVM))
+               return
+            this.#windowVMs.set(windowVM, { windowVM, vWindowState:windowVM.vWindowState, minimized: null })
+            const prevObserver = windowVM.getUpdateObserver("vWindowState")
+            windowVM.setUpdateObserver("vWindowState", (vm,vWindowState) => {
+               prevObserver?.(vm,vWindowState)
+               if (!this.#windowVMs.has(vm))
+                  this.#windowVMs.set(windowVM, { windowVM, vWindowState:WindowVM.VISIBLE, minimized: null })
+               const state = this.#windowVMs.get(vm)
+               if (vWindowState === WindowVM.MINIMIZED || vWindowState === WindowVM.HIDDEN) {
+                  if (!state.minimized)
+                     state.minimized = winstackVM.addMinimized(vm)
+               }
+               else if (vWindowState === WindowVM.CLOSED)
+                  this.unregister(vm)
+               else {
+                  state.vWindowState = vWindowState
+                  this.removeMinimized(vm)
+               }
+            })
+         }
+
       }
 
-      const winVM = new WindowVM(View.clone("#js-window-template"))
-      winVM.view.getSlot("window-title").setHTML("Hello Title")
-      winVM.view.getSlot("window-child").setChild(div1)
-      decorateElement(winVM.htmlElem, WindowDecorator, winVM).viewModel.vWindowState = WindowVM.VISIBLE
-      // TODO: add options
-      // decorateElement(WindowDecorator, { vm: winVM, htmlElem: vm.htmlElem /* default */ })
-      // decorateElement(div1, ResizeDecorator, new ResizeVM(div1))
-      decorateElement(div2, ResizeDecorator, new ResizeVM(div2))
-      decorateElement(div3, ResizeDecorator, new ResizeVM(div3))
-      decorateElement(window4, ResizeDecorator, new ResizeVM(window4))
-      var vm3 = htmlDecorators.getDecoratorViewModel(div3,ResizeDecorator)
+      const win1VM = decorateElement(div1, WindowDecorator, { template: ElemSel.clone("#js-window-template"), title: "Hello 1" }).viewModel
+      const win2VM = decorateElement(div2, WindowDecorator, { template: ElemSel.clone("#js-window-template"), title: "Hello 2" }).viewModel
+      const win3VM = decorateElement(div3, WindowDecorator, { template: ElemSel.clone("#js-window-template"), title: "Hello 3" }).viewModel
+      // decorateElement(div1, ResizeDecorator)
+      // decorateElement(div2, ResizeDecorator)
+      // decorateElement(div3, ResizeDecorator)
 
       console.log(htmlListeners.getListenedElements(document))
 
-      const winstackVM = new WindowStackVM(View.htmlElem("[class='js-window-stack']"))
+      const winstackVM = new WindowStackVM(ElemSel.htmlElem("[class='js-window-stack']"))
 
       winstackVM.count = 0
-      View.htmlElem("[class='js-window-stack'] button").addEventListener("click", (e) => {
-         winstackVM.addMinimized(`Mini Win ${++winstackVM.count}`)
+      ElemSel.htmlElem("[class='js-window-stack'] button").addEventListener("click", (e) => {
+         if (win1VM.vWindowState === WindowVM.CLOSED)
+            win1VM.vWindowState = WindowVM.VISIBLE
+         else if (win2VM.vWindowState === WindowVM.CLOSED)
+            win2VM.vWindowState = WindowVM.VISIBLE
+         else if (win3VM.vWindowState === WindowVM.CLOSED)
+            win3VM.vWindowState = WindowVM.VISIBLE
       })
+
+      winstackVM.register(win1VM)
+      winstackVM.register(win2VM)
+      winstackVM.register(win3VM)
 
    </script>
 

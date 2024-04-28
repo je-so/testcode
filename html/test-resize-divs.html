@@ -345,7 +345,7 @@
             }
          },
          removeListener(listener) {
-            const eventTypes = this.htmlElements.get(listener.htmlElem)
+            const eventTypes = this.htmlElements.get(listener?.htmlElem)
             const map = eventTypes && eventTypes[listener.eventType]
             if (map && map.size > 0) {
                map.delete(listener.eventHandler)
@@ -539,6 +539,13 @@
          callAction(e) {
             if (!this.isBlocked && this.#callback)
                this.#callback(e)
+         }
+         callActionOnce(e) {
+            const callback = this.#callback
+            if (!this.isBlocked && callback) {
+               this.#callback = null
+               callback(e)
+            }
          }
          removeListeners(listenersArray) {
             removeListeners(listenersArray)
@@ -967,17 +974,12 @@
             if (!this.#slots.has(name)) {
                if (htmlElem)
                   console.log("HTML",htmlElem,htmlElem.innerHTML)
-               this.error(`Missing data-vm='${name}' in HTML.`)
+               this.error(`Missing attribute data-vm='${name}' in HTML.`)
             }
          }
          assertSlotNames(slotNamesArray, htmlElem) {
-            for (const name of slotNamesArray) {
-               if (!this.#slots.has(name)) {
-                  if (htmlElem)
-                     console.log("HTML",htmlElem,htmlElem.innerHTML)
-                  this.error(`Missing data-vm='${name}' in HTML.`)
-               }
-            }
+            for (const name of slotNamesArray)
+               this.assertSlotName(name, htmlElem)
          }
       }
 
@@ -1240,31 +1242,34 @@
             return this
          }
 
-         isInTransition() {
-            if (this.htmlElem) {
-               const animations = this.htmlElem.getAnimations()
-               return animations.some( anim => anim instanceof CSSTransition)
-            }
-            return false
+         onTransitionEnd(e) {
+            super.callActionOnce({target: e.target})
+            this.remove()
          }
 
          setTimeout(milliseconds) {
             const htmlElem = this.htmlElem
             if (htmlElem) {
-               setTimeout( () =>
-                  asyncUIUpdate( () => {
-                     if (this.htmlElem === htmlElem) {
-                        htmlElem.dispatchEvent(new Event("transitioncancel"))
-                     }
-                  })
-               , milliseconds)
+               setTimeout( () => {
+                  if (this.htmlElem === htmlElem)
+                     TransitionController.cancelTransition(htmlElem)
+               }, milliseconds)
             }
+            return this
          }
 
-         onTransitionEnd(e) {
-            super.callAction()
-            this.remove()
+         static isInTransition(htmlElem) {
+            const animations = htmlElem?.getAnimations(/*{subtree:true} ONLY parent*/)
+            return animations?.some(animation => animation instanceof CSSTransition)
          }
+         static cancelTransition(htmlElem) {
+            htmlElem && htmlElem.dispatchEvent(new Event("transitioncancel"))
+         }
+         static ensureInTransition(htmlElem) {
+            if (!TransitionController.isInTransition(htmlElem))
+               TransitionController.cancelTransition(htmlElem)
+         }
+
       }
 
       function WindowDecorator(htmlElem, viewModel, {template, title}={}) {
@@ -1310,6 +1315,7 @@
          #windowState
          #visibleState={}
          #slots
+         #oldTransitionStyle
 
          // window state
          static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"; static CLOSED = "closed";
@@ -1328,6 +1334,10 @@
 
          getSlot(name) {
             return this.#slots.getSlot(name)
+         }
+
+         isDisplayed() {
+            return this.htmlElem.offsetHeight || this.getSlot("minimized-height").htmlElem.offsetHeight
          }
 
          minimizedHeight() {
@@ -1352,6 +1362,25 @@
                this.getSlot("window-content").node = node
          }
 
+         #startTransition(onTransitionEnd) {
+            if (!this.#oldTransitionStyle)
+               this.#oldTransitionStyle = View.setStyles(this.htmlElem, WindowVM.TRANSITION_STYLE)
+            new TransitionController(this.htmlElem, () => {
+               this.#disableTransition()
+               onTransitionEnd?.()
+            })
+         }
+         #disableTransition() {
+            if (this.#oldTransitionStyle) {
+               View.setStyles(this.htmlElem, this.#oldTransitionStyle)
+               this.#oldTransitionStyle = undefined
+               TransitionController.cancelTransition(this.htmlElem)
+            }
+         }
+         isInTransition() {
+            return Boolean(this.#oldTransitionStyle)
+         }
+
          get vWindowState() {
             return this.#windowState
          }
@@ -1365,19 +1394,19 @@
                this.connectedTo = this.closedState?.connectedTo
                delete this.closedState
             }
-            if (oldState === WindowVM.VISIBLE)
-               this.#visibleState = { style: View.getStyles(this.htmlElem, ["width","height","top","left"]) }
+            if (oldState === WindowVM.VISIBLE && !this.#visibleState.locked)
+               this.#visibleState = { locked:false, style: View.getStyles(this.htmlElem, ["width","height","top","left"]) }
             if (state === WindowVM.VISIBLE) {
                const htmlElem = this.htmlElem
+               this.#visibleState.locked = true
                asyncUIUpdate( () => {
                   this.hidden = false
                   asyncUIUpdate( () => {
+                     this.#visibleState.locked = false
                      if (this.#visibleState.style) {
-                        const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
-                        asyncUIUpdate( () => View.setStyles(htmlElem, this.#visibleState.style))
-                        new TransitionController(htmlElem, () => {
-                           View.setStyles(htmlElem, oldTransitionStyle)
-                        }).setTimeout(500)
+                        this.#startTransition()
+                        View.setStyles(htmlElem, this.#visibleState.style)
+                        TransitionController.ensureInTransition(htmlElem)
                      }
                   })
                })
@@ -1390,6 +1419,8 @@
                asyncUIUpdate( () => {
                   this.hidden = false
                   asyncUIUpdate( () => {
+                     if (!this.isDisplayed())
+                        return
                      const cstyle = getComputedStyle(htmlElem)
                      const minHeight = this.minimizedHeight()
                      const pos = htmlElem.getBoundingClientRect()
@@ -1398,12 +1429,12 @@
                      const newPos = cstyle.position === "relative"
                                     ? { width, height, top:(top-pos.top+parseFloat(cstyle.top))+"px", left:(left-pos.left+parseFloat(cstyle.left))+"px" }
                                     : { width, height, top:(top+htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:(left+htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
-                     const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                     this.#startTransition( () => {
+                        if (this.#windowState === WindowVM.MINIMIZED)
+                           this.hidden = true
+                     })
                      View.setStyles(htmlElem, newPos)
-                     new TransitionController(htmlElem, () => {
-                        View.setStyles(htmlElem, oldTransitionStyle)
-                        this.hidden = true
-                     }).setTimeout(500)
+                     TransitionController.ensureInTransition(htmlElem)
                   })
                })
             }
@@ -1412,16 +1443,16 @@
                asyncUIUpdate( () => {
                   this.hidden = false
                   asyncUIUpdate( () => {
+                     if (!this.isDisplayed())
+                        return
                      const cstyle = getComputedStyle(htmlElem)
                      const pos = htmlElem.getBoundingClientRect()
                      const newPos = cstyle.position === "relative"
                                  ? { width:"100%", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
                                  : { width:"100%", height:"100vh", top:Math.max(0,htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:Math.max(0,htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
-                     const oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+                     this.#startTransition()
                      View.setStyles(htmlElem, newPos)
-                     new TransitionController(htmlElem, () => {
-                        View.setStyles(htmlElem, oldTransitionStyle)
-                     }).setTimeout(500)
+                     TransitionController.ensureInTransition(htmlElem)
                   })
                })
             }

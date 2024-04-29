@@ -10,7 +10,7 @@
          --border-color: #333;
          background-color: black; color: white;
          border-radius: 12px 12px 0 0; border: 1px var(--border-color) solid;
-         box-sizing: border-box;
+         box-sizing: border-box; position: fixed;
          display: flex; flex-flow: column nowrap; place-items: stretch;
       }
       .js-window .js-head {
@@ -56,20 +56,18 @@
          position: fixed; left: 5px; bottom: 5px;
          display: flex; flex-flow: column-reverse nowrap; place-items: stretch; gap: 5px;
       }
-      .js-window-stack .js-window .js-body {
-         display: none;
+      .js-window-stack > * {
+         position: static;
       }
       .js-window-stack .js-window .js-title:hover {
          background-color: lightslategray;
          cursor: pointer;
       }
-
       .js-window-stack button {
          color:white; background-color:cadetblue;
          border:1px darkgoldenrod solid;
          padding:3px;
       }
-
       .js-window-stack button:hover {
          color:#fafafa;
          outline:1px darkgoldenrod solid;
@@ -903,6 +901,11 @@
             })
             return slots
          }
+         static createElem(htmlString) {
+            const div = document.createElement("div")
+            div.innerHTML = htmlString
+            return div.children[0]
+         }
       }
 
       class View extends HTMLView {
@@ -1041,28 +1044,50 @@
        * Model which is bound to a single view and manages its state.
        */
       class ViewModel {
-         static #validObserverNames = new Set(["hidden"])
-         #modelName
+         static #validObserverNames = new Set(["hidden","connected"])
+         #name
          #htmlElem
          #on = {}
          #view
-         constructor(htmlElem, modelName) {
+         constructor(htmlElem) {
             this.#htmlElem = htmlElem
-            this.#modelName = modelName
+            this.#name = this.constructor.name
             this.#view = new View(htmlElem)
             this.connected = true
          }
-         static get validObserverNames() { return ViewModel.#validObserverNames }
          /**
-          * Returns valid names of prperties which could be observed for change.
-          * Should be overwritten in subclass if new properties should be supported.
+          * Returns valid names of properties which could be observed for change.
+          * Should be overwritten in subclass if new properties are supported.
           */
-         get validObserverNames() { return ViewModel.#validObserverNames }
+         static get validObserverNames() {
+            return ViewModel.#validObserverNames
+         }
+         /** Same as {@link ViewModel.validObserverNames}. */
+         get validObserverNames() {
+            return ViewModel.#validObserverNames
+         }
+         /** Overwrite setOption in subclass. */
+         setOption(name, value) {
+            switch (name, value) {
+               case "hidden": this.hidden = value; break;
+               case "name": this.#name = String(value); break;
+               default: this.logError(`Unsupported option »${String(name)}«.`); break; // in subclass: super.setOption(name, value)
+            }
+         }
+
          error(msg) {
-            throw Error(`${this.#modelName}-View-Model error: ${msg}`)
+            throw Error(`${this.#name}-View-Model error: ${msg}`)
+         }
+         logError(msg) {
+            try { this.error(msg) } catch(e) { console.error(e) }
+         }
+         setOptions(options={}) {
+            for (const name in options)
+               this.setOption(name, options[name])
+            return this
          }
          get name() {
-            return this.#modelName
+            return this.#name
          }
          get htmlElem() {
             return this.#htmlElem
@@ -1120,13 +1145,12 @@
          }
          set connected(isConnect) {
             const htmlElem = this.htmlElem
-            if (isConnect && !htmlElem.isConnected) {
-               document.body.append(htmlElem)
-               this._update_connected?.(this,true)
-            }
-            else if (!isConnect && htmlElem.isConnected) {
-               htmlElem.remove()
-               this._update_connected?.(this,true)
+            if (isConnect != htmlElem.isConnected) {
+               if (isConnect)
+                  document.body.append(htmlElem)
+               else
+                  htmlElem.remove()
+               this._update_connected?.(this,isConnect)
             }
          }
          get hidden() {
@@ -1164,10 +1188,20 @@
       }
 
       class ResizeVM extends ViewModel {
-         constructor(htmlElem, modelName) {
-            super(htmlElem, modelName || "Resize")
+         constructor(htmlElem) {
+            super(htmlElem)
             super.bindEventHandlers(ResizeVM.prototype)
             View.needsBorderBox(htmlElem)
+         }
+
+         setOption(name, value) {
+            switch (name) {
+               case "left": this.vLeft = value; break;
+               case "height": this.vHeight = value; break;
+               case "top": this.vTop = value; break;
+               case "width": this.vWidth = value; break;
+               default: super.setOption(name, value); break;
+            }
          }
 
          set vHeight(value/*number value in pixels*/) {
@@ -1199,7 +1233,8 @@
             return this.htmlElem.offsetLeft
          }
 
-         isMoveable(position) { return ["fixed","absolute"].includes(position ?? getComputedStyle(this.htmlElem)["position"]) }
+         isMoveable() { return ResizeVM.isMoveable(getComputedStyle(this.htmlElem)["position"]) }
+         static isMoveable(position) { return ["fixed","absolute"].includes(position) }
 
          move(deltax,deltay) { this.vLeft += deltax; this.vTop += deltay; }
          resizeTop(deltay) { this.vTop -= deltay; this.vHeight += deltay; }
@@ -1277,21 +1312,17 @@
          const position = cstyle["position"]
          if (viewModel === undefined) {
             const windowHtmlElem = template ?? ElemSel.clone("#js-window-template")
-            const height = htmlElem.offsetHeight || 100
-            const width = htmlElem.offsetWidth || 100
-            const top = ({ static:0, relative:parseFloat(cstyle.top)})[position] ?? htmlElem.offsetTop
-            const left = ({ static:0, relative:parseFloat(cstyle.left)})[position] ?? htmlElem.offsetLeft
+            const pos = WindowVM.getInitialPos(htmlElem)
             htmlElem.parentElement.replaceChild(windowHtmlElem, htmlElem)
             viewModel = new WindowVM(windowHtmlElem)
-            viewModel.vTop = top
-            viewModel.vLeft = left
-            viewModel.vWidth = width
-            viewModel.vHeight = height
+            viewModel.setOptions({ ...pos, width:pos.width||100, height:pos.height||100})
          }
          viewModel.vTitle = title
-         viewModel.vContent = htmlElem
-         View.setStyles(htmlElem, { width:"100%", height:"100%", position:"static" })
-         View.setStyles(viewModel.htmlElem, { position: position === "static" ? "relative" : position })
+         if (htmlElem !== viewModel.htmlElem) {
+            viewModel.vContent = htmlElem
+            View.setStyles(htmlElem, { width:"100%", height:"100%", position:"static" })
+            View.setStyles(viewModel.htmlElem, { position: position === "static" ? "relative" : position })
+         }
          const resizeState = decorateElement(viewModel, ResizeDecorator).decoratorState
          const moveWin = resizeState.controllers.moveWin
          const controllers = {
@@ -1313,7 +1344,7 @@
       class WindowVM extends ResizeVM {
          static #validObserverNames = new Set([...ResizeVM.validObserverNames,"vWindowState"])
          #windowState
-         #visibleState={}
+         #visibleState
          #slots
          #oldTransitionStyle
 
@@ -1322,15 +1353,36 @@
          // transition style for animation
          static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
 
-         constructor(htmlElem, modelName) {
-            super(htmlElem, modelName || "Window")
+         static getInitialPos(htmlElem) {
+            const parseNr = (nr) => isNaN(parseFloat(nr)) ? 0 : parseFloat(nr)
+            const cstyle = getComputedStyle(htmlElem)
+            const height = htmlElem.offsetHeight || parseNr(cstyle.height)
+            const width = htmlElem.offsetWidth || parseNr(cstyle.width)
+            const top = ({ static:0, relative:parseNr(cstyle.top)})[cstyle.position] ?? (htmlElem.offsetTop || parseNr(cstyle.top))
+            const left = ({ static:0, relative:parseNr(cstyle.left)})[cstyle.position] ?? (htmlElem.offsetLeft || parseNr(cstyle.left))
+            return { height, width, top, left }
+         }
+
+         constructor(htmlElem) {
+            super(htmlElem)
             super.bindEventHandlers(WindowVM.prototype)
             this.#slots = new ViewSlots(htmlElem, "window-content","window-title","close","min","max")
             this.#windowState = this.hidden ? WindowVM.HIDDEN : WindowVM.VISIBLE
          }
 
-         static get validObserverNames() { return WindowVM.#validObserverNames }
-         get validObserverNames() { return WindowVM.#validObserverNames }
+         static get validObserverNames() {
+            return WindowVM.#validObserverNames
+         }
+         get validObserverNames() {
+            return WindowVM.#validObserverNames
+         }
+         setOption(name, value) {
+            switch (name) {
+               case "title": this.vTitle = value; break;
+               case "content": this.vContent = value; break;
+               default: super.setOption(name, value); break;
+            }
+         }
 
          getSlot(name) {
             return this.#slots.getSlot(name)
@@ -1357,9 +1409,11 @@
          get vContent() {
             return this.getSlot("window-content").node
          }
-         set vContent(node) {
-            if (node instanceof Node)
-               this.getSlot("window-content").node = node
+         set vContent(content) {
+            if (content instanceof Node)
+               this.getSlot("window-content").node = content
+            else if (typeof content === "string")
+               this.getSlot("window-content").node = View.createElem(content)
          }
 
          #startTransition(onTransitionEnd) {
@@ -1394,7 +1448,7 @@
                this.connectedTo = this.closedState?.connectedTo
                delete this.closedState
             }
-            if (oldState === WindowVM.VISIBLE && !this.#visibleState.locked)
+            if (!this.#visibleState || (oldState === WindowVM.VISIBLE && !this.#visibleState.locked))
                this.#visibleState = { locked:false, style: View.getStyles(this.htmlElem, ["width","height","top","left"]) }
             if (state === WindowVM.VISIBLE) {
                const htmlElem = this.htmlElem
@@ -1404,7 +1458,10 @@
                   asyncUIUpdate( () => {
                      this.#visibleState.locked = false
                      if (this.#visibleState.style) {
-                        this.#startTransition()
+                        this.#startTransition( () => {
+                           if (this.#windowState === WindowVM.VISIBLE)
+                              htmlElem.scrollIntoView?.({block:"nearest"})
+                        })
                         View.setStyles(htmlElem, this.#visibleState.style)
                         TransitionController.ensureInTransition(htmlElem)
                      }
@@ -1472,8 +1529,8 @@
          #templateSel="#js-minimized-window-template"
          #windowVMs=new Map()
 
-         constructor(htmlElem, modelName) {
-            super(htmlElem, modelName || "WindowStack")
+         constructor(htmlElem) {
+            super(htmlElem)
             super.bindEventHandlers(WindowStackVM.prototype)
          }
 
@@ -1548,12 +1605,16 @@
       // decorateElement(div1, ResizeDecorator)
       // decorateElement(div2, ResizeDecorator)
       // decorateElement(div3, ResizeDecorator)
+      const win4VM = new WindowVM(ElemSel.clone("#js-window-template")).setOptions({
+         top:240, left:600, width:140, height:100, title:"Hello 4",
+         content: "<div style='width:100%; height:100%; background-color:beige; color:maroon;'>Created Window</div>"
+      })
+      decorateElement(win4VM, WindowDecorator)
 
       console.log(htmlListeners.getListenedElements(document))
 
       const winstackVM = new WindowStackVM(ElemSel.htmlElem("[class='js-window-stack']"))
 
-      winstackVM.count = 0
       ElemSel.htmlElem("[class='js-window-stack'] button").addEventListener("click", (e) => {
          if (win1VM.vWindowState === WindowVM.CLOSED)
             win1VM.vWindowState = WindowVM.VISIBLE
@@ -1561,11 +1622,24 @@
             win2VM.vWindowState = WindowVM.VISIBLE
          else if (win3VM.vWindowState === WindowVM.CLOSED)
             win3VM.vWindowState = WindowVM.VISIBLE
+         else if (win4VM.vWindowState === WindowVM.CLOSED)
+            win4VM.vWindowState = WindowVM.VISIBLE
       })
 
       winstackVM.register(win1VM)
       winstackVM.register(win2VM)
       winstackVM.register(win3VM)
+      winstackVM.register(win4VM)
+
+      // TODO:
+      // 1. htmlListener als static in HTMLListener aufnehmen
+      // 1.1 addListener erzeugt addedlistener -> new HTMLListener ?
+      // 1.2 addListener in controller verfrachten ?
+      //     controller erzeugt HTMLListener (oder doch nur listener ?)
+      // 2. htmlDecorator als static in HTMLDecorator  aufnehmen
+      // 2.1 decorateElement erzeugt gefüllten decorator -> new HTMLDecorator ?
+      // 2.2 decorateElement durch WindowDecorator extends HTMLDecorator ersetzen
+      //     decorate / undecorate
 
    </script>
 

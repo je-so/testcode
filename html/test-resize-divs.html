@@ -107,14 +107,13 @@
       <dt>Missing Features</dt>
       <dd>
          <ul>
-            <li>Window decorations</li>
-            <li>All things Model (i.e. type validation)</li>
+            <li>All things Model</li>
          </ul>
       </dd>
    </dl>
 
-   <div id=window style="width:150px;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;position:static;">
-      Resize div<br>(static)
+   <div id=window style="width:30%;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;position:relative;left:30px;">
+      Resize div<br>(relative left:30px)
    </div>
 
    <div id=window2 style="position:absolute;left:440px;top:160px;width:150px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
@@ -858,10 +857,16 @@
          }
          static getComputedStyles(htmlElem, styles) {
             const computedStyle = getComputedStyle(htmlElem)
-            const computedValues = {}
-            for (const key in styles)
-               computedValues[key] = computedStyle[key]
-            return computedValues
+            const styleValues = {}
+            if (Array.isArray(styles)) {
+               for (const key of styles)
+                  styleValues[key] = computedStyle[key]
+            }
+            else {
+               for (const key in styles)
+                  styleValues[key] = computedStyle[key]
+            }
+            return styleValues
          }
          static getStyles(htmlElem, styles) {
             const elemStyle = htmlElem.style
@@ -905,6 +910,18 @@
             const div = document.createElement("div")
             div.innerHTML = htmlString
             return div.children[0]
+         }
+         static parseNr(str) {
+            const nr = parseFloat(str)
+            return isNaN(nr) ? 0 : nr
+         }
+         static getInitialPos(htmlElem) {
+            const cstyle = getComputedStyle(htmlElem)
+            const height = this.parseNr(cstyle.height)
+            const width = this.parseNr(cstyle.width)
+            const top = ({ static:0 })[cstyle.position] ?? this.parseNr(cstyle.top)
+            const left = ({ static:0 })[cstyle.position] ?? this.parseNr(cstyle.left)
+            return { height, width, top, left }
          }
       }
 
@@ -962,6 +979,9 @@
          error(msg) {
             throw Error(`ViewSlots error: ${msg}`)
          }
+         hasSlot(name) {
+            return this.#slots.has(name)
+         }
          getSlot(name) {
             this.assertSlotName(name)
             return this.#slots.get(name)[0]
@@ -971,7 +991,7 @@
             return this.#slots.get(name)
          }
          getSlotNames() {
-            return [...this.#slots.keys()]
+            return new Set(this.#slots.keys())
          }
          assertSlotName(name, htmlElem) {
             if (!this.#slots.has(name)) {
@@ -999,42 +1019,50 @@
          static windowRect(htmlElem) {
             if (! (htmlElem instanceof HTMLElement))
                throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
-            let top = 0, left = 0, elem = htmlElem;
-            do {
-               const offsetParent = elem.offsetParent
-               top += elem.offsetTop
-               left += elem.offsetLeft
-               if (offsetParent === document.body) {
-                  if ("fixed" !== getComputedStyle(htmlElem)["position"]) {
-                     top -= document.scrollingElement.scrollTop
-                     left -= document.scrollingElement.scrollLeft
+            let top = 0, left = 0
+            if (htmlElem && htmlElem !== document.body)
+               for(let elem = htmlElem; ; ) {
+                  const offsetParent = elem.offsetParent
+                  top += elem.offsetTop
+                  left += elem.offsetLeft
+                  if (offsetParent === document.body) {
+                     if ("fixed" !== getComputedStyle(elem).position) {
+                        top -= document.scrollingElement.scrollTop
+                        left -= document.scrollingElement.scrollLeft
+                     }
+                     break
                   }
-               }
-               else if (offsetParent) {
                   top -= offsetParent.scrollTop
                   left -= offsetParent.scrollLeft
+                  elem = offsetParent
+                  const cstyle = getComputedStyle(elem)
+                  top += View.parseNr(cstyle.borderTopWidth)
+                  left += View.parseNr(cstyle.borderLeftWidth)
                }
-               elem = offsetParent
-            } while (elem)
             return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
          }
 
          static documentRect(htmlElem) {
             if (! (htmlElem instanceof HTMLElement))
                throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
-            let top = 0, left = 0, elem = htmlElem;
-            do {
-               const offsetParent = elem.offsetParent
-               top += elem.offsetTop
-               left += elem.offsetLeft
-               if (offsetParent === document.body) {
-                  if ("fixed" === getComputedStyle(htmlElem)["position"]) {
-                     top += document.scrollingElement.scrollTop
-                     left += document.scrollingElement.scrollLeft
+            let top = 0, left = 0
+            if (htmlElem && htmlElem !== document.body)
+               for(let elem = htmlElem; ; ) {
+                  const offsetParent = elem.offsetParent
+                  top += elem.offsetTop
+                  left += elem.offsetLeft
+                  if (offsetParent === document.body) {
+                     if ("fixed" === getComputedStyle(elem).position) {
+                        top += document.scrollingElement.scrollTop
+                        left += document.scrollingElement.scrollLeft
+                     }
+                     break
                   }
+                  elem = offsetParent
+                  const cstyle = getComputedStyle(elem)
+                  top += View.parseNr(cstyle.borderTopWidth)
+                  left += View.parseNr(cstyle.borderLeftWidth)
                }
-               elem = offsetParent
-            } while (elem)
             return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
          }
 
@@ -1157,16 +1185,17 @@
             return getComputedStyle(this.htmlElem).display === "none"
          }
          set hidden(isHidden) {
-            const style = this.htmlElem.style
-            if (isHidden === false && style.display === "none") {
-               style.display = style["--display"] ?? ""
-               style["--display"] = undefined
-               this._update_hidden?.(this,false)
-            }
-            else if (isHidden === true && style.display !== "none") {
-               style["--display"] = style.display
-               style.display = "none"
-               this._update_hidden?.(this,true)
+            if (isHidden != this.hidden) {
+               const style = this.htmlElem.style
+               if (isHidden) {
+                  style["--display"] = style.display
+                  style.display = "none"
+               }
+               else {
+                  style.display = style["--display"] ?? ""
+                  style["--display"] = undefined
+               }
+               this._update_hidden?.(this,isHidden)
             }
          }
          get visibility() {
@@ -1191,7 +1220,6 @@
          constructor(htmlElem) {
             super(htmlElem)
             super.bindEventHandlers(ResizeVM.prototype)
-            View.needsBorderBox(htmlElem)
          }
 
          setOption(name, value) {
@@ -1204,33 +1232,33 @@
             }
          }
 
-         set vHeight(value/*number value in pixels*/) {
+         set vHeight(value/*pixels*/) {
             if (value < 0)
                value = 0
             this.htmlElem.style.height = value+"px"
          }
          get vHeight() {
-            return this.htmlElem.offsetHeight // in pixel (could be a fraction)
+            return View.parseNr(getComputedStyle(this.htmlElem).height)
          }
-         set vWidth(value/*number value in pixels*/) {
+         set vWidth(value/*pixels*/) {
             if (value < 0)
                value = 0
             this.htmlElem.style.width = value+"px"
          }
          get vWidth() {
-            return this.htmlElem.offsetWidth // in pixel (could be a fraction)
+            return View.parseNr(getComputedStyle(this.htmlElem).width)
          }
-         set vTop(value/*number value in pixels*/) {
+         set vTop(value/*pixels*/) {
             this.htmlElem.style.top = value+"px"
          }
          get vTop() {
-            return this.htmlElem.offsetTop // in pixel (could be a fraction)
+            return View.parseNr(getComputedStyle(this.htmlElem).top)
          }
-         set vLeft(value/*number value in pixels*/) {
+         set vLeft(value/*pixels*/) {
             this.htmlElem.style.left = value+"px"
          }
          get vLeft() {
-            return this.htmlElem.offsetLeft
+            return View.parseNr(getComputedStyle(this.htmlElem).left)
          }
 
          isMoveable() { return ResizeVM.isMoveable(getComputedStyle(this.htmlElem)["position"]) }
@@ -1312,7 +1340,7 @@
          const position = cstyle["position"]
          if (viewModel === undefined) {
             const windowHtmlElem = template ?? ElemSel.clone("#js-window-template")
-            const pos = WindowVM.getInitialPos(htmlElem)
+            const pos = View.getInitialPos(htmlElem)
             htmlElem.parentElement.replaceChild(windowHtmlElem, htmlElem)
             viewModel = new WindowVM(windowHtmlElem)
             viewModel.setOptions({ ...pos, width:pos.width||100, height:pos.height||100})
@@ -1321,18 +1349,18 @@
          if (htmlElem !== viewModel.htmlElem) {
             viewModel.vContent = htmlElem
             View.setStyles(htmlElem, { width:"100%", height:"100%", position:"static" })
-            View.setStyles(viewModel.htmlElem, { position: position === "static" ? "relative" : position })
+            View.setStyles(viewModel.htmlElem, { position: position })
          }
          const resizeState = decorateElement(viewModel, ResizeDecorator).decoratorState
          const moveWin = resizeState.controllers.moveWin
          const controllers = {
-            close: new ClickController(viewModel.getSlot("close").htmlElem, () => {
+            close: viewModel.hasSlot("close") && new ClickController(viewModel.getSlot("close").htmlElem, () => {
                viewModel.vWindowState = WindowVM.CLOSED
             },moveWin),
-            min: new ClickController(viewModel.getSlot("min").htmlElem, () => {
+            min: viewModel.hasSlot("min") && new ClickController(viewModel.getSlot("min").htmlElem, () => {
                viewModel.vWindowState = WindowVM.MINIMIZED
             },moveWin),
-            max: new ClickController(viewModel.getSlot("max").htmlElem, () => {
+            max: viewModel.hasSlot("max") && new ClickController(viewModel.getSlot("max").htmlElem, () => {
                viewModel.vWindowState = (viewModel.vWindowState === WindowVM.MAXIMIZED)
                                  ? WindowVM.VISIBLE
                                  : WindowVM.MAXIMIZED
@@ -1353,20 +1381,11 @@
          // transition style for animation
          static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
 
-         static getInitialPos(htmlElem) {
-            const parseNr = (nr) => isNaN(parseFloat(nr)) ? 0 : parseFloat(nr)
-            const cstyle = getComputedStyle(htmlElem)
-            const height = htmlElem.offsetHeight || parseNr(cstyle.height)
-            const width = htmlElem.offsetWidth || parseNr(cstyle.width)
-            const top = ({ static:0, relative:parseNr(cstyle.top)})[cstyle.position] ?? (htmlElem.offsetTop || parseNr(cstyle.top))
-            const left = ({ static:0, relative:parseNr(cstyle.left)})[cstyle.position] ?? (htmlElem.offsetLeft || parseNr(cstyle.left))
-            return { height, width, top, left }
-         }
-
          constructor(htmlElem) {
             super(htmlElem)
             super.bindEventHandlers(WindowVM.prototype)
-            this.#slots = new ViewSlots(htmlElem, "window-content","window-title","close","min","max")
+            // slot names of optional window controls: "close", "min", "max"
+            this.#slots = new ViewSlots(htmlElem, "window-content","window-title")
             this.#windowState = this.hidden ? WindowVM.HIDDEN : WindowVM.VISIBLE
          }
 
@@ -1384,6 +1403,9 @@
             }
          }
 
+         hasSlot(name) {
+            return this.#slots.hasSlot(name)
+         }
          getSlot(name) {
             return this.#slots.getSlot(name)
          }
@@ -1443,13 +1465,15 @@
             if (oldState === state)
                return
             if (oldState === WindowVM.CLOSED) {
-               if (!this.closedState?.connectedTo)
-                  return
                this.connectedTo = this.closedState?.connectedTo
                delete this.closedState
+               if (!this.connected)
+                  return
             }
-            if (!this.#visibleState || (oldState === WindowVM.VISIBLE && !this.#visibleState.locked))
-               this.#visibleState = { locked:false, style: View.getStyles(this.htmlElem, ["width","height","top","left"]) }
+            if (!this.#visibleState || (oldState === WindowVM.VISIBLE && !this.#visibleState.locked)) {
+               this.hidden = false
+               this.#visibleState = { locked:false, style: View.getComputedStyles(this.htmlElem, ["width","height","top","left"]) }
+            }
             if (state === WindowVM.VISIBLE) {
                const htmlElem = this.htmlElem
                this.#visibleState.locked = true
@@ -1483,9 +1507,7 @@
                      const pos = htmlElem.getBoundingClientRect()
                      const width = (2*minHeight)+"px", height = minHeight+"px"
                      const top = window.innerHeight-2*minHeight, left = 5
-                     const newPos = cstyle.position === "relative"
-                                    ? { width, height, top:(top-pos.top+parseFloat(cstyle.top))+"px", left:(left-pos.left+parseFloat(cstyle.left))+"px" }
-                                    : { width, height, top:(top+htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:(left+htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
+                     const newPos = { width, height, top:(top-pos.top+parseFloat(cstyle.top))+"px", left:(left-pos.left+parseFloat(cstyle.left))+"px" }
                      this.#startTransition( () => {
                         if (this.#windowState === WindowVM.MINIMIZED)
                            this.hidden = true
@@ -1504,10 +1526,11 @@
                         return
                      const cstyle = getComputedStyle(htmlElem)
                      const pos = htmlElem.getBoundingClientRect()
-                     const newPos = cstyle.position === "relative"
-                                 ? { width:"100%", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
-                                 : { width:"100%", height:"100vh", top:Math.max(0,htmlElem.offsetTop-Math.ceil(pos.top))+"px", left:Math.max(0,htmlElem.offsetLeft-Math.ceil(pos.left))+"px" }
-                     this.#startTransition()
+                     const newPos = { width:"100%", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
+                     this.#startTransition( () => {
+                           if (this.#windowState === WindowVM.MAXIMIZED)
+                              htmlElem.scrollIntoView?.({block:"start"})
+                        })
                      View.setStyles(htmlElem, newPos)
                      TransitionController.ensureInTransition(htmlElem)
                   })

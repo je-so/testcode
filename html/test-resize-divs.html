@@ -116,7 +116,7 @@
       Resize div<br>(relative left:30px)
    </div>
 
-   <div id=window2 style="position:absolute;left:440px;top:160px;width:150px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
+   <div id=window2 style="position:absolute;left:440px;top:160px;width:200px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;z-index:1;">
       Move or resize div<br>(absolute)
    </div>
 
@@ -129,6 +129,7 @@
    </div>
 
    <div style="height:10px;"></div>
+   <div>== LOG ==</div>
    <div id="LOG"></div>
    <div style="height:1000px;"></div>
 
@@ -152,42 +153,6 @@
             e.error.stack.toString().split("\n").reverse().forEach(traceLine => traceLine.trim() && logError("&nbsp; "+traceLine))
          logError(`line ${e.lineno}: ${e.message}`)
       })
-
-      /**
-       * Function which decorates the provided HTML element with additional functionality
-       * and uses the provided {@link ViewModel} to manage its state.
-       * @callback Decorator
-       * @param {HTMLElement} htmlElem - The HTML element which is decorated.
-       * @param {ViewModel} viewModel - The {@link ViewModel} which manages all view state and updates the view if state changes occur.
-       * @return {object} State information about what decorator has changed (useful for unding all changes).
-       */
-
-      /**
-       * Description of applied decorator to an HTML element.
-       * @typedef {object} AppliedDecorator
-       * @property {Decorator} decorator - The applied decorator function.
-       * @property {object} decoratorState - State information returned by the {@link Decorator} function.
-       * @property {HTMLElement} htmlElem - The HTML element which serves as root view.
-       * @property {ViewModel} viewModel - The {@link ViewModel} which manages whole view state and is bound to root view or its sub views.
-       */
-
-      /** Description fo added listener to an HTML element.
-       * @typedef {object} AddedListener
-       * @property {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
-       * @property {string} eventType - The event type ("click","touchstart",...).
-       * @property {(e:Event)=>void} eventHandler - Registered callback which handles event type for an html element.
-       * @property {bigint} ID - Unique number which identifies the added event listener.
-       * @property {object|undefined} owner - Owner of the listener (used for blocking).
-       * @property {object[]} blockedOwners - An array of owners of listeners which have lower priority and are suppressed if this listener is processed.
-       * @property {boolean} TARGET_ONLY - If set to true all other event handlers not registered for this target (capture / bubbling phase) are ignored.
-       */
-
-      class Listener {
-         /////////////
-         // Options //
-         /////////////
-         static TARGET_ONLY = true
-      }
 
       /**
        * Either an HTMLElement or a CSS selector to query for HTMLElement(s).
@@ -245,38 +210,88 @@
       }
 
       /**
+       * Function which decorates the provided HTML element with additional functionality
+       * and uses the provided {@link ViewModel} to manage its state.
+       * @callback Decorator
+       * @param {HTMLElement} htmlElem - The HTML element which is decorated.
+       * @param {ViewModel} viewModel - The {@link ViewModel} which manages all view state and updates the view if state changes occur.
+       * @return {object} State information about what decorator has changed (useful for unding all changes).
+       */
+
+      /**
+       * Description of applied decorator to an HTML element.
+       * @typedef {object} AppliedDecorator
+       * @property {Decorator} decorator - The applied decorator function.
+       * @property {object} decoratorState - State information returned by the {@link Decorator} function.
+       * @property {HTMLElement} htmlElem - The HTML element which serves as root view.
+       * @property {ViewModel} viewModel - The {@link ViewModel} which manages whole view state and is bound to root view or its sub views.
+       */
+
+
+      /**
+       * Stores state of event listener added to a HTML view.
+       */
+      class ViewListener {
+         /////////////
+         // Options //
+         /////////////
+         static TARGET_ONLY = true
+
+         /** Constructs stored listener state. Serves as documentation for the various data fields.
+          * @param {HTMLElement} htmlElem - The HTML element which for which the event handler is registered.
+          * @param {string} eventType - The event type ("click","touchstart",...).
+          * @param {(e:Event)=>void} eventHandler - Registered callback which handles event of certain type of an html element.
+          * @param {object|null} owner - Owner of the listener (used as reference in other listeners to block this one.
+          * @property {object[]} blockedOwners - An array of owners which have lower priority and are suppressed if this listener is processed.
+          * @property {boolean} TARGET_ONLY - If set to true all other event handlers not registered for this specific target are ignored (listeners registered for child or parent nodes).
+          *                                   Events bubble therefore html elements which are nested within each other all receive the event (if any listener is registered).
+          */
+         constructor(htmlElem, eventType, eventHandler, owner=null, blockedOwners=[], TARGET_ONLY=false) {
+            this.htmlElem = htmlElem
+            this.eventType = eventType
+            this.eventHandler = eventHandler
+            this.owner = owner
+            this.blockedOwners = blockedOwners.filter(o => o != null)
+            this.TARGET_ONLY = TARGET_ONLY
+         }
+      }
+
+      /**
        * Manages event listeners and allows to prioritize them.
        * One listener could block one or more other listeners.
        * So if two listeners would be executed, and one is blocked by the other
        * only one is executed. Higher priority of a listener is expresses by
        * blocking the one with lower priority.
        */
-      const htmlListeners = {
-         htmlElements: new WeakMap(),
-         uniqueID: 0n,
-         bubbleEvent: null,
-         captureEvent: null,
-         blockedOwners: null,
-         capturedTargets: null,
-         capturedListeners: null,
-         processedListener: null,
-         TARGET_ONLY: false,
-         onCaptureBind: null,
-         onBubbleBind: null,
-         DEBUG: true,
+      class ViewListeners {
+         /** All listeners are managed by this single instance. */
+         static singleton = new ViewListeners()
+         htmlElements = new WeakMap()
+         bubbleEvent = null
+         captureEvent = null
+         blockedOwners = null
+         capturedTargets = null
+         capturedListeners = null
+         processedListener = null
+         TARGET_ONLY = false
+         onCaptureBind = null
+         onBubbleBind =  null
+         DEBUG = true
+         constructor() {
+            this.onCaptureBind = this.onCapture.bind(this)
+            this.onBubbleBind = this.onBubble.bind(this)
+         }
          error(msg) {
-            throw Error(`htmlListener error: ${msg}`)
-         },
+            throw Error(`ViewListeners error: ${msg}`)
+         }
          onCapture(e) {
             if (!this.captureEvent) {
                this.captureEvent = e
                this.bubbleEvent = null
                this.blockedOwners = new Set()
                this.capturedTargets = new WeakSet()
-               if (this.DEBUG) {
-                  this.capturedListeners = new Set()
-                  this.processedListeners = new Set()
-               }
+               this.capturedListeners = this.DEBUG && new Set() || null
+               this.processedListeners = this.DEBUG && new Set() || null
                this.TARGET_ONLY = false
             }
             else if (e !== this.captureEvent)
@@ -293,11 +308,10 @@
                   }
                   if (listener.TARGET_ONLY && e.target === e.currentTarget)
                      this.TARGET_ONLY = true
-                  if (this.DEBUG)
-                     this.capturedListeners.add(listener)
+                  this.DEBUG && this.capturedListeners.add(listener)
                }
             }
-         },
+         }
          onBubble(e) {
             if (!this.bubbleEvent) {
                this.bubbleEvent = e
@@ -313,34 +327,29 @@
                for (const listener of listeners) {
                   if (!this.blockedOwners.has(listener.owner)) {
                      listener.eventHandler(e)
-                     if (this.DEBUG)
-                        this.processedListeners.add(listener)
+                     this.DEBUG && this.processedListeners.add(listener)
                   }
                }
             }
             this.capturedTargets.delete(e.currentTarget)
             if (this.DEBUG && !this.capturedTargets.size && !this.processedListeners.size)
                console.warn("Internal: bubble phase processed no listener (all blocked).")
-         },
-         addListener(htmlElem, eventType, eventHandler, {blockedOwners=[], owner, TARGET_ONLY=false}={}) {
+         }
+         addListener(htmlElem, eventType, eventHandler, {blockedOwners, owner, TARGET_ONLY}={}) {
             const eventTypes = this.htmlElements.get(htmlElem) || {}
             const map = eventTypes[eventType] || new Map()
             if (!map.has(eventHandler)) {
-               blockedOwners = blockedOwners.filter(o => o != null)
-               const listener = { htmlElem, eventType, eventHandler, ID: ++this.uniqueID, owner, blockedOwners, TARGET_ONLY }
+               const listener = new ViewListener(htmlElem, eventType, eventHandler, owner, blockedOwners, TARGET_ONLY)
                if (map.size === 0) {
-                  this.onCaptureBind ??= this.onCapture.bind(this)
-                  this.onBubbleBind ??= this.onBubble.bind(this)
+                  eventTypes[eventType] = map
+                  this.htmlElements.set(htmlElem,eventTypes)
                   listener.htmlElem.addEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
                   listener.htmlElem.addEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
-                  if (!this.htmlElements.has(htmlElem))
-                     this.htmlElements.set(htmlElem,eventTypes)
-                  eventTypes[eventType] = map
                }
                map.set(eventHandler,listener)
                return listener
             }
-         },
+         }
          removeListener(listener) {
             const eventTypes = this.htmlElements.get(listener?.htmlElem)
             const map = eventTypes && eventTypes[listener.eventType]
@@ -351,9 +360,9 @@
                   listener.htmlElem.removeEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
                }
             }
-         },
+         }
          /**
-          * Returns iterator of all matching listeners.
+          * Returns iterator for iterating over all matching listeners.
           * @param {HTMLElement} htmlElem The HTML element whose listeners are queried.
           * @param {string=} eventType Optional type of the event the listener must match else listeners with any event type are matched.
           * @param {(e:Event)=>void} eventHandler Optional event handler function the listener must match else all listeners with any event handler are matched.
@@ -381,10 +390,10 @@
                   }
                }
             })()
-         },
+         }
          isListener(htmlElem, eventType, eventHandler) {
             return !this.get(htmlElem,eventType,eventHandler).next().done
-         },
+         }
          getListenedElements(rootElem, eventType, eventHandler) {
             const result = []
             if (this.isListener(rootElem,eventType,eventHandler))
@@ -394,13 +403,7 @@
                   result.push(htmlElem)
             }
             return result
-         },
-      }
-      function addListener(htmlElem, eventType, eventHandler, options) {
-         return htmlListeners.addListener(htmlElem, eventType, eventHandler, options)
-      }
-      function removeListeners(listenerArray) {
-         listenerArray.forEach( listener => listener && htmlListeners.removeListener(listener))
+         }
       }
 
       /**
@@ -484,30 +487,6 @@
       function decorateElement(elemSel, decorator, options) {
          return htmlDecorators.decorate(elemSel, decorator, options)
       }
-      const UIupdates = {
-         callbacks: [],
-         frameID: null,
-         oldTimestamp: null,
-         milliseconds: 0,
-         loop(timestamp) {
-            const callbacks = this.callbacks
-            const oldTimestamp = this.oldTimestamp || timestamp
-            this.callbacks = []
-            this.frameID = null
-            this.oldTimestamp = timestamp
-            this.milliseconds += timestamp-oldTimestamp
-            for (const callback of callbacks)
-               callback(this.milliseconds)
-         },
-         add(callback) {
-            this.callbacks.push(callback)
-            if (this.frameID == null)
-               this.frameID = requestAnimationFrame(this.loop.bind(this))
-         }
-      }
-      function asyncUIUpdate(callback) {
-         UIupdates.add(callback)
-      }
 
       // implement controller blocking other controller
       class ViewController {
@@ -544,9 +523,9 @@
                callback(e)
             }
          }
-         removeListeners(listenersArray) {
-            removeListeners(listenersArray)
-            listenersArray.length = 0
+         removeListeners(listenerArray) {
+            listenerArray.forEach(listener => listener && ViewListeners.singleton.removeListener(listener))
+            listenerArray.length = 0
          }
          blockOthers(switchOn) {
             if (this.#othersBlocked !== Boolean(switchOn)) {
@@ -578,7 +557,7 @@
             }
          }
          #addListener(htmlElem, eventType, eventHandler, options) {
-            return addListener(htmlElem, eventType, eventHandler,
+            return ViewListeners.singleton.addListener(htmlElem, eventType, eventHandler,
                { ...options, owner: this, blockedOwners: this.#blockedControllers }
             )
          }
@@ -1006,78 +985,37 @@
          }
       }
 
-      class ViewCoordinates {
-
-         /**
-          * Returns { top, left, width, height } in
-          * viewport (window) coordinates of htmlElem (top,left are relative coordinates to viewport).
-          * The coordinate denoting top left of the viewport is (0,0).
-          * The calculation includes padding and border size of htmlElem.
-          * The calculation does not take any transformations into account,
-          * use getBoundingClientRect in this case.
-          */
-         static windowRect(htmlElem) {
-            if (! (htmlElem instanceof HTMLElement))
-               throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
-            let top = 0, left = 0
-            if (htmlElem && htmlElem !== document.body)
-               for(let elem = htmlElem; ; ) {
-                  const offsetParent = elem.offsetParent
-                  top += elem.offsetTop
-                  left += elem.offsetLeft
-                  if (offsetParent === document.body) {
-                     if ("fixed" !== getComputedStyle(elem).position) {
-                        top -= document.scrollingElement.scrollTop
-                        left -= document.scrollingElement.scrollLeft
-                     }
-                     break
-                  }
-                  top -= offsetParent.scrollTop
-                  left -= offsetParent.scrollLeft
-                  elem = offsetParent
-                  const cstyle = getComputedStyle(elem)
-                  top += View.parseNr(cstyle.borderTopWidth)
-                  left += View.parseNr(cstyle.borderLeftWidth)
-               }
-            return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
+      class ViewUpdater {
+         static #callbacks = []
+         static #frameID = null
+         static update(timestamp) {
+            const callbacks = this.#callbacks
+            this.#callbacks = []
+            this.#frameID = null
+            for (const callback of callbacks)
+               callback(timestamp)
          }
-
-         static documentRect(htmlElem) {
-            if (! (htmlElem instanceof HTMLElement))
-               throw Error(`ViewCoordinates: Unsupported argument type '${htmlElem?.constructor?.name || (htmlElem === null ? 'null' : typeof htmlElem)}'.`)
-            let top = 0, left = 0
-            if (htmlElem && htmlElem !== document.body)
-               for(let elem = htmlElem; ; ) {
-                  const offsetParent = elem.offsetParent
-                  top += elem.offsetTop
-                  left += elem.offsetLeft
-                  if (offsetParent === document.body) {
-                     if ("fixed" === getComputedStyle(elem).position) {
-                        top += document.scrollingElement.scrollTop
-                        left += document.scrollingElement.scrollLeft
-                     }
-                     break
-                  }
-                  elem = offsetParent
-                  const cstyle = getComputedStyle(elem)
-                  top += View.parseNr(cstyle.borderTopWidth)
-                  left += View.parseNr(cstyle.borderLeftWidth)
-               }
-            return { top, left, width:htmlElem.offsetWidth, height:htmlElem.offsetHeight }
+         static add(callback) {
+            this.#callbacks.push(callback)
+            if (this.#frameID == null)
+               this.#frameID = requestAnimationFrame(ViewUpdater.update.bind(ViewUpdater))
          }
-
+         asyncUpdate(callback) {
+            ViewUpdater.add(callback)
+         }
       }
 
       /**
        * Model which is bound to a single view and manages its state.
        */
-      class ViewModel {
+      class ViewModel extends ViewUpdater {
          static #validObserverNames = new Set(["hidden","connected"])
          #name
          #htmlElem
          #on = {}
          #view
          constructor(htmlElem) {
+            super()
             this.#htmlElem = htmlElem
             this.#name = this.constructor.name
             this.#view = new View(htmlElem)
@@ -1203,7 +1141,7 @@
          }
          set visibility(isVisible) {
             if (isVisible === true)
-               this.htmlElem.style.visibility = ""
+               this.htmlElem.style.visibility = "visible"
             else if (isVisible === false)
                this.htmlElem.style.visibility = "hidden"
          }
@@ -1477,9 +1415,9 @@
             if (state === WindowVM.VISIBLE) {
                const htmlElem = this.htmlElem
                this.#visibleState.locked = true
-               asyncUIUpdate( () => {
+               this.asyncUpdate( () => {
                   this.hidden = false
-                  asyncUIUpdate( () => {
+                  this.asyncUpdate( () => {
                      this.#visibleState.locked = false
                      if (this.#visibleState.style) {
                         this.#startTransition( () => {
@@ -1493,13 +1431,13 @@
                })
             }
             else if (state === WindowVM.HIDDEN) {
-               asyncUIUpdate( () => this.hidden = true)
+               this.asyncUpdate( () => this.hidden = true)
             }
             else if (state === WindowVM.MINIMIZED) {
                const htmlElem = this.htmlElem
-               asyncUIUpdate( () => {
+               this.asyncUpdate( () => {
                   this.hidden = false
-                  asyncUIUpdate( () => {
+                  this.asyncUpdate( () => {
                      if (!this.isDisplayed())
                         return
                      const cstyle = getComputedStyle(htmlElem)
@@ -1519,14 +1457,14 @@
             }
             else if (state === WindowVM.MAXIMIZED) {
                const htmlElem = this.htmlElem
-               asyncUIUpdate( () => {
+               this.asyncUpdate( () => {
                   this.hidden = false
-                  asyncUIUpdate( () => {
+                  this.asyncUpdate( () => {
                      if (!this.isDisplayed())
                         return
                      const cstyle = getComputedStyle(htmlElem)
                      const pos = htmlElem.getBoundingClientRect()
-                     const newPos = { width:"100%", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
+                     const newPos = { width:"100vw", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
                      this.#startTransition( () => {
                            if (this.#windowState === WindowVM.MAXIMIZED)
                               htmlElem.scrollIntoView?.({block:"start"})
@@ -1634,7 +1572,7 @@
       })
       decorateElement(win4VM, WindowDecorator)
 
-      console.log(htmlListeners.getListenedElements(document))
+      console.log(ViewListeners.singleton.getListenedElements(document))
 
       const winstackVM = new WindowStackVM(ElemSel.htmlElem("[class='js-window-stack']"))
 
@@ -1655,17 +1593,13 @@
       winstackVM.register(win4VM)
 
       // TODO:
-      // 1. htmlListener als static in HTMLListener aufnehmen
-      // 1.1 addListener erzeugt addedlistener -> new HTMLListener ?
-      // 1.2 addListener in controller verfrachten ?
-      //     controller erzeugt HTMLListener (oder doch nur listener ?)
       // 2. htmlDecorator als static in HTMLDecorator  aufnehmen
       // 2.1 decorateElement erzeugt gefüllten decorator -> new HTMLDecorator ?
       // 2.2 decorateElement durch WindowDecorator extends HTMLDecorator ersetzen
       //     decorate / undecorate
 
+      logError(devicePixelRatio+"dppx")
    </script>
-
 
 </body>
 </html>

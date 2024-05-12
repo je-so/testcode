@@ -13,6 +13,9 @@
          box-sizing: border-box; position: fixed;
          display: flex; flex-flow: column nowrap; place-items: stretch;
       }
+      .js-window.js-d-none {
+         display: none;
+      }
       .js-window .js-head {
          flex: 0 0 auto;
          box-sizing: border-box;
@@ -36,20 +39,20 @@
          border-radius: 12px 0 0 0; padding: 3px 0px 3px 10px;
          box-sizing: border-box; overflow: hidden; white-space: nowrap;
       }
-      .js-controls [data-vm='min'], .js-controls [data-vm='max'], .js-controls [data-vm='close'] {
+      .js-controls [data-slot='min'], .js-controls [data-slot='max'], .js-controls [data-slot='close'] {
          margin-left: 0.5em; padding: 2px 3px;
          box-sizing: border-box;
          width: 1em;
          cursor: pointer;
       }
-      .js-controls [data-vm='min']:hover, .js-controls [data-vm='max']:hover, .js-controls [data-vm='close']:hover {
+      .js-controls [data-slot='min']:hover, .js-controls [data-slot='max']:hover, .js-controls [data-slot='close']:hover {
          padding-left: 4px; padding-right: 2px;
          background-color: lightslategray;
       }
-      .js-controls .maximized[data-vm='max']::before {
+      .js-controls .maximized[data-slot='max']::before {
          text-decoration: underline dotted;
       }
-      .js-controls [data-vm='close']:hover {
+      .js-controls [data-slot='close']:hover {
          background-color: lightcoral;
       }
 
@@ -80,19 +83,20 @@
 </head>
 <body>
    <template id="js-window-template">
+      <!-- use  » data-config="hiddenClassName: class-name, ..." « to config other class name for hidden=true ==> (display=none) -->
       <div class="js-window">
-         <div class="js-head" data-vm="minimized-height">
-            <div class="js-title" data-vm="window-title"></div>
-            <div class="js-controls"><i data-vm="min" class="bi-dash-lg"></i><i data-vm="max" class="bi-square"></i><i data-vm="close" class="bi-x-lg"></i></div>
+         <div class="js-head" data-slot="minimized-height">
+            <div class="js-title" data-slot="window-title"></div>
+            <div class="js-controls"><i data-slot="min" class="bi-dash-lg"></i><i data-slot="max" class="bi-square"></i><i data-slot="close" class="bi-x-lg"></i></div>
          </div>
-         <div class="js-body" data-vm="window-content"></div>
+         <div class="js-body" data-slot="window-content"></div>
       </div>
    </template>
    <template id="js-minimized-window-template">
       <div class="js-window">
          <div class="js-head">
-            <div class="js-title" data-vm="window-title"></div>
-            <div class="js-controls"><i data-vm="close" class="bi-x-lg"></i></div>
+            <div class="js-title" data-slot="window-title"></div>
+            <div class="js-controls"><i data-slot="close" class="bi-x-lg"></i></div>
          </div>
       </div>
    </template>
@@ -753,17 +757,6 @@
             for (const key in oldValues)
                elemStyle.setProperty(key, oldValues[key])
          }
-         static getSlots(htmlElem) {
-            const slots = new Map()
-            const nodes = [...htmlElem.querySelectorAll("[data-vm]")]
-            nodes.forEach(node => {
-               const name = node.dataset.vm
-               const views = slots.get(name) ?? []
-               views.push(node)
-               slots.set(name, views)
-            })
-            return slots
-         }
          static createElem(htmlString) {
             const div = document.createElement("div")
             div.innerHTML = htmlString
@@ -853,12 +846,76 @@
          }
       }
 
+      class ViewConfig {
+         #values
+         constructor(htmlElem) {
+            this.#values = ViewConfig.parse(htmlElem)
+         }
+         hasValue(name) {
+            return name in this.#values
+         }
+         getValue(name) {
+            return this.#values[name]
+         }
+         getValueNames() {
+            return Object.keys(this.#values)
+         }
+         static parseError(inputStr, msg) {
+            throw Error(`ViewConfig error: parsing data-config=»${inputStr}«: ${msg}.`)
+         }
+         static parse(htmlElem) {
+            const inputStr = typeof htmlElem==="string" ? htmlElem : htmlElem.dataset.config
+            const nameRegex = /^[ \t]*([_a-zA-Z][-_a-zA-Z0-9]*)?[ \t]*/
+            const valueRegex = /^[ \t]*('([^'\\]|\\.)*'|"([^\\"]|\\.)*"|[^'",:}{[\]]([^,:}{[\]]*[^ \t,:}{[\]])*|)[ \t]*/
+            let unparsed = inputStr
+            const skip = (nrChar) => unparsed = unparsed.substring(nrChar).trimLeft()
+            const match = (regex) => {
+               const parsed = regex.exec(unparsed); skip(parsed[0].length); return parsed
+            }
+            const expect = (char, name) => {
+               (unparsed[0] != char && this.parseError(inputStr,`expect »${char}« instead of »${unparsed[0] ?? 'end of input'}«${name?' after name »'+name+'«':''}${!unparsed.length?'':' at '+(unparsed.length==1?'last position':'position '+(inputStr.length-unparsed.length))}`)) || skip(1)
+            }
+            const parseValue = (name) => {
+               const matched = match(valueRegex)[1]
+               if (matched==="") {
+                  ["'",'"'].includes(unparsed[0]) && this.parseError(inputStr,`missing closing »${unparsed[0]}«${name?' after name »'+name+'«':''} at ${unparsed.lnegth==1?'last position':'position '+(inputStr.length-unparsed.length)}`)
+                  return unparsed[0]==="{" ? parseNamedValues({}, "{", name) :
+                        unparsed[0]==="[" ? parseValues([], name) : undefined
+               }
+               return !["'",'"'].includes(matched[0]) ? matched : matched.substring(1,matched.length-1).replaceAll("\\"+matched[0],matched[0])
+            }
+            const parseValues = (values, name) => {
+               expect("[", name)
+               while (unparsed[0] != ']') {
+                  values.push(parseValue(name) ?? (unparsed[0] != ']' && expect("value",name)) )
+                  unparsed[0] != ']' && expect(",",name) || (values.at(-1) ?? value.pop())
+               }
+               return (expect("]", name), values)
+            }
+            const parseNamedValues = (values, expectChar, name) => {
+               expectChar && expect("{", name)
+               while (unparsed && unparsed[0] != '}') {
+                  const matched = match(nameRegex)[1]
+                  if (!matched) { unparsed && unparsed[0] != '}' && expect("name",name); break; }
+                  expect(":",(name = matched))
+                  values[name] = parseValue(name) ?? ""
+                  unparsed && unparsed[0] != '}' && expect(",",name)
+               }
+               return (expectChar && expect("}", name), values)
+            }
+            const values = {}
+            inputStr && parseNamedValues(values)
+            unparsed && this.parseError(inputStr,`unexpected char '${unparsed[0]}' at ${unparsed.length==1?'last position':'position '+(inputStr.length-unparsed.length)}`)
+            return values
+         }
+      }
+
       class ViewSlots {
          #slots
          constructor(htmlElem,...assertedSlotNames) {
             this.#slots = new Map()
-            HTMLView.getSlots(htmlElem).forEach( (slotElemArray, slotName) => {
-               this.#slots.set(slotName, slotElemArray.map( slotElem => new View(slotElem)))
+            ViewSlots.getSlots(htmlElem).forEach( (namedNodes, name) => {
+               this.#slots.set(name, namedNodes.map( htmlElem => new View(htmlElem)))
             })
             this.assertSlotNames(assertedSlotNames, htmlElem)
          }
@@ -882,13 +939,26 @@
          assertSlotName(name, htmlElem) {
             if (!this.#slots.has(name)) {
                if (htmlElem)
-                  console.log("HTML",htmlElem,htmlElem.innerHTML)
-               this.error(`Missing attribute data-vm='${name}' in HTML.`)
+                  console.log("htmlElem",htmlElem,htmlElem.children)
+               this.error(`Missing attribute data-slot='${name}' in HTML.`)
             }
          }
          assertSlotNames(slotNamesArray, htmlElem) {
             for (const name of slotNamesArray)
                this.assertSlotName(name, htmlElem)
+         }
+         static getSlots(htmlElem) {
+            const slots = new Map()
+            const nodes = [...htmlElem.querySelectorAll("[data-slot]")]
+            if (htmlElem.dataset.slot)
+               nodes.push(htmlElem)
+            nodes.forEach(node => {
+               const name = node.dataset.slot
+               const namedNodes = slots.get(name) ?? []
+               namedNodes.push(node)
+               slots.set(name, namedNodes)
+            })
+            return slots
          }
       }
 
@@ -916,28 +986,28 @@
        * Model which is bound to a single view and manages its state.
        */
       class ViewModel extends ViewUpdater {
-         static #validObserverNames = new Set(["hidden","connected"])
-         #name
+         /** Default configurations (for all instances) which could be overwritten in subclass. */
+         static defaultConfig = {
+            /** Defines 'Set' of valid property names which could be observed for change. */
+            validObserverNames: new Set(["hidden","connected"]),
+            /** Class name which sets display to none if set on htmlElement. */
+            hiddenClassName: "js-d-none",
+         }
+         #config
          #htmlElem
+         #name
          #on = {}
          #view
          #updateObservers={}
          constructor(htmlElem) {
             super()
+            this.#config = Object.create(this.constructor.defaultConfig)
             this.#htmlElem = htmlElem
             this.#name = this.constructor.name
             this.#view = new View(htmlElem)
-         }
-         /**
-          * Returns valid names of properties which could be observed for change.
-          * Should be overwritten in subclass if new properties are supported.
-          */
-         static get validObserverNames() {
-            return ViewModel.#validObserverNames
-         }
-         /** Same as {@link ViewModel.validObserverNames}. */
-         get validObserverNames() {
-            return ViewModel.#validObserverNames
+            const config = new ViewConfig(htmlElem)
+            if (config.hasValue("hiddenClassName"))
+               this.#config.hiddenClassName = config.getValue("hiddenClassName")
          }
          /** Overwrite setOption in subclass. */
          setOption(name, value) {
@@ -1033,15 +1103,7 @@
          }
          set hidden(isHidden) {
             if (isHidden != this.hidden) {
-               const style = this.htmlElem.style
-               if (isHidden) {
-                  style["--display"] = style.display
-                  style.display = "none"
-               }
-               else {
-                  style.display = style["--display"] ?? ""
-                  style["--display"] = undefined
-               }
+               this.view.switchClass(this.#config.hiddenClassName, isHidden)
                this.notifyUpdate("hidden",isHidden)
             }
          }
@@ -1055,7 +1117,7 @@
                this.htmlElem.style.visibility = "hidden"
          }
          assertObserverName(name) {
-            if (!this.validObserverNames.has(name))
+            if (!this.#config.validObserverNames.has(name))
                this.error(`Observable '${name}' does not exist.`)
          }
          notifyUpdate(name, newState) {
@@ -1076,6 +1138,7 @@
       }
 
       class ResizeVM extends ViewModel {
+
          constructor(htmlElem) {
             super(htmlElem)
             super.bindEventHandlers(ResizeVM.prototype)
@@ -1152,16 +1215,18 @@
       }
 
       class WindowVM extends ResizeVM {
-         static #validObserverNames = new Set([...ResizeVM.validObserverNames,"vWindowState"])
+         static defaultConfig = Object.assign(Object.create(super.defaultConfig),{
+            validObserverNames: new Set(["vWindowState", ...super.defaultConfig.validObserverNames])
+         })
          #windowState
          #visibleState
          #slots
          #oldTransitionStyle
 
-         // window state
+         /// window states ///
          static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"; static CLOSED = "closed";
-         // transition style for animation
-         static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,left,top", "transition-timing-function":"ease-out" }
+         /** Transition style for resize and change position animation. */
+         static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,top,left", "transition-timing-function":"ease-out" }
 
          constructor(htmlElem) {
             super(htmlElem)
@@ -1171,12 +1236,6 @@
             this.setOption("setInitialWindowState",true)
          }
 
-         static get validObserverNames() {
-            return WindowVM.#validObserverNames
-         }
-         get validObserverNames() {
-            return WindowVM.#validObserverNames
-         }
          setOption(name, value) {
             switch (name) {
                case "content": this.vContent = value; break;
@@ -1370,10 +1429,10 @@
 
          addMinimized(windowVM) {
             const htmlElem = ElemSel.clone(this.#templateSel)
-            const slots = new ViewSlots(htmlElem)
+            const slots = new ViewSlots(htmlElem,"window-title")
             slots.getSlot("window-title").html = windowVM.vTitle
             const controllers = [
-               new ClickController(slots.getSlot("close").htmlElem, (e) => {
+               slots.hasSlot("close") && new ClickController(slots.getSlot("close").htmlElem, (e) => {
                   windowVM.vWindowState = WindowVM.CLOSED
                }),
                new ClickController(slots.getSlot("window-title").htmlElem, (e) => {

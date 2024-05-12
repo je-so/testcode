@@ -16,6 +16,12 @@ is to build the deterministic version for the left and right hand side of `&!` a
 
 JavaScript 
 ----------
+[Mini-Configuration-Parser in ~45 LOC.](https://github.com/je-so/testcode/blob/c9b0c3b6b3a858429c252920c5dec8ea31a3240d/html/test-resize-divs.html#L866) It comes with a restriction, all simple values are stored as strings.
+```javascript
+const values = ViewConfig.parse("class-name: d-none, complex: { labels:[1,2,3,], pos:{x:0,y:0}}")
+console.log("values.complex.labels=",values.complex.labels)
+```
+
 [Test Framework in 110 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.js)
 ```javascript
 <script type="module">

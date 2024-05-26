@@ -17,13 +17,16 @@ Bun.serve({
    hostname: "0.0.0.0"/*unsafe*/, // "localhost", "127.0.0.1", "::1"
    async fetch(req, server) {
       const ip = server.requestIP(req)
-      const url = new URL(req.url)
-      const pathname = decodeURI(url.pathname)
       const corsHeaders = ({
             "Access-Control-Allow-Methods": "GET,HEAD,OPTIONS,POST,PUT",
             "Access-Control-Allow-Origin": req.headers.get("origin"),
             "Access-Control-Allow-Headers": req.headers.get("access-control-request-headers"),
          })
+      const url = (() => { try { return new URL(req.url) }  catch { return null } })()
+      const pathname = url ? decodeURI(url.pathname).replaceAll("/../","/").replaceAll(/\/\/+/g,"/") : ""
+      if (!pathname.startsWith("/")) {
+         return new Response(`URL path is wrong »${req.url}«`,{ status:400 })
+      }
 
       console.log(ip.address,req.method,pathname)
       // console.log(req.headers)
@@ -39,7 +42,7 @@ Bun.serve({
 
             if (!name) {
                console.log("status:400")
-               if (url.pathname.length == 9)
+               if (pathname.length == 9)
                   return new Response(`Empty file name`,{ status:400, headers: corsHeaders })
                else
                   return new Response(`Invalid file name`,{ status:400, headers: corsHeaders })
@@ -62,7 +65,7 @@ Bun.serve({
       }
 
       if (req.method === "GET") {
-         const file = Bun.file("."+url.pathname.replaceAll("../",""))
+         const file = Bun.file("."+pathname)
 
          if (await file.exists()) {
             return new Response(file, {

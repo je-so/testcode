@@ -186,6 +186,24 @@
 
    <script>
       /**
+       * Simplifies creating a new promise.
+       */
+      class PromiseHolder {
+         promise
+         resolve
+         reject
+         constructor() {
+            this.promise = new Promise( (resolve, reject) => (this.resolve = resolve, this.reject = reject))
+         }
+         bindResolve(value) {
+            return this.resolve.bind(this/*dummy*/,value)
+         }
+         bindReject(reason) {
+            return this.reject.bind(this/*dummy*/,reason)
+         }
+      }
+
+      /**
        * Stores state of event listener added to HTML view.
        */
       class ViewListener {
@@ -240,6 +258,7 @@
          TARGET_ONLY = false
          onCaptureBind = null
          onBubbleBind =  null
+         listenerExceptions = 0
          DEBUG = true
          constructor() {
             this.onCaptureBind = this.onCapture.bind(this)
@@ -247,6 +266,10 @@
          }
          error(msg) {
             throw Error(`ViewListeners error: ${msg}`)
+         }
+         logException(exc) {
+            ++ this.listenerExceptions
+            console.error("listener exception", exc)
          }
          onCapture(e) {
             if (!this.captureEvent) {
@@ -291,7 +314,8 @@
                for (const listener of listeners) {
                   if (!this.blockedOwners.has(listener.owner)
                      && (!listener.TARGET_ONLY || e.currentTarget === e.target)) {
-                     listener.eventHandler(e)
+                     try { listener.eventHandler(e) }
+                     catch(exc) { this.logException(exc) }
                      this.DEBUG && this.processedListeners.add(listener)
                   }
                }
@@ -302,31 +326,31 @@
          }
          addListener(htmlElem, eventType, eventHandler, {blockedOwners, owner, TARGET_ONLY}={}) {
             const eventTypes = this.htmlElements.get(htmlElem) || {}
-            const map = eventTypes[eventType] || new Map()
-            if (!map.has(eventHandler)) {
+            const evHandlers = eventTypes[eventType] || new Map()
+            if (!evHandlers.has(eventHandler)) {
                const listener = new ViewListener(htmlElem, eventType, eventHandler, owner, blockedOwners, TARGET_ONLY)
-               if (map.size === 0) {
-                  eventTypes[eventType] = map
+               if (evHandlers.size === 0) {
+                  eventTypes[eventType] = evHandlers
                   this.htmlElements.set(htmlElem,eventTypes)
                   listener.htmlElem.addEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
                   listener.htmlElem.addEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
                }
-               map.set(eventHandler,listener)
+               evHandlers.set(eventHandler,listener)
                return listener
             }
             else {
-               const listener = map.get(eventHandler)
+               const listener = evHandlers.get(eventHandler)
                listener.addReference()
                return listener
             }
          }
          removeListener(listener) {
             const eventTypes = this.htmlElements.get(listener?.htmlElem)
-            const map = eventTypes && eventTypes[listener.eventType]
-            const isListener = map && map.get(listener.eventHandler)
+            const evHandlers = eventTypes && eventTypes[listener.eventType]
+            const isListener = evHandlers && evHandlers.get(listener.eventHandler)
             if (isListener && listener.removeReference() <= 0) {
-               map.delete(listener.eventHandler)
-               if (map.size === 0) {
+               evHandlers.delete(listener.eventHandler)
+               if (evHandlers.size === 0) {
                   listener.htmlElem.removeEventListener(listener.eventType,this.onCaptureBind,{capture:true,passive:false})
                   listener.htmlElem.removeEventListener(listener.eventType,this.onBubbleBind,{capture:false,passive:false})
                }
@@ -351,13 +375,15 @@
                   return (eventTypes[eventType] || []).values()
             return (function*() {
                for (const key in eventTypes) {
-                  const map = eventTypes[key]
-                  if (map) {
+                  const evHandlers = eventTypes[key]
+                  if (evHandlers) {
                      if (!eventHandler)
-                        yield* map.values()
-                     const listener = map.get(eventHandler)
-                     if (listener)
-                        yield listener
+                        yield* evHandlers.values()
+                     else {
+                        const listener = evHandlers.get(eventHandler)
+                        if (listener)
+                           yield listener
+                     }
                   }
                }
             })()
@@ -470,8 +496,12 @@
             return this.#activeListeners.at(-1)
          }
          removeActiveListenerForElement(htmlElem) {
-            const removedListeners = this.#activeListeners.filter( listener => listener.htmlElem === htmlElem)
-            this.#activeListeners = this.#activeListeners.filter( listener => listener.htmlElem !== htmlElem)
+            const removedListeners = []
+            this.#activeListeners = this.#activeListeners.filter( listener =>
+               (listener.htmlElem === htmlElem
+                  ? (removedListeners.push(listener), false)
+                  : true)
+            )
             this.removeListeners(removedListeners)
          }
          hasActiveListenerForElement(htmlElem) {
@@ -669,24 +699,27 @@
          onStart(e) {
             if (this.htmlElem) {
                const transitions = TransitionController.getTransitions(this.htmlElem)
-               transitions.forEach( transition => {
-                  if (! this.hasActiveListenerForElement(transition)) {
-                     const onEnd = this.onEnd.bind(this)
-                     this.activate()
+               const newTransitions = transitions.filter( transition => !this.hasActiveListenerForElement(transition))
+               if (newTransitions.length) {
+                  const onEnd = this.onEnd.bind(this)
+                  this.activate()
+                  newTransitions.forEach( transition => {
                      this.addActiveListener(transition, "cancel", onEnd)
                      this.addActiveListener(transition, "finish", onEnd)
                      this.addActiveListener(transition, "remove", onEnd)
-                  }
-               })
+                  })
+               }
             }
          }
 
          onEnd(e) {
             if (this.htmlElem) {
-               e && this.removeActiveListenerForElement(e.target)
                if (!TransitionController.isInTransition(this.htmlElem)) {
-                  this.callActionOnce({type:"transitionend", target:this.htmlElem, isInTransition:false })
-                  this.remove()
+                  try { this.callActionOnce({type:"transitionend", target:this.htmlElem, isInTransition:false }) }
+                  finally { this.remove() }
+               }
+               else if (e) {
+                  this.removeActiveListenerForElement(e.target)
                }
             }
          }
@@ -1232,6 +1265,13 @@
             if (!this.#config.listenableProperties.has(name))
                this.error(`Listenable property '${name}' does not exist.`)
          }
+         /**
+          * Notifies all listeners of a property that its value was changed.
+          * Every caller must ensure that cleaning up code is run in a finally clause
+          * to ensure that an exception thrown by a listener does not mess up internal state.
+          * @param {string} name - Name of listenable property
+          * @param {any} newValue - New value of property after it has changed.
+          */
          notifyPropertyListener(name, newValue) {
             const event = { vm:this, value:newValue, name }
             const callbacks = this.#propertyListeners[name]
@@ -1437,10 +1477,9 @@
          }
 
          #startTransition(oldState, onTransitionEnd) {
-            if (this.#transitionPos) {
-               const htmlElem = this.htmlElem
-               if (oldState !== WindowVM.HIDDEN && !this.#oldTransitionStyle)
-                  this.#oldTransitionStyle = View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
+            const htmlElem = this.htmlElem
+            if (this.#transitionPos && oldState !== WindowVM.HIDDEN) {
+               this.#oldTransitionStyle ??= View.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
                View.setStyles(htmlElem, this.#transitionPos)
                new TransitionController(htmlElem, (e) => {
                   if (! e.isInTransition) {
@@ -1448,8 +1487,13 @@
                      onTransitionEnd?.()
                   }
                }).ensureInTransitionElseEnd()
-               this.#transitionPos = undefined
             }
+            else {
+               this.disableTransition()
+               this.#transitionPos && View.setStyles(htmlElem, this.#transitionPos)
+               onTransitionEnd?.()
+            }
+            this.#transitionPos = undefined
          }
          disableTransition() {
             if (this.#oldTransitionStyle) {
@@ -1468,6 +1512,11 @@
                })
             else
                onTransitionEnd?.()
+         }
+         async asyncOnTransitionEnd() {
+            const promiseHolder = new PromiseHolder()
+            this.onceOnTransitionEnd( promiseHolder.bindResolve(this.isInTransition()))
+            return promiseHolder.promise
          }
 
          get vWindowState() {
@@ -2011,9 +2060,10 @@
                "Content-Type": file.type
             },
             body:file,
-         }).then( resp => { result.ok = resp.ok; result.status = resp.status;
-            logError("response"); return resp.text()
-         }).then( answer => { result.answer = answer; return result
+         }).then( resp => {
+            result.ok = resp.ok; result.status = resp.status; return resp.text()
+         }).then( answer => {
+            result.answer = answer; return result
          }).catch( error => {
             result.ok = false; result.error = error; return result
          })
@@ -2033,41 +2083,41 @@
 
          async function test_window(vm) {
 
-            await RUN_TEST( "vLeft changes during transition", 1000, (done) => {
+            await RUN_TEST({name:"vLeft changes during transition",timeout:1000}, async () => {
                vm.vWindowState = "visible"
-               vm.onceOnTransitionEnd(() => {
-                  const visibleLeft = vm.vLeft
-                  TEST(vm.vWindowState, "visible", "wrong precondition: window not in state 'visible'")
-                  vm.vWindowState = "minimized"
-                  let onceCounter = 0
-                  setTimeout( () => {
-                     const minimizedLeft = vm.vLeft
-                     vm.vWindowState = "visible"
-                     vm.onceOnTransitionEnd(() => {
-                        TEST(onceCounter, 1, "onceOnViewUpdate called")
-                        TEST(vm.vLeft, visibleLeft, "vLeft same at end of transition")
-                        done() // signals end of run_test and prevents timeout
-                     })
-                     TEST(vm.vLeft, minimizedLeft, "transition not started so vLeft has not chanhged")
-                  }, 400)
-                  TEST(vm.htmlElem.getAnimations().length, 0, "transition not started")
-                  vm.onceOnViewUpdate( () => {
-                     ++ onceCounter
-                     TEST(vm.htmlElem.getAnimations().length, 4, "transition with 4 properties started in next frame")
-                  }, 1)
+               await vm.asyncOnTransitionEnd()
+               TEST(vm.vWindowState,'=',"visible", "wrong precondition: window not in state 'visible'")
+               const visibleLeft = vm.vLeft
+               vm.vWindowState = "minimized"
+               TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not started")
+               SUB_TEST({delay:300}, async () => {
+                  const minimizedLeft = vm.vLeft
+                  vm.vWindowState = "visible"
+                  vm.onceOnTransitionEnd(() => {
+                     TEST(vm.vLeft,'=',visibleLeft, "vLeft same at end of transition")
+                  })
+                  TEST(vm.vLeft,'=',minimizedLeft, "transition not started so vLeft has not chanhged")
+                  await vm.asyncOnTransitionEnd()
+               })
+               let onceCalled = 0
+               vm.onceOnViewUpdate( () => {
+                  TEST(vm.htmlElem.getAnimations().length,'=',4, "transition with 4 properties started in next frame")
+                  ++ onceCalled
+               }, 1)
+               SUB_TEST({delay:300}, () => {
+                  TEST(onceCalled,'=',1, "onceOnViewUpdate called exactly once")
                })
             })
 
-            await RUN_TEST( "vLeft == 0 if window maximized", 1000, (done) => {
+            await RUN_TEST({name:"vLeft == 0 if window maximized",timeout:1000}, () => {
                const left = vm.vLeft
-               TEST(left, "> 0", "wrong precondition: vLeft not greater 0")
+               TEST(left,'>',0, "wrong precondition: vLeft not greater 0")
                vm.vWindowState = "maximized"
                vm.onceOnTransitionEnd(() => {
-                  TEST(vm.vLeft, 0, "vLeft == 0 in maximized state")
-                  done()
+                  TEST(vm.vLeft,'=',0, "vLeft == 0 in maximized state")
                })
                vm.onceOnViewUpdate(() => {
-                  TEST(vm.vLeft, `< ${left}`, "vLeft changes during transition")
+                  TEST(vm.vLeft,'<',left, "vLeft changes during transition")
                }, 4)
             })
 
@@ -2077,7 +2127,6 @@
          }
 
          test_window(win1VM)
-
       }
 
    </script>

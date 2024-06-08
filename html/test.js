@@ -1,5 +1,5 @@
 /**
- * Test module which implements TEST and CATCH
+ * Test module which implements TEST and TESTTHROW
  * to test for an expected value or an expected exception.
  * (c) 2024 Jörg Seebohn
  */
@@ -20,6 +20,17 @@ function RESET_TEST() {
 }
 
 class RunContext {
+   static ID = 0
+
+   ID = ++RunContext.ID
+
+   toString() {
+      if (this.parentContext)
+         return `Sub-RunContext(ID:${this.ID},name:»${this.name}«,parentContext:{ID:${this.parentContext.ID}})`
+      else
+         return `RunContext(ID:${this.ID},name:»${this.name}«)`
+   }
+
    constructor(name, timeout, delay, callback, parentContext) {
       this.name = name
       this.timeout = timeout // ms after which callback should return
@@ -80,7 +91,7 @@ class RunContext {
          new Promise(resolve => setTimeout(resolve,this.delay))
          .then( () => {
             this.startTimer()
-            return this.callback()
+            return this.callback(this)
          })
          .then(() => this.waitCallback.resolve())
          .then(() => this.waitForAllSubContext())
@@ -185,12 +196,12 @@ class TestCase {
             case ">=":
                !(this.#value >= value) && this.logError(`Expect ${String(this.#value)} >= ${String(value)}.`)
                break
-            case "!..":
+            case "!range":
                if (!Array.isArray(value) || value.length !== 2)
                   throw Error("Expect argment expectValue of type [lowerBound,upperBound]")
                !((this.#value < value[0]) || (this.#value > value[1])) && this.logError(`Expect ${String(this.#value)} not in range [${String(value[0])},${String(value[1])}].`)
                break
-            case "..":
+            case "range":
                if (!Array.isArray(value) || value.length !== 2)
                   throw Error("Expect argment expectValue of type [lowerBound,upperBound]")
                !((this.#value >= value[0]) && (this.#value <= value[1])) && this.logError(`Expect ${String(this.#value)} in range [${String(value[0])},${String(value[1])}].`)
@@ -255,11 +266,11 @@ function TESTTHROW(testFct, compare, expectValue, errmsg) {
    return countTest(tc.testThrow())
 }
 
-async function SUB_TEST({timeout=0, delay=0}, callback) {
+async function SUB_TEST({timeout=0, delay=0, context}, callback) {
    if (! runContext) {
       throw Error("SUB_TEST not called within RUN_TEST")
    }
-   const parentContext = runContext
+   const parentContext = context ?? runContext
    const childContext = new RunContext(parentContext.name, timeout, delay, callback, parentContext)
    return childContext.run()
 }
@@ -268,7 +279,7 @@ async function RUN_TEST({name, timeout=0, delay=0}, callback) {
    if (runContext) {
       throw Error("RUN_TEST called nested within another RUN_TEST")
    }
-   runContext = new RunContext(name, timeout, delay, callback)
+   runContext = new RunContext(name, timeout, delay, callback, null)
    return runContext.run().then( (err) => {
       failedRunTest += (err ? 1 : 0)
       runContext = null
@@ -289,27 +300,29 @@ function END_TEST() {
 
 async function test_syntax_of_TEST()
 {
-   await RUN_TEST({name:"Syntax of TEST",timeout:500}, () => {
-      TEST(99,'..',[99,101], "TEST")
-      TEST(101,'..',[99,101], "TEST")
-      TEST(98,'!..',[99,101], "TEST")
-      TEST(102,'!..',[99,101], "TEST")
-      TEST(100,(v,e)=>v===e,100, "TEST")
-      TEST(100,'=',100, "TEST")
-      TEST(100,'==','100', "TEST")
-      TEST(100,'===',100, "TEST")
-      TEST(100,'!=',101, "TEST")
-      TEST(100,'!==',"100", "TEST")
-      TEST(100,'<',101, "TEST")
-      TEST(100,'<=',101, "TEST")
-      TEST(100,'<=',100, "TEST")
-      TEST(101,'>',100, "TEST")
-      TEST(101,'>=',100, "TEST")
-      TEST(100,'>=',100, "TEST")
-      TEST(100,(v,e)=>e===v,100, "TEST")
-      TEST(100,(v,e)=>e!==v,101, "TEST")
+   await RUN_TEST({name:"Syntax of TEST",timeout:500}, async (context) => {
+      TEST(runContext,'=',context, "first arg of RUN_TEST points to global runContext")
+      TEST(context.parentContext,'=',null, "first arg of RUN_TEST points to global runContext")
+      TEST(99,'range',[99,101], "test for inclusive range")
+      TEST(101,'range',[99,101], "test for inclusive range")
+      TEST(98,'!range',[99,101], "test not in inclusive range")
+      TEST(102,'!range',[99,101], "test not in inclusive range")
+      TEST(100,(v,e)=>v===e,100, "use comparison function v_alue and e_xpected value")
+      TEST(100,'=',100, "test for equality no conversions allowed")
+      TEST(100,'==','100', "test for equality with conversion allowed")
+      TEST(100,'===',100, "test for equality no conversions allowed")
+      TEST(100,'!=',101, "test for inequality conversions allowed")
+      TEST(100,'!==',"100", "test for inequality no conversions allowed")
+      TEST(100,'<',101, "test for less than")
+      TEST(100,'<=',101, "test for less than or equality")
+      TEST(100,'<=',100, "test for less than or equality")
+      TEST(101,'>',100, "test for greater than")
+      TEST(101,'>=',100, "test for greater than or equality")
+      TEST(100,'>=',100, "test for greater than or equality")
+      TEST(100,(v,e)=>e===v,100, "use comparison function v_alue and e_xpected value")
+      TEST(100,(v,e)=>e!==v,101, "use comparison function v_alue and e_xpected value") // 20
       let sub_test1 = 0, sub_test2 = 0
-      SUB_TEST({delay:0}, () => {
+      SUB_TEST({delay:0}, (context) => {
          // complex comparison: - two arrays -
          ++ sub_test1
          const a1=[1,2,3], a2=[2,3,4]
@@ -324,14 +337,29 @@ async function test_syntax_of_TEST()
          TESTTHROW(()=>{throw Error("msg2")},'=',Error("msg2"), "TEST")
          TESTTHROW(()=>{throw Error("msg3")},'=',{message:"msg3",constructor:Error}, "TEST")
          TESTTHROW(()=>{throw Error("msg4")},(v,e)=>v instanceof Error && v.message===e,"msg4", "TEST")
-         TESTTHROW(()=>{throw Error("msg5")},(v,e)=>v instanceof e.constructor && v.message===e.message,Error("msg5"), "TEST")
+         TESTTHROW(()=>{throw Error("msg5")},(v,e)=>v instanceof e.constructor && v.message===e.message,Error("msg5"), "TEST") // 29
       })
       SUB_TEST({delay:20}, () => {
          TEST(sub_test1,'=',1, "both sub tests executed exactly once")
          TEST(sub_test2,'=',1, "both sub tests executed exactly once")
       })
+      let afterAwait = false
+      await SUB_TEST({delay:0}, (context) => {
+         TEST(runContext,'!=',context, "first arg of SUB_TEST points to child context")
+         TEST(runContext,'=',context.parentContext, "first arg of SUB_TEST points to child context")
+         SUB_TEST({delay:0}, (context2) => {
+            TEST(runContext,'=',context2.parentContext, "nested SUB_TEST runs within global context")
+         })
+         // following SUB_TEST is nested within context (cause of context arg)
+         // and therefore context is waiting for its end
+         SUB_TEST({delay:100,context}, (context2) => {
+            TEST(context,'=',context2.parentContext, "nested SUB_TEST runs within context provided as argument")
+            afterAwait = true
+         })
+      })
+      TEST(afterAwait,'=',true, "SUB_TEST waits until nested SUB_TEST has been executed")
    })
-   if (executedTest != 29 || failedTest || failedRunTest)
+   if (executedTest != 36 || failedTest || failedRunTest)
       throw Error(`Internal error in TEST module ex=${executedTest} f=${failedTest} r=${failedRunTest}`)
    RESET_TEST()
 }

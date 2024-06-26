@@ -10,17 +10,25 @@ const { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST } = (() => {
 let runContext = null
 let failedTest = 0
 let executedTest = 0
-let failedRunTest = 0
+let testConsole = null
+
+function getConsole() {
+   return testConsole || console
+}
 
 function RESET_TEST() {
    runContext = null
    failedTest = 0
    executedTest = 0
-   failedRunTest = 0
+   RunContext.FailedRunTest = 0
+   RunContext.FailedSubTest = 0
+   testConsole = null
 }
 
 class RunContext {
    static ID = 0
+   static FailedRunTest = 0
+   static FailedSubTest = 0
 
    ID = ++RunContext.ID
 
@@ -41,8 +49,6 @@ class RunContext {
       this.parentContext = parentContext
       parentContext && parentContext.subContext.push(this)
       this.waitCallback = this.newPromise()
-      this.waitSubContext = this.newPromise()
-      this.waitTimer = this.newPromise()
       this.waitAll = null
       if (typeof this.name !== "string")
          throw Error("Expect argument name of type strimg")
@@ -66,7 +72,7 @@ class RunContext {
    startTimer() {
       if (this.timeout > 0) {
          this.timer ??= setTimeout( () => {
-            this.waitTimer.reject(`Timeout after ${this.timeout}ms`)
+            this.waitCallback.reject(`Timeout after ${this.timeout}ms`)
          }, this.timeout)
       }
    }
@@ -74,28 +80,25 @@ class RunContext {
    clearTimer() {
       this.timer && clearTimeout(this.timer)
       this.timer = null
-      this.waitTimer.resolve()
    }
 
    async waitForAllSubContext() {
       for (const context of this.subContext) {
          await context.waitAll
       }
-      this.waitSubContext.resolve()
    }
 
    run() {
       let exception
       this.waitAll = Promise.all([ this.waitCallback.promise,
-         this.waitSubContext.promise, this.waitTimer.promise,
          new Promise(resolve => setTimeout(resolve,this.delay))
          .then( () => {
             this.startTimer()
             return this.callback(this)
          })
-         .then(() => this.waitCallback.resolve())
          .then(() => this.waitForAllSubContext())
          .then(() => this.clearTimer())
+         .then(() => this.waitCallback.resolve())
          .catch( exc => {
             this.waitCallback.reject("exception: "+exc.toString())
             exception = exc
@@ -103,13 +106,16 @@ class RunContext {
       ])
       .then(() => "") // OK
       .catch( reason => {
-         if (reason !== "RUN_SUBTEST") {
-            console.error(`RUN_TEST failed: ${this.name}`)
-            console.log(`Reason: ${reason}`)
-            exception && console.error(exception)
+         if (this.parentContext) {
+            ++ RunContext.FailedSubTest
+            getConsole().error(`SUB_TEST failed: ${this.name}`)
          }
-         if (this.parentContext)
-            this.parentContext.waitSubContext.reject("RUN_SUBTEST")
+         else {
+            ++ RunContext.FailedRunTest
+            getConsole().error(`RUN_TEST failed: ${this.name}`)
+         }
+         getConsole().log(`Reason: ${reason}`)
+         exception && getConsole().error(exception)
          return reason || "ERROR"
       })
       return this.waitAll
@@ -146,12 +152,12 @@ class TestCase {
    }
 
    logError(reason) {
-      console.error(`TEST failed: ${this.errmsg}`)
-      console.log(`Reason: ${reason}`)
+      getConsole().error(`TEST failed: ${this.errmsg}`)
+      getConsole().log(`Reason: ${reason}`)
       if (this.#exception)
-         console.log("Catched exception",this.#exception)
+         getConsole().log("Catched exception",this.#exception)
       else
-         console.log("Tested value",this.#value)
+         getConsole().log("Tested value",this.#value)
       this.#testResult = false
    }
 
@@ -198,12 +204,12 @@ class TestCase {
                break
             case "!range":
                if (!Array.isArray(value) || value.length !== 2)
-                  throw Error("Expect argment expectValue of type [lowerBound,upperBound]")
+                  throw Error("Expect arg expectValue of type [lowerBound,upperBound]")
                !((this.#value < value[0]) || (this.#value > value[1])) && this.logError(`Expect ${String(this.#value)} not in range [${String(value[0])},${String(value[1])}].`)
                break
             case "range":
                if (!Array.isArray(value) || value.length !== 2)
-                  throw Error("Expect argment expectValue of type [lowerBound,upperBound]")
+                  throw Error("Expect arg expectValue of type [lowerBound,upperBound]")
                !((this.#value >= value[0]) && (this.#value <= value[1])) && this.logError(`Expect ${String(this.#value)} in range [${String(value[0])},${String(value[1])}].`)
                break
             case "==":
@@ -280,8 +286,7 @@ async function RUN_TEST({name, timeout=0, delay=0}, callback) {
       throw Error("RUN_TEST called nested within another RUN_TEST")
    }
    runContext = new RunContext(name, timeout, delay, callback, null)
-   return runContext.run().then( (err) => {
-      failedRunTest += (err ? 1 : 0)
+   return runContext.run().then( () => {
       runContext = null
    })
 }
@@ -291,9 +296,11 @@ function END_TEST() {
    console.log(` Executed TEST: ${executedTest}`)
    if (failedTest)
       console.error(` Failed TEST: ${failedTest}`)
-   if (failedRunTest)
-      console.error(` Failed RUN_TEST: ${failedRunTest} `)
-   if (!failedTest && !failedRunTest)
+   if (RunContext.FailedRunTest)
+      console.error(` Failed RUN_TEST: ${RunContext.FailedRunTest} `)
+   if (RunContext.FailedSubTest)
+      console.error(` Failed SUB_TEST: ${RunContext.FailedSubTest} `)
+   if (!failedTest && !(RunContext.FailedRunTest+RunContext.FailedSubTest))
       console.log(` All tests working :-)`)
    RESET_TEST()
 }
@@ -339,28 +346,98 @@ async function test_syntax_of_TEST()
          TESTTHROW(()=>{throw Error("msg4")},(v,e)=>v instanceof Error && v.message===e,"msg4", "TEST")
          TESTTHROW(()=>{throw Error("msg5")},(v,e)=>v instanceof e.constructor && v.message===e.message,Error("msg5"), "TEST") // 29
       })
+      // RUN_TEST is waiting on nested SUB_TEST (tested with executedTest)
       SUB_TEST({delay:20}, () => {
          TEST(sub_test1,'=',1, "both sub tests executed exactly once")
          TEST(sub_test2,'=',1, "both sub tests executed exactly once")
       })
-      let afterAwait = false
+      let waitedOnNestedContext = false
       await SUB_TEST({delay:0}, (context) => {
          TEST(runContext,'!=',context, "first arg of SUB_TEST points to child context")
          TEST(runContext,'=',context.parentContext, "first arg of SUB_TEST points to child context")
          SUB_TEST({delay:0}, (context2) => {
             TEST(runContext,'=',context2.parentContext, "nested SUB_TEST runs within global context")
          })
-         // following SUB_TEST is nested within context (cause of context arg)
-         // and therefore context is waiting for its end
+         // outer SUB_TEST is waiting until end of nested SUB_TEST
+         // cause of providing argument context
+         // if context is undefined RUN_TEST would wait on double nested SUB_TEST
          SUB_TEST({delay:100,context}, (context2) => {
             TEST(context,'=',context2.parentContext, "nested SUB_TEST runs within context provided as argument")
-            afterAwait = true
+            waitedOnNestedContext = true
          })
       })
-      TEST(afterAwait,'=',true, "SUB_TEST waits until nested SUB_TEST has been executed")
+      TEST(waitedOnNestedContext,'=',true, "SUB_TEST waits until nested SUB_TEST has been executed")
    })
-   if (executedTest != 36 || failedTest || failedRunTest)
-      throw Error(`Internal error in TEST module ex=${executedTest} f=${failedTest} r=${failedRunTest}`)
+   if (executedTest != 36 || failedTest || RunContext.FailedRunTest || RunContext.FailedSubTest)
+      throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
+   const _testConsole = {
+      calls: [],
+      log(...args) {
+         this.calls.push(["log",...args])
+      },
+      error(...args) {
+         this.calls.push(["error",...args])
+      },
+      switchOn() {
+         testConsole = this
+         this.calls = []
+      },
+      switchOff() {
+         testConsole = null
+      },
+      compare(name, expect) {
+         const calls = this.calls
+         TEST(calls.length,"=",expect.length,`Failed ${name} produces ${expect.length} console outputs`)
+         for (let i=0; i<calls.length; ++i) {
+            TEST(calls[i].length,"=",expect[i].length,`TEST call log with ${expect[i].length-1} arguments`)
+            TEST(calls[i][0],"=",expect[i][0],`TEST calls console.${expect[i][0]}`)
+            TEST(calls[i][1],"=",expect[i][1],`TEST calls console.${expect[i][0]} with correct 1st argument`)
+            if (calls.length == 3)
+               TEST(calls[i][2],"=",expect[i][2],`TEST calls console.${expect[i][2]} with correct 2nd argument`)
+            else
+               TEST(calls[i].length,"=",2,`TEST calls console.${expect[i][2]} with one argument`)
+         }
+      }
+   }
+   await RUN_TEST({name:"-- TEST fails --",timeout:100}, async (context) => {
+      _testConsole.switchOn()
+      TEST(0,"=",1,"FAIL1")
+      _testConsole.switchOff()
+      _testConsole.compare("TEST", [
+         ["error","TEST failed: FAIL1"],
+         ["log","Reason: Expect 0 === 1."],
+         ["log","Tested value",0]
+      ])
+   })
+   if (executedTest != 50 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 0)
+      throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
+   await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
+      _testConsole.switchOn()
+      await SUB_TEST({timeout:20}, (context) => {
+         SUB_TEST({delay:50,context}, () => {
+         })
+      })
+      _testConsole.switchOff()
+      _testConsole.compare("SUB_TEST", [
+         ["error","SUB_TEST failed: -- Timeout --"],
+         ["log","Reason: Timeout after 20ms"]
+      ])
+   })
+   if (executedTest != 59 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 1)
+      throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
+   _testConsole.switchOn()
+   const thrownError = Error("-- throw --")
+   await RUN_TEST({name:"-- Exception --"}, (context) => {
+      throw thrownError
+   })
+   _testConsole.switchOff()
+   _testConsole.compare("RUN_TEST", [
+      ["error","RUN_TEST failed: -- Exception --"],
+      ["log","Reason: exception: Error: -- throw --"],
+      ["error",thrownError]
+   ])
+   if (executedTest != 72 || failedTest != 1 || RunContext.FailedRunTest != 1 || RunContext.FailedSubTest != 1)
+      throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    RESET_TEST()
 }
 

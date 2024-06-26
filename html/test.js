@@ -34,7 +34,7 @@ class RunContext {
 
    toString() {
       if (this.parentContext)
-         return `Sub-RunContext(ID:${this.ID},name:»${this.name}«,parentContext:{ID:${this.parentContext.ID}})`
+         return `RunContext(ID:${this.ID},name:»${this.name}«,parentContext:{${String(this.parentContext)}})`
       else
          return `RunContext(ID:${this.ID},name:»${this.name}«)`
    }
@@ -178,6 +178,29 @@ class TestCase {
       }
    }
 
+   compareArray(value, expect, index="") {
+      if (!Array.isArray(expect))
+         throw Error("Expect arg expectValue of type Array")
+      if (!Array.isArray(value))
+         this.logError(`Expect${index?" at "+index:""} value ${String(value)} of type Array.`)
+      else if (value.length != expect.length)
+         this.logError(`Expect${index?" at "+index:""} array length ${value.length} == ${expect.length}.`)
+      else {
+         for (const entry of value.entries()) {
+            if (Array.isArray(expect[entry[0]])) {
+               if (this.compareArray(entry[1], expect[entry[0]], `${index}[${entry[0]}]`))
+                  return true
+            }
+            else if (entry[1] != expect[entry[0]]) {
+               this.logError(`Expect at ${index}[${entry[0]}] ${entry[1]} == ${expect[entry[0]]}.`)
+               return true
+            }
+         }
+         return false
+      }
+      return true
+   }
+
    testValue() {
       this.run()
       if (this.#exception) {
@@ -186,8 +209,11 @@ class TestCase {
       else {
          const compare = this.#compare, value = this.#expectValue
          if (typeof compare === "function") {
-            if (!compare(this.#value, value))
+            const result = compare(this.#value, value)
+            if (typeof result === "boolean" && !result)
                this.logError(`Expect value ${String(this.#value)} === ${String(value)}.`)
+            else if (typeof result === "string" && result)
+               this.logError(`Expect ${String(result)}.`)
          }
          else switch (compare) {
             case "<":
@@ -223,10 +249,14 @@ class TestCase {
                break
             case "=":
             case "===":
-            default:
                if (!(this.#value === value))
                   this.logError(`Expect ${String(this.#value)} === ${String(value)}.`)
                break
+            case "[=]":
+               this.compareArray(this.#value, value)
+               break;
+            default:
+               throw Error(`Unknown comparison »${String(compare)}«`)
          }
       }
       return this.OK
@@ -286,8 +316,9 @@ async function RUN_TEST({name, timeout=0, delay=0}, callback) {
       throw Error("RUN_TEST called nested within another RUN_TEST")
    }
    runContext = new RunContext(name, timeout, delay, callback, null)
-   return runContext.run().then( () => {
+   return runContext.run().then( (err) => {
       runContext = null
+      return err
    })
 }
 
@@ -387,15 +418,15 @@ async function test_syntax_of_TEST()
       },
       compare(name, expect) {
          const calls = this.calls
-         TEST(calls.length,"=",expect.length,`Failed ${name} produces ${expect.length} console outputs`)
+         TEST(calls.length,"=",expect.length,`Failed ${name} produces ${expect.length} console output-lines`)
          for (let i=0; i<calls.length; ++i) {
-            TEST(calls[i].length,"=",expect[i].length,`TEST call log with ${expect[i].length-1} arguments`)
-            TEST(calls[i][0],"=",expect[i][0],`TEST calls console.${expect[i][0]}`)
-            TEST(calls[i][1],"=",expect[i][1],`TEST calls console.${expect[i][0]} with correct 1st argument`)
-            if (calls.length == 3)
-               TEST(calls[i][2],"=",expect[i][2],`TEST calls console.${expect[i][2]} with correct 2nd argument`)
+            TEST(calls[i].length,"=",expect[i].length,`${name} output-line ${i+1} logs ${expect[i].length-1} arguments`)
+            TEST(calls[i][0],"=",expect[i][0],`${name} output-line ${i+1} calls console.${expect[i][0]}`)
+            TEST(calls[i][1],"=",expect[i][1],`${name} output-line ${i+1} calls console.${expect[i][0]} with correct 1st argument`)
+            if (calls[i].length == 3)
+               TEST(calls[i][2],"=",expect[i][2],`${name} output-line ${i+1} calls console.${expect[i][0]} with correct 2nd argument`)
             else
-               TEST(calls[i].length,"=",2,`TEST calls console.${expect[i][2]} with one argument`)
+               TEST(calls[i].length,"=",2,`${name} output-line ${i+1} calls console.${expect[i][0]} with one argument`)
          }
       }
    }
@@ -413,7 +444,7 @@ async function test_syntax_of_TEST()
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       _testConsole.switchOn()
-      await SUB_TEST({timeout:20}, (context) => {
+      const error = await SUB_TEST({timeout:20}, (context) => {
          SUB_TEST({delay:50,context}, () => {
          })
       })
@@ -422,12 +453,13 @@ async function test_syntax_of_TEST()
          ["error","SUB_TEST failed: -- Timeout --"],
          ["log","Reason: Timeout after 20ms"]
       ])
+      TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (executedTest != 59 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 1)
+   if (executedTest != 60 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    _testConsole.switchOn()
    const thrownError = Error("-- throw --")
-   await RUN_TEST({name:"-- Exception --"}, (context) => {
+   const error = await RUN_TEST({name:"-- Exception --"}, (context) => {
       throw thrownError
    })
    _testConsole.switchOff()
@@ -436,7 +468,8 @@ async function test_syntax_of_TEST()
       ["log","Reason: exception: Error: -- throw --"],
       ["error",thrownError]
    ])
-   if (executedTest != 72 || failedTest != 1 || RunContext.FailedRunTest != 1 || RunContext.FailedSubTest != 1)
+   TEST(error,"=","exception: Error: -- throw --","RUN_TEST returns error")
+   if (executedTest != 74 || failedTest != 1 || RunContext.FailedRunTest != 1 || RunContext.FailedSubTest != 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    RESET_TEST()
 }

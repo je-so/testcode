@@ -60,7 +60,7 @@ await RUN_TEST({name:"Test-Name",timeout:1000}, async () => {
    TEST(step,'=',1,"SUB_TEST returns only promise")
 })
 TEST(step,'=',3,"RUN_TEST waits for running SUB_TEST")
-END_TEST() // print result and resetEND_TEST state
+END_TEST() // print result and reset state
 ```
 OS API
 -------------

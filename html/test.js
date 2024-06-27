@@ -5,7 +5,7 @@
  */
 
 // namespace
-const { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST } = (() => {
+const { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST } = (() => {
 
 let runContext = null
 let failedTest = 0
@@ -125,17 +125,17 @@ class RunContext {
 class TestCase {
    #testFor
    #compare
-   #expectValue
+   #expect
    #errmsg
 
    #value = undefined
    #exception = undefined
    #testResult = true
 
-   constructor(testFor, compare, expectValue, errmsg) {
+   constructor(testFor, compare, expect, errmsg) {
       this.#testFor = testFor
       this.#compare = compare
-      this.#expectValue = expectValue
+      this.#expect = expect
       this.#errmsg = errmsg
       if (typeof this.#compare !== "string" && typeof this.#compare !== "function")
          throw Error("Expect argument compare either of type string or function.")
@@ -144,11 +144,7 @@ class TestCase {
    }
 
    get OK() {
-      return Boolean(this.#testResult)
-   }
-
-   get FAILED() {
-      return ! Boolean(this.#testResult)
+      return this.#testResult
    }
 
    logError(reason) {
@@ -178,27 +174,108 @@ class TestCase {
       }
    }
 
+   valuetoString(value) {
+      if (Array.isArray(value))
+         return "["+String(value)+"]"
+      return String(value)
+   }
+
+   compareValue(compare, value, expect) {
+      switch (compare) {
+         case "<":
+            if (value < expect) return true
+            break
+         case ">":
+            if (value > expect) return true
+            break
+         case "<=":
+            if (value <= expect) return true
+            break
+         case ">=":
+            if (value >= expect) return true
+            break
+         case "!range":
+            if (!Array.isArray(expect) || expect.length !== 2)
+               throw Error("Expect arg expect of type [lowerBound,upperBound]")
+            if (value < expect[0] || expect[1] < value) return true
+            break
+         case "range":
+            if (!Array.isArray(expect) || expect.length !== 2)
+               throw Error("Expect arg expect of type [lowerBound,upperBound]")
+            if (expect[0] <= value && value <= expect[1]) return true
+            break
+         case "==":
+            if (value == expect) return true
+            break
+         case "!=":
+            if (value != expect) return true
+            break
+         case "!==":
+            if (value !== expect) return true
+            break
+         case "=":
+            compare = "==="
+            if (value === expect) return true
+            break
+         case "===":
+            if (value === expect) return true
+            break
+         default:
+            throw Error(`Unsupported arg compare »${String(compare)}«`)
+      }
+      this.logError(`Expect ${this.valuetoString(value)} ${compare} ${this.valuetoString(expect)}.`)
+      return false
+   }
+
+   indexToString(index) {
+      if (typeof index === "string" && (!isFinite(index) || (""+parseInt(index)!==index)))
+         return "'"+index+"'"
+      return String(index)
+   }
+
    compareArray(value, expect, index="") {
       if (!Array.isArray(expect))
-         throw Error("Expect arg expectValue of type Array")
+         throw Error("Expect arg expect of type Array")
       if (!Array.isArray(value))
-         this.logError(`Expect${index?" at "+index:""} value ${String(value)} of type Array.`)
+         this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type Array.`)
       else if (value.length != expect.length)
          this.logError(`Expect${index?" at "+index:""} array length ${value.length} == ${expect.length}.`)
       else {
          for (const entry of value.entries()) {
             if (Array.isArray(expect[entry[0]])) {
-               if (this.compareArray(entry[1], expect[entry[0]], `${index}[${entry[0]}]`))
-                  return true
+               if (!this.compareArray(entry[1], expect[entry[0]], `${index}[${this.indexToString(entry[0])}]`))
+                  return false
             }
-            else if (entry[1] != expect[entry[0]]) {
-               this.logError(`Expect at ${index}[${entry[0]}] ${entry[1]} == ${expect[entry[0]]}.`)
-               return true
+            else if (entry[1] !== expect[entry[0]]) {
+               this.logError(`Expect at ${index}[${this.indexToString(entry[0])}] ${this.valuetoString(entry[1])} == ${this.valuetoString(expect[entry[0]])}.`)
+               return false
             }
          }
-         return false
+         return true
       }
-      return true
+      return false
+   }
+
+   compareObject(value, expect, index="") {
+      if (typeof expect !== "object")
+         throw Error("Expect arg expect of type object")
+      if (typeof value !== "object")
+         this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type object.`)
+      else {
+         const keys = new Set([...Reflect.ownKeys(value),...Reflect.ownKeys(expect)])
+         for (const key of keys) {
+            if (expect[key] !== null && typeof expect[key] === "object") {
+               if (!this.compareObject(value[key], expect[key], `${index}[${this.indexToString(key)}]`))
+                  return false
+            }
+            else if (value[key] !== expect[key]) {
+               this.logError(`Expect at ${index}[${this.indexToString(key)}] ${value[key]} == ${expect[key]}.`)
+               return false
+            }
+         }
+         return true
+      }
+      return false
    }
 
    testValue() {
@@ -207,56 +284,24 @@ class TestCase {
          this.logError(`Unexpected exception ${this.#exception.name}.`)
       }
       else {
-         const compare = this.#compare, value = this.#expectValue
+         const compare = this.#compare
          if (typeof compare === "function") {
-            const result = compare(this.#value, value)
+            const result = compare(this.#value, this.#expect)
             if (typeof result === "boolean" && !result)
-               this.logError(`Expect value ${String(this.#value)} === ${String(value)}.`)
+               this.logError(`Expect value ${String(this.#value)} === ${String(this.#expect)}.`)
             else if (typeof result === "string" && result)
                this.logError(`Expect ${String(result)}.`)
          }
          else switch (compare) {
-            case "<":
-               !(this.#value < value) && this.logError(`Expect ${String(this.#value)} < ${String(value)}.`)
-               break
-            case ">":
-               !(this.#value > value) && this.logError(`Expect ${String(this.#value)} > ${String(value)}.`)
-               break
-            case "<=":
-               !(this.#value <= value) && this.logError(`Expect ${String(this.#value)} <= ${String(value)}.`)
-               break
-            case ">=":
-               !(this.#value >= value) && this.logError(`Expect ${String(this.#value)} >= ${String(value)}.`)
-               break
-            case "!range":
-               if (!Array.isArray(value) || value.length !== 2)
-                  throw Error("Expect arg expectValue of type [lowerBound,upperBound]")
-               !((this.#value < value[0]) || (this.#value > value[1])) && this.logError(`Expect ${String(this.#value)} not in range [${String(value[0])},${String(value[1])}].`)
-               break
-            case "range":
-               if (!Array.isArray(value) || value.length !== 2)
-                  throw Error("Expect arg expectValue of type [lowerBound,upperBound]")
-               !((this.#value >= value[0]) && (this.#value <= value[1])) && this.logError(`Expect ${String(this.#value)} in range [${String(value[0])},${String(value[1])}].`)
-               break
-            case "==":
-               !(this.#value == value) && this.logError(`Expect ${String(this.#value)} == ${String(value)}.`)
-               break
-            case "!=":
-               !(this.#value != value) && this.logError(`Expect ${String(this.#value)} != ${String(value)}.`)
-               break
-            case "!==":
-               !(this.#value !== value) && this.logError(`Expect ${String(this.#value)} != ${String(value)}.`)
-               break
-            case "=":
-            case "===":
-               if (!(this.#value === value))
-                  this.logError(`Expect ${String(this.#value)} === ${String(value)}.`)
+            case "{=}":
+               this.compareObject(this.#value, this.#expect)
                break
             case "[=]":
-               this.compareArray(this.#value, value)
-               break;
+               this.compareArray(this.#value, this.#expect)
+               break
             default:
-               throw Error(`Unknown comparison »${String(compare)}«`)
+               this.compareValue(compare, this.#value, this.#expect)
+               break
          }
       }
       return this.OK
@@ -264,16 +309,17 @@ class TestCase {
 
    testThrow() {
       this.run()
-      if (! this.#exception)
+      if (! this.#exception) {
          this.logError(`Expected exception.`)
+      }
       else {
          const compare = this.#compare
-         const exception = (typeof this.#expectValue === "string")
-               ? { message:this.#expectValue, constructor:this.#exception.constructor }
-               : this.#expectValue
+         const exception = (typeof this.#expect === "string")
+               ? { message:this.#expect, constructor:this.#exception.constructor }
+               : this.#expect
          if (typeof compare === "function") {
-            if (!compare(this.#exception, this.#expectValue))
-               this.logError(`Expect exception ${String(this.#exception)} === ${String(this.#expectValue)}.`)
+            if (!compare(this.#exception, this.#expect))
+               this.logError(`Expect exception ${String(this.#exception)} === ${String(this.#expect)}.`)
          }
          else if (!(this.#exception instanceof exception.constructor)) {
             this.logError(`Expect exception type »${this.#exception.name}« === »${exception.constructor?.name}«.`)
@@ -292,13 +338,13 @@ function countTest(isOK) {
    return isOK
 }
 
-function TEST(testValue, compare, expectValue, errmsg) {
-   const tc = new TestCase(testValue, compare, expectValue, errmsg)
+function TEST(testValue, compare, expect, errmsg) {
+   const tc = new TestCase(testValue, compare, expect, errmsg)
    return countTest(tc.testValue())
 }
 
-function TESTTHROW(testFct, compare, expectValue, errmsg) {
-   const tc = new TestCase(testFct, compare, expectValue, errmsg)
+function TESTTHROW(testFct, compare, expect, errmsg) {
+   const tc = new TestCase(testFct, compare, expect, errmsg)
    return countTest(tc.testThrow())
 }
 
@@ -336,7 +382,7 @@ function END_TEST() {
    RESET_TEST()
 }
 
-async function test_syntax_of_TEST()
+async function INTERNAL_SYNTAX_TEST()
 {
    await RUN_TEST({name:"Syntax of TEST",timeout:500}, async (context) => {
       TEST(runContext,'=',context, "first arg of RUN_TEST points to global runContext")
@@ -363,10 +409,16 @@ async function test_syntax_of_TEST()
       SUB_TEST({delay:0}, (context) => {
          // complex comparison: - two arrays -
          ++ sub_test1
-         const a1=[1,2,3], a2=[2,3,4]
+         const a1=[1,2,3], a2=[2,3,4], a3=[2,3,4]
          for (const i of [0,1,2])
             if (!TEST(a1[i],'<',a2[i], () => `a1[${i}] < a2[${i}]`))
                break
+         // equality is supported by comparison op "[=]"
+         TEST(a2,"[=]",a3,"array a2 equals a3")
+         // - two objects -
+         const s1 = Symbol(1)
+         const o1 = { [s1]: 1, name:"tester" }, o2 = { [s1]: 1, name:"tester" }
+         TEST(o1,"{=}",o2,"object o1 equals o2")
       })
       SUB_TEST({delay:10}, () => {
          TEST(sub_test1,'=',1, "sub test1 executed before sub test2")
@@ -399,8 +451,11 @@ async function test_syntax_of_TEST()
       })
       TEST(waitedOnNestedContext,'=',true, "SUB_TEST waits until nested SUB_TEST has been executed")
    })
-   if (executedTest != 36 || failedTest || RunContext.FailedRunTest || RunContext.FailedSubTest)
+   if (executedTest != 38 || failedTest || RunContext.FailedRunTest || RunContext.FailedSubTest || runContext != null)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
+   //
+   // intercept console.log / console.error calls and test for correct error output
+   //
    const _testConsole = {
       calls: [],
       log(...args) {
@@ -440,7 +495,7 @@ async function test_syntax_of_TEST()
          ["log","Tested value",0]
       ])
    })
-   if (executedTest != 50 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 0)
+   if (executedTest != 52 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 0 || runContext != null)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       _testConsole.switchOn()
@@ -455,7 +510,7 @@ async function test_syntax_of_TEST()
       ])
       TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (executedTest != 60 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 1)
+   if (executedTest != 62 || failedTest != 1 || RunContext.FailedRunTest != 0 || RunContext.FailedSubTest != 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    _testConsole.switchOn()
    const thrownError = Error("-- throw --")
@@ -469,13 +524,13 @@ async function test_syntax_of_TEST()
       ["error",thrownError]
    ])
    TEST(error,"=","exception: Error: -- throw --","RUN_TEST returns error")
-   if (executedTest != 74 || failedTest != 1 || RunContext.FailedRunTest != 1 || RunContext.FailedSubTest != 1)
+   if (executedTest != 76 || failedTest != 1 || RunContext.FailedRunTest != 1 || RunContext.FailedSubTest != 1 || runContext != null)
       throw Error(`Internal error in TEST module nrExecutedTest=${executedTest} failed=${failedTest} failedRun=${RunContext.FailedRunTest} failedSub=${RunContext.FailedSubTest}`)
    RESET_TEST()
 }
 
-test_syntax_of_TEST()
-
-return { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST }
+return { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST }
 
 })()
+
+INTERNAL_SYNTAX_TEST()

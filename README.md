@@ -47,7 +47,7 @@ function unittest_of_some_module(TEST) {
 </script>
 ```
 [A test framework which supports async/await](https://github.com/je-so/testcode/blob/master/html/test.js)
-```
+```javascript
 var step = 1
 await RUN_TEST({name:"Test-Name",timeout:1000}, async () => {
    SUB_TEST({delay:100}, () => {

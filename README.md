@@ -46,7 +46,22 @@ function unittest_of_some_module(TEST) {
 }
 </script>
 ```
-
+[A test framework which supports async/await](https://github.com/je-so/testcode/blob/master/html/test.js)
+```
+var step = 1
+await RUN_TEST({name:"Test-Name",timeout:1000}, async () => {
+   SUB_TEST({delay:100}, () => {
+      step = 2
+   })
+   SUB_TEST({delay:100}, () => {
+      TEST(step,'=',2,"2nd SUB_TEST executes after first")
+      step = 3
+   })
+   TEST(step,'=',1,"SUB_TEST returns only promise")
+})
+TEST(step,'=',3,"RUN_TEST waits for running SUB_TEST")
+END_TEST() // print result and resetEND_TEST state
+```
 OS API
 -------------
 * How to read and check a user/password in a terminal on Linux [checkpass.c](checkpass.c).

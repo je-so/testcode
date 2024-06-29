@@ -142,6 +142,7 @@
 
    <div id=window3 style="position:fixed;left:300px;top:230px;width:200px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
       (fixed)<br>call test() or test2()
+      <br><input type="text" value="don't touch me" size="10">
    </div>
 
    <div class="js-window-stack">
@@ -151,6 +152,18 @@
    <code><pre style="margin-block:8px">
       # start upload server (localhost:9090)
       > bun server.js</pre></code>
+   <div id="radios">
+      <input type="radio" value="-1-" name="selection-1">
+      <input type="radio" value="-2-" name="selection-1">
+      <input type="radio" value="-3-" name="selection-1">
+      <input type="checkbox" value="-a-" name="checky-1">
+      <select name="selection-2">
+         <option value="">please choose</option>
+         <option value="-1-">value 1</option>
+         <option value="-2-">value 2</option>
+         <option value="-3-">value 3</option>
+      </select>
+   </div>
    <div>== LOG ==</div>
    <div id="LOG"></div>
    <div style="height:1000px;"></div>
@@ -168,14 +181,23 @@
          }
          document.getElementById("LOG").innerHTML = (logLines%100) + " " + msg + "<br>" + append
       }
+      const logException = (exc) => {
+         console.error(exc)
+         if (exc?.stack)
+            exc.stack.toString().split("\n").reverse().forEach(traceLine => traceLine.trim() && logError("&nbsp; "+traceLine))
+         logError(`line ${exc.lineno}: ${exc.message}`)
+      }
+      const logCatch = (exc) => {
+         const catchedAt = Error("Previous exception catched at")
+         logException(catchedAt)
+         logException(exc)
+      }
       window.addEventListener("error", (e) => {
-         if (e.error?.stack)
-            e.error.stack.toString().split("\n").reverse().forEach(traceLine => traceLine.trim() && logError("&nbsp; "+traceLine))
-         logError(`line ${e.lineno}: ${e.message}`)
+         logException(e.error)
       })
    </script>
 
-   <script src="./htmlview.js"></script>
+   <script src="vmx.js"></script>
 
    <script>
       //////////////////
@@ -186,22 +208,21 @@
       const div2 = document.getElementById("window2")
       const div3 = document.getElementById("window3")
 
-      const win1VM = new WindowDecorator(div1, { title: "Hello 1" }).viewModel
-      const win2VM = new WindowDecorator(div2, { template:"#js-window-template", title: "Hello 2" }).viewModel
-      const win3VM = new WindowDecorator(div3, { template:View.clone("#js-window-template"), title: "Hello 3"}).viewModel
-      const win4VM = new WindowVM(View.clone("#js-window-template")).setOptions({
+      const frame = View.clone("#js-window-template")
+      const win1VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div1, title:"Hello 1", moveable:false })
+      const win2VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div2, title:"Hello 2" })
+      const win3VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div3, title:"Hello 3" })
+      const win4VM = new WindowVM(View.clone("#js-window-template"), {
          top:240, left:600, width:140, height:100, title:"Hello 4",
          content: "<div style='background-color:beige; color:maroon;'>Created Window</div>"
       })
-      new WindowDecorator(win4VM.htmlElem, { viewModel: win4VM, moveable:null/*chosen in decorator*/ })
       win4VM.vWindowState = "visible"
 
-      const child = View.newElement("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px;'>Created Window</div>")
-      const win5VM = new WindowDecorator(child).viewModel
+      const child = View.newElement("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px; right:10px; bottom:150px;'>Created Window</div>")
+      const win5VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:child, title:"Hello 5" })
       win5VM.vWindowState = "visible"
 
       console.log("listened elements",ViewListeners.getListenedElements(document))
-      console.log("WindowDecorator decorated elements",ViewDecorators.getDecoratedElements(document,WindowDecorator))
 
       const winstackVM = new WindowStackVM(View.query("[class='js-window-stack']"))
 
@@ -222,11 +243,11 @@
       winstackVM.register(win4VM)
       winstackVM.register(win5VM)
 
-      const deco1 = ViewDecorators.get(win1VM.htmlElem, WindowDecorator)[0]
-      const deco2 = ViewDecorators.get(win2VM.htmlElem, WindowDecorator)[0]
-      const deco3 = ViewDecorators.get(win3VM.htmlElem, WindowDecorator)[0]
-      const deco4 = ViewDecorators.get(win4VM.htmlElem, WindowDecorator)[0]
-      const deco5 = ViewDecorators.get(win5VM.htmlElem, WindowDecorator)[0]
+      const deco1 = win1VM.decorator
+      const deco2 = win2VM.decorator
+      const deco3 = win3VM.decorator
+      const deco4 = win4VM.decorator
+      const deco5 = win5VM.decorator
 
       logError(devicePixelRatio+"dppx")
 
@@ -260,8 +281,8 @@
       function test3() {
          deco2.undecorate()
          setTimeout( () => {
-            deco2.decorate(div2, {viewModel:win2VM, title:`Hello 2-(${++redecorationCount})`})
-            win2VM.vTop -= 10+redecorationCount
+            deco2.decorate(win2VM, {decoratedHtmlElem:div2, moveable:true})
+            win2VM.vTitle = `Hello 2-(${++redecorationCount})`
          }, 800)
       }
 
@@ -314,27 +335,50 @@
          }
       })
 
+      var registeredClientID = null
+
       function upload_file(file) {
-         const result = { ok:false, status:0, answer:"", error:null }
-         return fetch(`http://${window.location.hostname}:9090/uploads/${file.name}`, {
-            method:"PUT",
-            mode:"cors",
-            headers: {
-               "Content-Type": file.type
-            },
-            body:file,
+         const result = { ok:false, status:0, answer:"", error:null/*network error*/ }
+         return Promise.resolve(registeredClientID == null && registerClient()).then( () => {
+            return fetch(`http://${window.location.hostname}:9090/uploads/${file.name}/?clientid=${registeredClientID}`, {
+               method:"PUT",
+               credentials:"include",
+               mode:"cors",
+               headers:{ "Content-Type": file.type },
+               body:file,
+            })
          }).then( resp => {
             result.ok = resp.ok; result.status = resp.status; return resp.text()
          }).then( answer => {
             result.answer = answer; return result
          }).catch( error => {
+            logCatch(error)
             result.ok = false; result.error = error; return result
          })
       }
 
-      const fileinput = View.newElement("<input type=file hidden>")
+      function registerClient() {
+         if (registeredClientID == null)
+            registeredClientID = crypto.randomUUID()
+         return fetch("http://localhost:9090/register",
+            { method:"POST", mode:"cors", body:registeredClientID, credentials:"include" }
+         ).then(resp => {
+            if (!resp.ok) {
+               console.log("register client failed",resp.status,resp.headers)
+            }
+            return resp.text()
+         }).then(text => console.log(text))
+      }
+
+      const fileinput = View.newElement("<input type='file' hidden>")
       dropzone.append(fileinput)
-      new ClickController(dropzone, () => fileinput.click())
+      new ClickController(dropzone, (e) => {
+         console.log("dropzone click",e.currentTarget,e)
+         if (e.target!==fileinput) {
+            console.log("fileinput click")
+            fileinput.click()
+         }
+      })
       fileinput.addEventListener("change", (e) => {
          if (fileinput.files?.length) {
             do_upload_image(fileinput.files[0])
@@ -346,26 +390,37 @@
 
          async function test_window(vm) {
 
-            await RUN_TEST({name:"vLeft changes during transition",timeout:1000}, async () => {
+            await RUN_TEST({name:"Transition-Controller",timeout:100}, () => {
+               let callbackCalled = false
+               new TransitionController(document.body, (e) => {
+                  TEST(e.target,'=',document.documentElement, "target points to html tag if no transition is active")
+                  TEST(e.currentTarget,'=',document.body, "currentTarget points to element listener is registered for")
+                  callbackCalled = true
+               }).ensureInTransitionElseEnd()
+               TEST(callbackCalled,'=',true, "ensureInTransitionElseEnd calls callback if no transition is running")
+            })
+
+            await RUN_TEST({name:"vLeft does not change during transition",timeout:1000}, async () => {
                vm.vWindowState = "visible"
                await vm.asyncOnTransitionEnd()
                TEST(vm.vWindowState,'=',"visible", "wrong precondition: window not in state 'visible'")
                const visibleLeft = vm.vLeft
                vm.vWindowState = "minimized"
-               TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not started")
+               TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not yet started")
                let onceCalled = 0
-               await SUB_TEST({delay:300}, async () => {
+               await SUB_TEST({delay:300}, (context) => {
                   const minimizedLeft = vm.vLeft
                   vm.vWindowState = "visible"
+                  TEST(vm.vLeft,'=',minimizedLeft, "transition not yet started")
                   vm.onceOnTransitionEnd(() => {
                      TEST(vm.vLeft,'=',visibleLeft, "vLeft same at end of transition")
                   })
                   vm.onceOnViewUpdate( () => {
-                     TEST(vm.vLeft,'range',[minimizedLeft+1,visibleLeft-1], "vLeft changes during transition gradually")
+                     TEST(vm.vLeft,'=',visibleLeft, "vLeft same at start of transition")
+                     TEST(parseFloat(vm.view.getComputedStyle().left),'range',[minimizedLeft+1,visibleLeft-1], "left is animated during tansition")
                      ++ onceCalled
                   }, 2)
-                  TEST(vm.vLeft,'=',minimizedLeft, "transition not started so vLeft has not chanhged")
-                  await vm.asyncOnTransitionEnd()
+                  SUB_TEST({context}, async () => await vm.asyncOnTransitionEnd())
                })
                TEST(onceCalled,'=',1, "onceOnViewUpdate called exactly once")
             })
@@ -378,8 +433,10 @@
                   TEST(vm.vLeft,'=',0, "vLeft == 0 in maximized state")
                })
                vm.onceOnViewUpdate(() => {
-                  TEST(vm.vLeft,'range',[1,left-1], "vLeft changes during transition")
+                  TEST(vm.vLeft,'=',0, "vLeft == 0 at start of transition into maximized state")
+                  TEST(parseFloat(vm.view.getComputedStyle().left),'range',[1,left-1], "left is animated during tansition")
                }, 4)
+               SUB_TEST({}, async () => await vm.asyncOnTransitionEnd())
             })
 
             // TODO: add more tests
@@ -395,75 +452,198 @@
       //////////////////////////
       // Debug Control Center //
       //////////////////////////
-      class ControlCenter {
+      class ControlCenter extends WindowVM {
          log={}
          panel={}
+         viewsList={}
          constructor() {
+            super(ControlCenter.createPanelElement(),{initInSuperClass:true})
             const log = this.log
-            log.ID = View.nextUnusedID("LogWindow")
-            log.htmlElem = this.createLogWindowElement(log.ID)
+            log.htmlElem = ControlCenter.createLogWindowElement()
             log.winVM = new WindowVM(log.htmlElem)
-            log.decorator = new WindowDecorator(log.htmlElem, {viewModel:log.winVM})
-            log.winVM.vWindowState="visible"
+            log.winVM.show()
             log.width = log.winVM.vWidth
-            log.decorator.setOnClose(this.hideLogWindow.bind(this))
+            log.winVM.setEventHandler("close",this.hideLogWindow.bind(this))
             const panel = this.panel
-            panel.ID = View.nextUnusedID("ControlPanel")
-            panel.htmlElem = this.createPanel(panel.ID)
+            panel.htmlElem = this.htmlElem // ControlCenter.createPanelElement()
             panel.logWindowCheckbox = panel.htmlElem.querySelector("[data-slot=LogWindowCheckbox]")
-            panel.winVM = new WindowVM(panel.htmlElem)
-            panel.decorator = new WindowDecorator(panel.htmlElem, {viewModel:panel.winVM})
-            panel.winVM.vWindowState="visible"
+            panel.winVM = this // new WindowVM(panel.htmlElem)
+            panel.winVM.show()
             panel.top = panel.winVM.vTop
-            panel.decorator.setOnClose(this.hidePanel.bind(this))
-            panel.keydown = document.addEventListener("keydown", (e) => {
-               (e.key === "Escape") && this.togglePanel()
+            panel.winVM.setEventHandler("close",this.hidePanel.bind(this))
+            panel.onEscape = new KeyController(document, (e) => {
+               e.key === "Escape" && e.type === "keydown" && this.togglePanel()
+               // e.event.preventDefault()
             })
-            panel.logChanged = panel.logWindowCheckbox.addEventListener("change", (e) => {
-               this.switchLogWindow(panel.logWindowCheckbox.checked)
+            panel.onLogSwitch = new ChangeController(panel.logWindowCheckbox, (e) => {
+               this.switchLogWindow(e.checked)
             })
          }
 
+         get hiddenLogWindow() {
+            return this.log.winVM.hidden
+         }
          showLogWindow() {
-            // TODO: use ControlCenterVM for LogWindowShown true/false
-            this.log.winVM.vWindowState="visible"
-            this.log.winVM.visiblePos = {transition:true, width:this.log.width}
-            this.panel.logWindowCheckbox.checked = true
+            if (this.hiddenLogWindow) {
+               this.log.winVM.show()
+               this.log.winVM.visiblePos = {transition:true, width:this.log.width}
+               this.panel.logWindowCheckbox.checked = true
+            }
          }
          hideLogWindow() {
-            this.log.width = this.log.winVM.vWidth
-            this.log.winVM.visiblePos = {transition:true, width:0}
-            this.panel.logWindowCheckbox.checked = false
-            this.log.winVM.onceOnTransitionEnd( () => {
-               this.log.winVM.vWindowState="hidden"
-            })
+            if (!this.hiddenLogWindow) {
+               this.log.width = this.log.winVM.vWidth
+               this.log.winVM.visiblePos = {transition:true, width:0}
+               this.panel.logWindowCheckbox.checked = false
+               this.log.winVM.onceOnTransitionEnd( () => this.log.winVM.hide())
+            }
          }
          switchLogWindow(switchOn) {
             switchOn ? this.showLogWindow() : this.hideLogWindow()
          }
 
+         get hiddenPanel() {
+            return this.panel.winVM.hidden
+         }
          showPanel() {
-            // TODO: use ControlCenterVM for PanelShown true/false
-            this.panel.winVM.visiblePos = {transition:true, top:this.panel.top}
+            if (this.hiddenPanel) {
+               this.panel.winVM.show()
+               this.panel.winVM.visiblePos = {transition:true, top:this.panel.top}
+            }
          }
          hidePanel() {
-            this.panel.top = this.panel.winVM.vTop
-            this.panel.winVM.visiblePos = {transition:true, top:-this.panel.winVM.vHeight-30}
+            if (!this.hiddenPanel) {
+               this.panel.top = Math.max(0,this.panel.winVM.vTop)
+               this.panel.winVM.visiblePos = {transition:true, top:-this.panel.winVM.vHeight-30}
+               this.panel.winVM.onceOnTransitionEnd( () => this.panel.winVM.hide())
+            }
          }
          togglePanel() {
-            this.panel.winVM.vTop < 0 ? this.showPanel() : this.hidePanel()
+            this.hiddenPanel ? this.showPanel() : this.hidePanel()
          }
 
-         createLogWindowElement(logID) {
+         unhighlight() {
+            const table = this.viewsList
+            if (table.lastHighlighted.viewModel) {
+               table.lastHighlighted.viewModel.view.setStyles(table.lastHighlighted.oldStyle)
+               table.lastHighlighted.viewModel = null
+            }
+         }
+         endEditName(e, abort) {
+            const table = this.viewsList
+            const row = e ? e.target.closest("tr") : table.edits[0]?.row
+            if (!row || row.parentElement.nodeName !== "TBODY") return
+            const editIndex = table.edits.findIndex(edit => edit.row === row)
+            if (editIndex >= 0) {
+               const edit = table.edits.splice(editIndex,1)[0]
+               document.createDocumentFragment().append(...edit.col.children)
+               document.createDocumentFragment().append(...edit.col2.children)
+               edit.col.append(edit.colchilds)
+               edit.col2.append(edit.col2childs)
+               for (const ctrl in edit.controller)
+                  edit.controller[ctrl].remove()
+               if (!abort) {
+                  edit.viewModel.name = edit.input.value.trim()
+                  edit.col.querySelector("label").textContent = edit.viewModel.LID
+               }
+               this.unhighlight()
+            }
+         }
+
+         ID=1
+
+         openViewsList() {
+            this.closeViewsList()
+            const table = this.viewsList
+            table.edits = []
+            table.lastHighlighted = {}
+            table.htmlElem = this.createViewsListElement()
+            table.winVM = new WindowVM(table.htmlElem)
+            table.winVM.show()
+            table.winVM.setEventHandler("close",this.closeViewsList.bind(this))
+            table.htmlElem.addEventListener("focusin", (e) => {
+                     console.log("focusin",e)
+                  })
+            table.htmlElem.addEventListener("focusout", (e) => {
+                     console.log("focusout",e)
+                  })
+            table.onTouch = new TouchController(table.htmlElem, (e) => {
+               const viewmodels = this.viewsList.viewmodels
+               const row = e.target.closest("tr")
+               const col = e.target.closest("td")
+               const childindex = col ? Array.prototype.indexOf.call(col.parentNode.children,col) : -1
+               logError("touch "+e.orig.type+":"+e.target?.nodeName+"["+childindex+"],"+e.target.id+","+e.currentTarget?.nodeName)
+               e.type === "touchend" && this.unhighlight()
+               if (!row || row.parentElement.nodeName !== "TBODY") return
+               const rowOffset = row.sectionRowIndex
+               if (! (0 <= rowOffset && rowOffset < viewmodels.length)) return
+               if (e.type === "touchend") {
+                  if (col.parentElement.children[0] === col && row === table.edits[0]?.row)
+                     return
+                  this.endEditName(null)
+                  if (col.parentElement.children[0] === col)
+                  {
+                     logError("new input")
+                     const input = View.newElement("<input type=text class='w-100'>")
+                     const cancel = View.newElement("<a class='btn btn-warning'>cancel <i class='bi bi-trash'></i></a>")
+                     const controller = {}
+                     const edit = { input, cancel, row, col, col2: col.nextElementSibling,
+                                    colchilds: document.createDocumentFragment(),
+                                    col2childs: document.createDocumentFragment(),
+                                    viewModel: viewmodels[rowOffset], controller }
+                     edit.colchilds.append(...col.childNodes)
+                     edit.col2childs.append(...edit.col2.childNodes)
+                     input.id = "inp-"+(this.ID++)
+                     // input.value = edit.viewModel.name
+                     col.append(input)
+                     edit.col2.append(cancel)
+                     controller.onKey = new KeyController(input, (e) => {
+                        if (e.type === "keydown" && (e.key === "Escape" || e.key==="Enter" ))
+                           this.endEditName(e, e.key === "Escape")
+                     })
+                     controller.onCancel = new ClickController(cancel, (e) => {
+                        logError("onCancel: "+e.type+" "+e.device)
+                        this.endEditName(e, true)
+                     })
+                     table.winVM.onceOnViewUpdate(() => {
+                        input.focus()
+                        input.value = edit.viewModel.name
+                        input.setSelectionRange(input.value.length,input.value.length)
+                     }, 1)
+                     table.edits.push(edit)
+                  }
+               }
+               if (e.type === "touchstart" && !table.lastHighlighted.viewModel) {
+                  const vm = viewmodels[rowOffset]
+                  table.lastHighlighted.viewModel = vm
+                  table.lastHighlighted.oldStyle = vm.view.setStyles({
+                     outline: "#FF9D77 dashed 3px", outlineOffset: 0
+                  })
+               }
+            })
+         }
+         closeViewsList() {
+            const table = this.viewsList
+            if (table.htmlElem) {
+               this.endEditName()
+               table.onTouch.remove()
+               table.winVM.free().remove()
+            }
+            this.viewsList = {}
+         }
+
+
+         static createLogWindowElement() {
+            const logID = View.nextUnusedID("LogWindow")
             return View.newElement(`
-               <div id="${logID}" style="position:fixed; width:50%;">
+               <div id="${logID}" style="position:fixed; width:50%; top:0; right:0;">
                   <div class="card overflow-hidden" style="height:100%">
                      <div class="card-header">
-                        <span data-slot="title">Log Window</span>
+                        <span data-slot="title">Log Window <tt><small><small>(TODO: implement)</small></small></tt></span>
                         <button type="button" class="btn-close float-end" aria-label="Close" data-slot="close"></button>
                      </div>
                      <div class="card-body overflow-y-scroll" data-slot="content">
-                        <table class="w-100">
+                        <table class="table">
                            <thead>
                               <tr><th>nr&nbsp;</th><th>ms</th><th>name</th><th>msg</th></tr>
                            </thead>
@@ -477,7 +657,8 @@
             )
          }
 
-         createPanel(panelID) {
+         static createPanelElement() {
+            const panelID = View.nextUnusedID("ControlPanel")
             return View.newElement(`
                <div id="${panelID}" class="toast show position-fixed" style="top:0; left:0;" role="alert" aria-live="assertive" aria-atomic="true">
                   <div class="toast-header">
@@ -487,23 +668,81 @@
                      <button type="button" class="btn-close" aria-label="Close" data-slot="close"></button>
                   </div>
                   <div class="toast-body" data-slot="content">
-                     Hello, world! This is under construction.
+                     This is under construction!
                      <div class="form-check form-switch"><small><label class="form-check-label"><input class="form-check-input" type="checkbox" value="" checked data-slot="LogWindowCheckbox">Log Window</label></small></div>
                   </div>
                </div>`
             )
          }
 
-         info() {
-            console.log(getComputedStyle(this.log.htmlElem))
-            console.log(getComputedStyle(this.log.htmlElem)["-z-index"])
+         createViewsListElement() {
+            const tableID = View.nextUnusedID("ViewsList")
+            let rows = ""
+            this.viewsList.viewmodels = []
+            let id=6
+            for (const vm of VMX.getBoundViewModels(document)) {
+               const decorator = vm.decorator
+               rows += "<tr><td style='cursor:initial' id='"+(++id)+"'><label>"+vm.LID+"</label></td>"
+               rows += "<td id='"+(++id)+"'>"+(decorator?decorator.constructor.name:'&mdash;')+"</td>"
+               rows += "<td id='"+(++id)+"'>"+vm.constructor.name+"</td>"
+               rows += "<td id='"+(++id)+"'>"+(vm.vTitle
+                                 ? vm.vTitle.substring(0,15)
+                                 : "") + "</td></tr>"
+               this.viewsList.viewmodels.push(vm)
+            }
+            const bStyle = getComputedStyle(document.body)
+            return View.newElement(`
+               <div id="${tableID}" style="position:fixed; height:50%; width:50%; top:20px; left:${parseFloat(bStyle.width)/4}px;">
+                  <div class="card overflow-hidden" style="height:100%">
+                     <div class="card-header" data-slot="move">
+                        <span data-slot="title">Decorated Elements <tt><small><small>(try clicking row)</small></small></tt></span>
+                        <button type="button" class="btn-close float-end" aria-label="Close" data-slot="close"></button>
+                     </div>
+                     <div class="card-body overflow-y-scroll" data-slot="content" >
+                        <table class="table table-striped table-hover align-middle">
+                           <thead>
+                              <tr><th><i class='bi bi-pencil-square'></i> Name</th><th>Decorator</th><th>VModel</th><th>Info</th></tr>
+                           </thead>
+                           <tbody>
+                              ${rows}
+                           </tbody>
+                        </table>
+                     </div>
+                  </div>
+               </div>`
+            )
          }
+
       }
 
-      const ccc = new ControlCenter()
+      const ccCenter = new ControlCenter()
+      ccCenter.openViewsList()
+      const viewsList=ccCenter.viewsList.winVM.htmlElem
+
+      ////////////
+      // TODOs: //
+      ////////////
+
+      // 1. assign IDs to every element
+      // 2. write logs into log-window
+      // 3. (DONE) prevent MOUSE-CLICK simulation of Touch-Device
+      // 4. (DONE) Event names
+      //    4.1 { name:"click" device:"[touch|mouse]" }
+      // 10. Create ViewListener and add it to ViewListeners instead of
+      //     providing all arguments to Addlistener which pipes
+      //     them through to constructor of ViewListener
+      //     10.1 Adding same eventhandler encapsulated in different ViewListener more than once
+      //          => calling same handler more than once (nothing to do)
+      //          => handler must call preventmultiple(handlerfunction) to ensure single exec
+      // X. overlapping Escape key handling
+
+      new ChangeController(document.getElementById("radios"), (e) => {
+         console.log("change",e)
+      })
+      new ChangeController(document.getElementById("radios").querySelectorAll("[type=radio]"), (e) => {
+         console.log("change",e)
+      })
+
    </script>
-
-
-
 </body>
 </html>

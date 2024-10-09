@@ -5,13 +5,13 @@
  */
 
 // namespace
-const { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST } = (() => {
+const { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST, TestEnvironment } = (() => {
 
 /**
  * Contains stats counter and test console for testing TEST output.
  */
 class TestEnvironment {
-   static singleton = new TestEnvironment()
+   static default = new TestEnvironment()
    /** The number of started but not finished {@link runTest RUN_TEST} and {@link runSubTest SUB_TEST}. @type {number} */
    runningTest = 0
    /** The number of started {@link runTest RUN_TEST} and {@link runSubTest SUB_TEST}. @type {number} */
@@ -117,7 +117,7 @@ class TestEnvironment {
    }
 
    /**
-    * Runs a sequence of {@link test TEST}, {@link test TESTTHROW} or nested calls to {@link runSubTest SUB_TEST}.
+    * Runs a sequence of {@link test TEST} or nested calls to {@link runSubTest SUB_TEST}.
     * All sub-tests are started as pseudo parallel asymc functions.
     * Use await on the return value to ensure that a SUB_TEST has ended its execution before
     * another one is started. The containing context (either RUN_TEST or SUB_TEST)
@@ -141,25 +141,11 @@ class TestEnvironment {
     * @param {any} expect The expected value argument testValue should be compared with.
     * @param {string|(() => string)} errmsg The error message to show if TEST failed.
     * @param {{testConsole?:TestConsole}} [options]
-    * @returns {boolean} True indicates a successful test.
+    * @returns {boolean|Promise<boolean>} True indicates a successful test.
     */
    test(testValue, compare, expect, errmsg, options) {
       const tc = new TestCase(testValue, compare, expect, errmsg, this, options?.testConsole)
-      return tc.testValue()
-   }
-
-   /**
-    * Tests a function for throwing a certain exception.
-    * @param {()=>any|Promise<any>} testFct A function which should throw an exception.
-    * @param {"="|((exception:any, expect:any)=>boolean)} compare Either built in comparison functions (string) or a comparison function. Use a function if you want to compare more than a type and a message field.
-    * @param {any|string|{constructor:()=>any,message:any}|(new()=>any)} expect Either the value equals the exception. Or the message of the thrown exception is tested (string), or also the type (Object), or only the type without message (constructor function).
-    * @param {string|(() => string)} errmsg The error message to show if TEST failed.
-    * @param {{testConsole?:TestConsole}} [options]
-    * @returns {Promise<boolean>} True indicates a successful test.
-    */
-   async testThrow(testFct, compare, expect, errmsg, options) {
-      const tc = new TestCase(testFct, compare, expect, errmsg, this, options?.testConsole)
-      return tc.testThrow()
+      return tc.test()
    }
 
    /**
@@ -174,8 +160,7 @@ class TestEnvironment {
     *    RUN_TEST:(config:{name:string,timeout?:number,delay?:number,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    SUB_TEST:(config:{timeout?:number,delay?:number,context?:RunContext,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    END_TEST:(options?:{testConsole?:TestConsole})=>Promise<void>,
-    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>boolean,
-    *    TESTTHROW:(testFct:()=>any|Promise<any>,compare:"="|((exception:any,expect:any)=>boolean),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>Promise<boolean>,
+    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>boolean
     * }}
     */
    export() {
@@ -184,7 +169,6 @@ class TestEnvironment {
          SUB_TEST: this.runSubTest.bind(this),
          END_TEST: this.showStats.bind(this),
          TEST: this.test.bind(this),
-         TESTTHROW: this.testThrow.bind(this),
       }
    }
 }
@@ -243,7 +227,7 @@ class RunContext {
 
    /**
     *
-    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole?:TestConsole}} options
+    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole:undefined|TestConsole}} options
     */
    constructor({name, timeout, delay, callback, parentContext, testenv, testConsole}) {
       if (typeof name !== "string")
@@ -329,14 +313,13 @@ class RunContext {
 
 class TestCase {
    #testFor
+   #value
    #compare
    #expect
+   #testOK
    #errmsg
    #testenv
    #testConsole
-
-   #value = null
-   #testOK = true
 
    /**
     * @param {any|(()=>any)} testFor
@@ -356,8 +339,10 @@ class TestCase {
       if (testConsole && !(testConsole instanceof TestConsole))
          throw Error("Expect argument »testConsole« of type TestConsole")
       this.#testFor = testFor
+      this.#value = expect
       this.#compare = compare
       this.#expect = expect
+      this.#testOK = true
       this.#errmsg = errmsg
       this.#testenv = testenv
       this.#testConsole = testConsole
@@ -369,12 +354,16 @@ class TestCase {
    get OK() {
       return this.#testOK
    }
-
+   /**
+    * @param {string} reason
+    */
    logError(reason) {
       this.testenv.signalTestCaseError(this.#testConsole, this.errmsg, reason, this.#value)
       this.#testOK = false
    }
-
+   /**
+    * @returns {string} The message which describes the failed TEST.
+    */
    get errmsg() {
       return typeof this.#errmsg === "function"
             ? this.#errmsg()
@@ -386,10 +375,13 @@ class TestCase {
          return "["+String(value)+"]"
       return String(value)
    }
-
-   compare(compare, value, expect) {
-      if (typeof compare !== "function")
-         return this.compareValue(compare, value, expect)
+   /**
+    * @param {(value:any, expect:any)=>boolean|string} compare
+    * @param {any} value
+    * @param {any} expect
+    * @returns {boolean} True in case comparison holds else false.
+    */
+   compareFunction(compare, value, expect) {
       const result = compare(value, expect)
       if (  (typeof result !== "string" && result)
          || (typeof result === "string" && result === ""))
@@ -400,8 +392,15 @@ class TestCase {
          this.logError(`Expect ${String(value)} === ${String(expect)}.`)
       return false
    }
-
-   compareValue(compare, value, expect) {
+   /**
+    * @returns {boolean} True in case comparison holds else false.
+    */
+   compare() {
+      const compare = this.#compare
+      const value = this.#value
+      const expect = this.#expect
+      if (typeof compare === "function")
+         return this.compareFunction(compare, value, expect)
       switch (compare) {
          case "<":
             if (value < expect) return true
@@ -434,18 +433,14 @@ class TestCase {
          case "!==":
             if (value !== expect) return true
             break
-         case "=":
-            compare = "==="
-            if (value === expect) return true
-            break
-         case "===":
+         case "=": case "===":
             if (value === expect) return true
             break
          case "{=}":
             return this.compareObject(value, expect)
          case "[=]":
             return this.compareArray(value, expect)
-         case "exception":
+         case "throw":
             return this.compareException(value, expect)
          default:
             throw Error(`Unsupported argument »compare« = »${String(compare)}«`)
@@ -557,34 +552,46 @@ class TestCase {
       this.#value = isFunction ? this.#testFor() : this.#testFor
       return this.#value
    }
-
-   testValue() {
-      this.compare(this.#compare, this.run(), this.#expect)
-      return this.OK
-   }
-
-   async testThrow() {
-      const compare = this.#compare === "=" ? "exception" : this.#compare
-      if (compare !== "exception" && typeof compare === "string")
-         throw Error(`Unsupported argument »compare« = »${compare}«`)
+   /**
+    * @returns {Promise<boolean>}
+    */
+   async testAsync() {
       try {
-         const value = this.run()
-         if (value instanceof Promise)
-            await value
-         this.logError(`Expected exception.`)
+         this.#value = await this.#value
+         if (this.#compare === "throw")
+            this.logError(`Expected exception.`)
       }
       catch(exception) {
          this.#value = exception
-         this.compare(compare, exception, this.#expect)
+         if (this.#compare !== "throw")
+            this.logError(`Unexpected exception.`)
       }
-      return this.OK
+      return this.OK && this.compare()
+   }
+   /**
+    * @returns {boolean|Promise<boolean>}
+    */
+   test() {
+      try {
+         const value = this.#value = this.run()
+         if (value instanceof Promise)
+            return this.testAsync()
+         if (this.#compare === "throw")
+            this.logError(`Expected exception.`)
+      }
+      catch(exception) {
+         this.#value = exception
+         if (this.#compare !== "throw")
+            this.logError(`Unexpected exception.`)
+      }
+      return this.OK && this.compare()
    }
 }
 
 async function INTERNAL_SYNTAX_TEST()
 {
    const testenv = new TestEnvironment()
-   const { TEST, TESTTHROW, RUN_TEST, SUB_TEST } = testenv.export()
+   const { TEST, RUN_TEST, SUB_TEST } = testenv.export()
    await RUN_TEST({name:"Syntax of TEST",timeout:500}, async (context) => {
       TEST(testenv.runningTest,'=',1, "one test is running")
       TEST(context.parentContext,'=',undefined, "first arg of RUN_TEST points to global runContext")
@@ -632,13 +639,11 @@ async function INTERNAL_SYNTAX_TEST()
       SUB_TEST({context, delay:10}, async (/*context*/) => {
          TEST(sub_test1,'=',1, "sub test1 executed before sub test2")
          ++ sub_test2
-         TESTTHROW(()=>{throw Error("msg1")},'=',"msg1", "TESTTHROW compares message")
-         TESTTHROW(()=>{throw Error("msg2")},'=',Error("msg2"), "TESTTHROW compares type and message")
-         TESTTHROW(()=>{throw Error("msg3")},'=',{message:"msg3",constructor:Error}, "TESTTHROW compares type and message")
-         TESTTHROW(()=>{throw Error("msg4")},'=',Error, "TESTTHROW compares type")
-         TESTTHROW(()=>{throw Error("msg5")},(v,msg)=>v instanceof Error && v.message===msg,"msg5", "TESTTHROW calls compare function")
-         TESTTHROW(()=>{throw Error("msg6")},(v,e)=>v instanceof e.constructor && v.message===e.message,Error("msg6"), "TESTTHROW calls compare function") // 32
-         await TESTTHROW(()=>new Promise((_,reject)=>setTimeout(()=>reject(Error("msg7")),10)),"=",Error("msg7"), "TESTTHROW supports async functions")
+         TEST(()=>{throw Error("msg1")},'throw',"msg1", "TESTTHROW compares message")
+         TEST(()=>{throw Error("msg2")},'throw',Error("msg2"), "TESTTHROW compares type and message")
+         TEST(()=>{throw Error("msg3")},'throw',{message:"msg3",constructor:Error}, "TESTTHROW compares type and message")
+         TEST(()=>{throw Error("msg4")},'throw',Error, "TESTTHROW compares type")
+         await TEST(()=>new Promise((_,reject)=>setTimeout(()=>reject(Error("msg7")),10)),"throw",Error("msg7"), "TEST 'throw' supports async functions")
       })
       // RUN_TEST is waiting on nested SUB_TEST (tested with executedTestCase)
       SUB_TEST({context, delay:50}, () => {
@@ -661,14 +666,14 @@ async function INTERNAL_SYNTAX_TEST()
       })
       TEST(waitedOnNestedContext,'=',true, "SUB_TEST waits until nested SUB_TEST has been executed")
    })
-   if (testenv.executedTestCase !== 44 || testenv.failedTestCase !== 1 || testenv.failedRunTest || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 42 || testenv.failedTestCase !== 1 || testenv.failedRunTest || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
    await RUN_TEST({name:"-- TEST fails --",timeout:100}, async (/*context*/) => {
       const testConsole = testenv.newTestConsole()
       TEST(0,"=",1,"FAIL1",{testConsole})
       testConsole.compare("TEST", [
          ["error","TEST failed: FAIL1"],
-         ["log","Reason: Expect 0 === 1."],
+         ["log","Reason: Expect 0 = 1."],
          ["log","Tested value",0]
       ])
    })
@@ -682,16 +687,16 @@ async function INTERNAL_SYNTAX_TEST()
          ["log","Tested value",testedValue]
       ])
    })
-   await RUN_TEST({name:"-- TESTTHROW fails --",timeout:100}, async (/*context*/) => {
+   await RUN_TEST({name:"-- TEST 'throw' fails --",timeout:100}, async (/*context*/) => {
       const testConsole = testenv.newTestConsole()
-      TESTTHROW(()=>0,"=",0,"TESTTHROW fails with NO exception",{testConsole})
+      TEST(()=>0,"throw",0,"TEST fails cause of NO exception",{testConsole})
       testConsole.compare("TEST", [
-         ["error","TEST failed: TESTTHROW fails with NO exception"],
+         ["error","TEST failed: TEST fails cause of NO exception"],
          ["log","Reason: Expected exception."],
          ["log","Tested value",0]
       ])
    })
-   if (testenv.executedTestCase !== 86 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 84 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       const testConsole = testenv.newTestConsole()
@@ -705,7 +710,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (testenv.executedTestCase !== 96 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 1)
+   if (testenv.executedTestCase !== 94 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest}`)
    for (let isSubTest = 0; isSubTest <= 1; ++isSubTest) {
       const testConsole = testenv.newTestConsole()
@@ -723,35 +728,31 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Exception: Error: -- throw --","RUN_TEST returns error")
    }
-   if (testenv.executedTestCase !== 124 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 122 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
 }
 
 function TEST(testValue, compare, expect, errmsg, options) {
-   return TestEnvironment.singleton.test(testValue, compare, expect, errmsg, options)
-}
-
-function TESTTHROW(testFct, compare, expect, errmsg, options) {
-   return TestEnvironment.singleton.testThrow(testFct, compare, expect, errmsg, options)
+   return TestEnvironment.default.test(testValue, compare, expect, errmsg, options)
 }
 
 async function RUN_TEST(options, callback) {
-   return TestEnvironment.singleton.runTest(options, callback)
+   return TestEnvironment.default.runTest(options, callback)
 }
 
 async function SUB_TEST(options, callback) {
-   return TestEnvironment.singleton.runSubTest(options, callback)
+   return TestEnvironment.default.runSubTest(options, callback)
 }
 
 async function END_TEST() {
-   return TestEnvironment.singleton.showStats().finally(() => RESET_TEST())
+   return TestEnvironment.default.showStats().finally(() => RESET_TEST())
 }
 
 function RESET_TEST() {
-   TestEnvironment.singleton = new TestEnvironment()
+   TestEnvironment.default = new TestEnvironment()
 }
 
-return { TEST, TESTTHROW, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST }
+return { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST, TestEnvironment }
 
 })()
 

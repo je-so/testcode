@@ -1445,6 +1445,129 @@ class View extends HTMLView {
    }
 }
 
+class OptionsParser {
+   #options
+   /**
+    * @param {string} inputStr A string defining all options as name value pairs separated by comma.
+    */
+   constructor(inputStr) {
+      this.#options = OptionsParser.parse(inputStr)
+   }
+   /**
+    * @returns {[string,any][]} An array of all top level option names and their value.
+    */
+   entries() { return Object.entries(this.#options) }
+   /**
+    * @param {string} name
+    * @returns {boolean} True in case option is defined.
+    */
+   has(name) { return name in this.#options }
+   /**
+    * @param {string} name
+    * @returns {any} Value of option.
+    */
+   value(name) { return this.#options[name] }
+   /**
+    * @returns {string[]} An array of all top level option names.
+    */
+   names() { return Object.keys(this.#options) }
+   /**
+    * @param {string} inputStr
+    * @returns {object} An object which contains all options with their values.
+    */
+   static parse(inputStr) {
+      /** Contains string of unparsed character without leading white space. @type {string} */
+      let unparsed = inputStr.trimStart()
+      /** Stores name of last matched name. Used in generating error msg. @type {string} */
+      let lastMatchedName = ""
+      /** Returns position of next unparsed character. @type {()=>string} */
+      const pos = () => `${lastMatchedName ? " after name »"+lastMatchedName+"«" : ""}${unparsed.length==0 ? "" : unparsed.length==1 ? " at last position" : " at position " + (inputStr.length-unparsed.length)}`
+      /** Skips nrChar characters and all following white space. Returns nrChar skipped characters. @type {(nrChar:number)=>string} */
+      const skip = (nrChar) => { const skipped = unparsed; unparsed = unparsed.substring(nrChar).trimStart(); return skipped.substring(0, nrChar) }
+      /**
+       * Throws "expect...instead of..." error msg.
+       * @type {(expect:string, insteadOfLen?:number)=>never}
+       */
+      const throwExpect = (expect, insteadOfLen=1) => { throw Error(`OptionsParser error: expect »${expect}« instead of »${unparsed ? unparsed.substring(0,insteadOfLen) : "end of input"}«${pos()}.\ninput=${inputStr}`) }
+      /** Validates that next unparsed character equals char and skips it. @type {(char:string, insteadOfLen?:number)=>void} */
+      const expect = (char, insteadOfLen=1) => { if (unparsed[0] != char) throwExpect(char, insteadOfLen); skip(1) }
+      /**
+       * Matches non empty name of pattern [_a-zA-Z][_a-zA-Z0-9]*
+       * @type {()=>string}
+       */
+      const matchName = () => {
+         let c = unparsed && unparsed[0].toLowerCase()
+         if (c == "_" || ("a" <= c && c <= "z"))
+            for (let len = 1; len < unparsed.length; ++len) {
+               c = unparsed[len].toLowerCase()
+               if (!(c == "_" || ("a" <= c && c <= "z") || ("0" <= c && c <= "9")))
+                  return skip(len)
+            }
+         throwExpect("name")
+      }
+      /** Match boolean literal and return either true or false. @type {() => boolean} */
+      const matchBoolean = () => { const val = unparsed[0]=="t"; if (!unparsed.startsWith("true") && !unparsed.startsWith("false")) expect("boolean", val?4:5); skip(val?4:5); return val }
+      /** Match null literal and return null. @type {() => null} */
+      const matchNull = () => { if (!unparsed.startsWith("null")) expect("null", 4); skip(4); return null }
+      /** Match number literal and return the parsed value. @type {()=>number} */
+      const matchNumber = () => { const nrstr = /^[-+0-9e.]+/.exec(unparsed)?.[0]; const val = Number(nrstr); if (isNaN(val)) expect("number", nrstr?.length??4); skip(nrstr?.length??0); return val }
+      /** @type{(openChar:string, closingChar:string, value:any, callback:(value:any)=>any)=>any} */
+      const matchEnclosed = (openChar, closingChar, value, callback) => { openChar && expect(openChar); const result = callback(value); closingChar && expect(closingChar); return result }
+      /**
+       * Match string literal and return the contained string.
+       * Doubling the enclosing char letter removes its special meaning.
+       * @type {(enclosingChar: string)=>string}
+       */
+      const matchString = (enclosingChar) => matchEnclosed(enclosingChar, enclosingChar, unparsed, (value) => {
+         while (unparsed) {
+            if (unparsed[0] == enclosingChar && (unparsed.length <= 1 || unparsed[1] != enclosingChar))
+               // found enclosingChar which is not followed by enclosingChar
+               return value.substring(1, value.length-unparsed.length).replaceAll(enclosingChar+enclosingChar,enclosingChar)
+            skip(unparsed[0] == enclosingChar ? 2 : 1)
+         }
+      })
+      /**
+       * Match array literal and return the parsed value.
+       * @type {()=>any[]}
+       */
+      const matchArray = () => matchEnclosed("[", "]", ([]), (value) => {
+         while (unparsed && unparsed[0] != ']') {
+            value.push(matchValue())
+            unparsed && unparsed[0] != ']' && expect(",")
+         }
+         return value
+      })
+      /**
+       * Match object literal and return the parsed value.
+       * @type {(matchBrackets?:boolean)=>{[o:string]:any}}
+       */
+      const matchObject = (matchBrackets=true) => matchEnclosed(matchBrackets ? "{":"", matchBrackets ? "}":"", ({}), (value) => {
+         while (unparsed && unparsed[0] != '}') {
+            value[lastMatchedName = matchName()] = (expect(":"), matchValue())
+            unparsed && unparsed[0] != '}' && expect(",")
+         }
+         return value
+      })
+      /**
+       * Match any value literal and return its parsed value.
+       * @type {()=>null|boolean|number|string|any[]|{[o:string]:any}}
+       */
+      const matchValue = () => {
+         const c = unparsed && unparsed[0]
+         if (c == "\"" || c == "'") return matchString(c)
+         if (c == "+" || c == "-" || ("0" <= c && c <= '9') || c == '.') return matchNumber()
+         if (c == "t" || c == "f") return matchBoolean()
+         if (c == "n") return matchNull()
+         if (c == "[") return matchArray()
+         if (c == "{") return matchObject()
+         throwExpect("value")
+      }
+      const values = matchObject(unparsed[0] == '{' /*no brackets at top level needed*/)
+      unparsed && throwExpect("end of input")
+      return values
+   }
+}
+
 class ViewConfig {
    #values
    constructor(viewElem) {

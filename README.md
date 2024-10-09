@@ -16,10 +16,10 @@ is to build the deterministic version for the left and right hand side of `&!` a
 
 JavaScript
 ----------
-[Mini-Configuration-Parser in ~45 LOC.](https://github.com/je-so/testcode/blob/c9b0c3b6b3a858429c252920c5dec8ea31a3240d/html/test-resize-divs.html#L866) It comes with a restriction, all simple values are stored as strings.
+[Mini-Options-Parser in ~57 SLOC.](https://github.com/je-so/testcode/blob/master/html/vmx.js#L1478) It supports string, number, boolean, null, object and array values.
 ```javascript
-const values = ViewConfig.parse("class-name: d-none, complex: { labels:[1,2,3,], pos:{x:0,y:0}}")
-console.log("values.complex.labels=",values.complex.labels)
+const labels = OptionsParser.parse("className: 'd-none', complex: { labels:[1,2,3,], pos:{x:0,y:0}}").complex.labels
+console.log("labels=",labels)
 ```
 
 [Test Framework in 110 LOC](https://github.com/je-so/testcode/blob/master/javascript/test.js)
@@ -60,10 +60,7 @@ await RUN_TEST({name:"Test-Name",timeout:1000}, async (context) => {
    TEST(step,'=',1,"SUB_TEST returns only promise")
 })
 TEST(step,'=',3,"RUN_TEST waits for running SUB_TEST")
-async function _throw() {
-  return new Promise((_,reject)=>setTimeout(()=>reject("error"),100))
-}
-await TESTTHROW(async ()=>_throw(),'=',"error","TESTTHROW supports async")
+await TEST(async ()=>Promise.reject("!"),'throw',"!","TEST supports async")
 await END_TEST() // print result and reset state
 ```
 OS API

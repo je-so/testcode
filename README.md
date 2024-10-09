@@ -14,7 +14,7 @@ See [regex-main.c](parser/automat/main.c) for usage of the regex-parser which su
 is to build the deterministic version for the left and right hand side of `&!` and combine the results
 [`makedfa2_automat(ndfa, OP_AND_NOT, ndfa2)`](parser/automat/automat.c#L2913).
 
-JavaScript 
+JavaScript
 ----------
 [Mini-Configuration-Parser in ~45 LOC.](https://github.com/je-so/testcode/blob/c9b0c3b6b3a858429c252920c5dec8ea31a3240d/html/test-resize-divs.html#L866) It comes with a restriction, all simple values are stored as strings.
 ```javascript
@@ -49,18 +49,22 @@ function unittest_of_some_module(TEST) {
 [A test framework which supports async/await](https://github.com/je-so/testcode/blob/master/html/test.js)
 ```javascript
 var step = 1
-await RUN_TEST({name:"Test-Name",timeout:1000}, async () => {
-   SUB_TEST({delay:100}, () => {
+await RUN_TEST({name:"Test-Name",timeout:1000}, async (context) => {
+   SUB_TEST({delay:100,context}, (context) => {
       step = 2
    })
-   SUB_TEST({delay:100}, () => {
+   SUB_TEST({delay:100,context}, (context) => {
       TEST(step,'=',2,"2nd SUB_TEST executes after first")
       step = 3
    })
    TEST(step,'=',1,"SUB_TEST returns only promise")
 })
 TEST(step,'=',3,"RUN_TEST waits for running SUB_TEST")
-END_TEST() // print result and reset state
+async function _throw() {
+  return new Promise((_,reject)=>setTimeout(()=>reject("error"),100))
+}
+await TESTTHROW(async ()=>_throw(),'=',"error","TESTTHROW supports async")
+await END_TEST() // print result and reset state
 ```
 OS API
 -------------

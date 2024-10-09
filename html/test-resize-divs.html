@@ -400,7 +400,7 @@
                TEST(callbackCalled,'=',true, "ensureInTransitionElseEnd calls callback if no transition is running")
             })
 
-            await RUN_TEST({name:"vLeft does not change during transition",timeout:1000}, async () => {
+            await RUN_TEST({name:"vLeft does not change during transition",timeout:1000}, async (context) => {
                vm.vWindowState = "visible"
                await vm.asyncOnTransitionEnd()
                TEST(vm.vWindowState,'=',"visible", "wrong precondition: window not in state 'visible'")
@@ -408,7 +408,7 @@
                vm.vWindowState = "minimized"
                TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not yet started")
                let onceCalled = 0
-               await SUB_TEST({delay:300}, (context) => {
+               await SUB_TEST({delay:300, context}, (context) => {
                   const minimizedLeft = vm.vLeft
                   vm.vWindowState = "visible"
                   TEST(vm.vLeft,'=',minimizedLeft, "transition not yet started")
@@ -425,7 +425,7 @@
                TEST(onceCalled,'=',1, "onceOnViewUpdate called exactly once")
             })
 
-            await RUN_TEST({name:"vLeft == 0 if window maximized",timeout:1000}, () => {
+            await RUN_TEST({name:"vLeft == 0 if window maximized",timeout:1000}, (context) => {
                const left = vm.vLeft
                TEST(left,'>',1, "wrong precondition: vLeft not greater 1")
                vm.vWindowState = "maximized"
@@ -436,7 +436,7 @@
                   TEST(vm.vLeft,'=',0, "vLeft == 0 at start of transition into maximized state")
                   TEST(parseFloat(vm.view.getComputedStyle().left),'range',[1,left-1], "left is animated during tansition")
                }, 4)
-               SUB_TEST({}, async () => await vm.asyncOnTransitionEnd())
+               SUB_TEST({context}, async () => await vm.asyncOnTransitionEnd())
             })
 
             // TODO: add more tests

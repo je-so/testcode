@@ -1,5 +1,5 @@
 /**
- * Test module which implements TEST and TESTTHROW
+ * Implements TEST
  * to test for an expected value or an expected exception.
  * (c) 2024 Jörg Seebohn
  */
@@ -28,28 +28,15 @@ class TestEnvironment {
    signalEndRun() { return -- this.runningTest }
    /**
     * @param {undefined|TestConsole} testConsole
+    * @param {boolean} isSubTest True says failed test is a SUB_TEST else RUN_TEST.
     * @param {string} name
     * @param {string} reason
     * @param {{value:any}} [exceptionValue]
-    * @returns {number} The number of failed RUN_TEST.
+    * @returns {number} The number of failed RUN_TEST&SUB_TEST.
     */
-   signalRunTestError(testConsole, name, reason, exceptionValue) {
+   signalRunError(testConsole, isSubTest, name, reason, exceptionValue) {
       const logger = testConsole ?? console
-      logger.error(`RUN_TEST failed: ${name}`)
-      logger.log(`Reason: ${reason}`)
-      exceptionValue && logger.log("Catched exception",exceptionValue.value)
-      return ++ this.failedRunTest
-   }
-   /**
-    * @param {undefined|TestConsole} testConsole
-    * @param {string} name
-    * @param {string} reason
-    * @param {{value:any}} [exceptionValue]
-    * @returns {number} The number of failed SUB_TEST.
-    */
-   signalSubTestError(testConsole, name, reason, exceptionValue) {
-      const logger = testConsole ?? console
-      logger.error(`SUB_TEST failed: ${name}`)
+      logger.error(`${isSubTest?"SUB":"RUN"}_TEST failed: ${name}`)
       logger.log(`Reason: ${reason}`)
       exceptionValue && logger.log("Catched exception",exceptionValue.value)
       return ++ this.failedRunTest
@@ -60,14 +47,14 @@ class TestEnvironment {
     * @param {string} reason
     * @param {any} value
     */
-   signalTestCaseError(testConsole, errmsg, reason, value) {
+   signalTestError(testConsole, errmsg, reason, value) {
       const logger = testConsole ?? console
       logger.error(`TEST failed: ${errmsg}`)
       logger.log(`Reason: ${reason}`)
       logger.log("Tested value",value)
       ++ this.failedTestCase
    }
-   signalTestCaseExecuted() {
+   signalTestExecuted() {
       ++ this.executedTestCase
    }
    /**
@@ -155,7 +142,6 @@ class TestEnvironment {
     * * {@link runSubTest} as "SUB_TEST"
     * * {@link showStats} as "END_TEST"
     * * {@link test} as "TEST"
-    * * {@link testThrow} as "TESTTHROW"
     * @returns {{
     *    RUN_TEST:(config:{name:string,timeout?:number,delay?:number,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    SUB_TEST:(config:{timeout?:number,delay?:number,context?:RunContext,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
@@ -284,10 +270,7 @@ class RunContext {
     * @param {{value:any}} [exceptionValue]
     */
    signalError(reason, exceptionValue) {
-      if (this.parentContext)
-         this.testenv.signalSubTestError(this.testConsole, this.name, reason, exceptionValue)
-      else
-         this.testenv.signalRunTestError(this.testConsole, this.name, reason, exceptionValue)
+      this.testenv.signalRunError(this.testConsole, Boolean(this.parentContext), this.name, reason, exceptionValue)
       this.signaledError = reason
    }
 
@@ -305,8 +288,8 @@ class RunContext {
          })
          .then(() => this.waitForAllSubContext())
          .then(() => this.clearTimer())
+         .then(() => this.testenv.signalEndRun())
          .then(() => this.signaledError)
-         .finally(() => this.testenv.signalEndRun())
       return this.waitAll
    }
 }
@@ -356,10 +339,11 @@ class TestCase {
    }
    /**
     * @param {string} reason
+    * @returns {false}
     */
    logError(reason) {
-      this.testenv.signalTestCaseError(this.#testConsole, this.errmsg, reason, this.#value)
-      this.#testOK = false
+      this.testenv.signalTestError(this.#testConsole, this.errmsg, reason, this.#value)
+      return this.#testOK = false
    }
    /**
     * @returns {string} The message which describes the failed TEST.
@@ -369,86 +353,89 @@ class TestCase {
             ? this.#errmsg()
             : this.#errmsg
    }
-
-   valuetoString(value) {
-      if (Array.isArray(value))
-         return "["+String(value)+"]"
-      return String(value)
-   }
    /**
-    * @param {(value:any, expect:any)=>boolean|string} compare
     * @param {any} value
-    * @param {any} expect
-    * @returns {boolean} True in case comparison holds else false.
+    * @returns {string} String representation of value (Arrays are enclosed into '[...]').
     */
-   compareFunction(compare, value, expect) {
-      const result = compare(value, expect)
-      if (  (typeof result !== "string" && result)
-         || (typeof result === "string" && result === ""))
-         return true
-      if (typeof result === "string")
-         this.logError(`${result}.`)
-      else
-         this.logError(`Expect ${String(value)} === ${String(expect)}.`)
-      return false
+   valuetoString(value) {
+      return (Array.isArray(value))
+            ? "["+String(value)+"]"
+            : String(value)
    }
    /**
     * @returns {boolean} True in case comparison holds else false.
     */
    compare() {
-      const compare = this.#compare
-      const value = this.#value
-      const expect = this.#expect
-      if (typeof compare === "function")
-         return this.compareFunction(compare, value, expect)
+      if (typeof this.#compare === "function")
+         return this.compareFunction(this.#compare, this.#value, this.#expect)
+      return this.compareValue(this.#compare, this.#value, this.#expect)
+   }
+   /**
+    * @param {(value:any, expect:any)=>boolean|string} cmpFct
+    * @param {any} value
+    * @param {any} expect
+    * @returns {boolean} True in case comparison holds else false.
+    */
+   compareFunction(cmpFct, value, expect) {
+      const result = cmpFct(value, expect)
+      if (typeof result === "string" && result !== "")
+         return this.logError(`${result}.`)
+      else if (typeof result !== "string" && !Boolean(result))
+         return this.logError(`Expect ${String(value)} === ${String(expect)}.`)
+      return true
+   }
+   /**
+    * @param {boolean} cmpResult Reuslt of comparison: true if it holds else false.
+    * @param {string} compare
+    * @param {any} value
+    * @param {any} expect
+    * @returns {boolean} Returns cmparison result.
+    */
+   check(cmpResult, compare, value, expect) {
+      return cmpResult || (this.logError(`Expect ${this.valuetoString(value)} ${compare} ${this.valuetoString(expect)}.`), false)
+   }
+   /**
+    * @param {string} compare
+    * @param {any} value
+    * @param {any} expect
+    * @returns {boolean} True in case comparison holds else false.
+    */
+   compareValue(compare, value, expect) {
       switch (compare) {
          case "<":
-            if (value < expect) return true
-            break
+            return this.check(value < expect, compare, value, expect)
          case ">":
-            if (value > expect) return true
-            break
+            return this.check(value > expect, compare, value, expect)
          case "<=":
-            if (value <= expect) return true
-            break
+            return this.check(value <= expect, compare, value, expect)
          case ">=":
-            if (value >= expect) return true
-            break
+            return this.check(value >= expect, compare, value, expect)
          case "!range":
             if (!Array.isArray(expect) || expect.length !== 2)
                throw Error("Expect argument »expect« of type [lowerBound,upperBound]")
-            if (value < expect[0] || expect[1] < value) return true
-            break
+            return this.check(value < expect[0] || expect[1] < value, compare, value, expect)
          case "range":
             if (!Array.isArray(expect) || expect.length !== 2)
                throw Error("Expect argument »expect« of type [lowerBound,upperBound]")
-            if (expect[0] <= value && value <= expect[1]) return true
-            break
+            return this.check(expect[0] <= value && value <= expect[1], compare, value, expect)
          case "==":
-            if (value == expect) return true
-            break
+            return this.check(value == expect, compare, value, expect)
          case "!=":
-            if (value != expect) return true
-            break
+            return this.check(value != expect, compare, value, expect)
          case "!==":
-            if (value !== expect) return true
-            break
+            return this.check(value !== expect, compare, value, expect)
          case "=": case "===":
-            if (value === expect) return true
-            break
+            return this.check(value === expect, compare, value, expect)
          case "{=}":
             return this.compareObject(value, expect)
          case "[=]":
             return this.compareArray(value, expect)
          case "throw":
-            return this.compareException(value, expect)
+            return this.logError(`Expected exception.`)
          default:
             throw Error(`Unsupported argument »compare« = »${String(compare)}«`)
       }
-      this.logError(`Expect ${this.valuetoString(value)} ${compare} ${this.valuetoString(expect)}.`)
-      return false
    }
-
    /**
     * @param {string|symbol} index
     * @returns {string} Either "'<index>'" or "<index>" if index contains only digits.
@@ -458,14 +445,19 @@ class TestCase {
          return String(index)
       return "'"+String(index)+"'"
    }
-
+   /**
+    * @param {any[]} value
+    * @param {any[]} expect
+    * @param {string} [index]
+    * @returns {boolean} True if value equals expect.
+    */
    compareArray(value, expect, index="") {
       if (!Array.isArray(expect))
          throw Error("Expect argument »expect« of type Array")
       if (!Array.isArray(value))
-         this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type Array.`)
+         return this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type Array.`)
       else if (value.length != expect.length)
-         this.logError(`Expect${index?" at "+index:""} array length ${value.length} == ${expect.length}.`)
+         return this.logError(`Expect${index?" at "+index:""} array length ${value.length} == ${expect.length}.`)
       else {
          for (const entry of value.entries()) {
             if (Array.isArray(expect[entry[0]])) {
@@ -473,24 +465,26 @@ class TestCase {
                   return false
             }
             else if (entry[1] !== expect[entry[0]]) {
-               if (typeof entry[1] !== "object") {
-                  this.logError(`Expect at ${index}[${entry[0]}] ${this.valuetoString(entry[1])} == ${this.valuetoString(expect[entry[0]])}.`)
-                  return false
-               }
+               if (typeof entry[1] !== "object")
+                  return this.logError(`Expect at ${index}[${entry[0]}] ${this.valuetoString(entry[1])} == ${this.valuetoString(expect[entry[0]])}.`)
                if (!this.compareObject(entry[1], expect[entry[0]], `${index}[${entry[0]}]`))
                   return false
             }
          }
-         return true
       }
-      return false
+      return true
    }
-
+   /**
+    * @param {{[x:string|symbol]: any}} value
+    * @param {{[x:string|symbol]: any}} expect
+    * @param {string} [index]
+    * @returns {boolean} True if value equals expect.
+    */
    compareObject(value, expect, index="") {
       if (typeof expect !== "object")
          throw Error("Expect argument »expect« of type object")
       if (typeof value !== "object")
-         this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type object.`)
+         return this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type object.`)
       else {
          const keys = new Set([...Reflect.ownKeys(value),...Reflect.ownKeys(expect)])
          for (const key of keys) {
@@ -499,58 +493,56 @@ class TestCase {
                   return false
             }
             else if (value[key] !== expect[key]) {
-               if (!Array.isArray(value[key])) {
-                  this.logError(`Expect at ${index}[${this.indexToString(key)}] ${value[key]} == ${expect[key]}.`)
-                  return false
-               }
+               if (!Array.isArray(value[key]))
+                  return this.logError(`Expect at ${index}[${this.indexToString(key)}] ${value[key]} == ${expect[key]}.`)
                if (!this.compareArray(value[key], expect[key], `${index}[${this.indexToString(key)}]`))
                   return false
             }
          }
-         return true
       }
-      return false
+      return true
    }
-
-   compareException(exception, expect) {
+   /**
+    * Compares exception.
+    * @param {any} exception The catched exception
+    * @returns {boolean} True in case catched exception equals expected value.
+    */
+   compareException(exception) {
+      const expect = this.#expect
+      this.#value = exception
+      if (this.#compare !== "throw")
+         return this.logError(`Unexpected exception.`)
       if (exception !== expect) {
          if (expect == null || (typeof expect !== "function" && typeof expect !== "object" && typeof expect !== "string")
             || (typeof exception !== "object")) {
             if (String(exception) !== String(expect))
-               this.logError(`Expect exception »${String(exception)}« === »${String(expect)}«.`)
+               return this.logError(`Expect exception »${String(exception)}« === »${String(expect)}«.`)
             else
-               this.logError(`Expect exception type »${typeof exception}« === »${typeof expect}«.`)
-            return false
+               return this.logError(`Expect exception type »${typeof exception}« === »${typeof expect}«.`)
          }
          else {
             const expectType = (typeof expect === "function" ? expect : typeof expect === "object" ? (expect.constructor ?? Object) : undefined)
-            if (expectType && !(exception instanceof expectType)) {
-               this.logError(`Expect exception type »${exception.constructor?.name ?? typeof exception}« === »${expectType.name}«.`)
-               return false
-            }
+            if (expectType && !(exception instanceof expectType))
+               return this.logError(`Expect exception type »${exception.constructor?.name ?? typeof exception}« === »${expectType.name}«.`)
             else {
                const expectMessage = (typeof expect === "string" ? expect : typeof expect === "object" ? expect.message ?? "": undefined)
                if (expectMessage != null && exception.message !== expectMessage) {
                   if (String(exception.message) !== String(expectMessage))
-                     this.logError(`Expect exception message »${String(exception.message)}« === »${String(expectMessage)}«.`)
+                     return this.logError(`Expect exception message »${String(exception.message)}« === »${String(expectMessage)}«.`)
                   else
-                     this.logError(`Expect exception message type »${typeof exception.message}« === »${typeof expectMessage}«.`)
-                  return false
+                     return this.logError(`Expect exception message type »${typeof exception.message}« === »${typeof expectMessage}«.`)
                }
             }
          }
       }
       return true
    }
-
    /**
-    * @returns {any} Either value to test for or return value of called function.
+    * @returns {any} Returns value to test for or returned value of called function.
     */
-   run() {
-      this.testenv.signalTestCaseExecuted()
-      const isFunction = (typeof this.#testFor === "function")
-      this.#value = isFunction ? this.#testFor() : this.#testFor
-      return this.#value
+   value() {
+      return this.#value = (typeof this.#testFor === "function")
+                           ? this.#testFor() : this.#testFor
    }
    /**
     * @returns {Promise<boolean>}
@@ -558,33 +550,25 @@ class TestCase {
    async testAsync() {
       try {
          this.#value = await this.#value
-         if (this.#compare === "throw")
-            this.logError(`Expected exception.`)
+         return this.compare()
       }
       catch(exception) {
-         this.#value = exception
-         if (this.#compare !== "throw")
-            this.logError(`Unexpected exception.`)
+         return this.compareException(exception)
       }
-      return this.OK && this.compare()
    }
    /**
     * @returns {boolean|Promise<boolean>}
     */
    test() {
+      this.testenv.signalTestExecuted()
       try {
-         const value = this.#value = this.run()
-         if (value instanceof Promise)
+         if (this.value() instanceof Promise)
             return this.testAsync()
-         if (this.#compare === "throw")
-            this.logError(`Expected exception.`)
+         return this.compare()
       }
       catch(exception) {
-         this.#value = exception
-         if (this.#compare !== "throw")
-            this.logError(`Unexpected exception.`)
+         return this.compareException(exception)
       }
-      return this.OK && this.compare()
    }
 }
 
@@ -639,10 +623,10 @@ async function INTERNAL_SYNTAX_TEST()
       SUB_TEST({context, delay:10}, async (/*context*/) => {
          TEST(sub_test1,'=',1, "sub test1 executed before sub test2")
          ++ sub_test2
-         TEST(()=>{throw Error("msg1")},'throw',"msg1", "TESTTHROW compares message")
-         TEST(()=>{throw Error("msg2")},'throw',Error("msg2"), "TESTTHROW compares type and message")
-         TEST(()=>{throw Error("msg3")},'throw',{message:"msg3",constructor:Error}, "TESTTHROW compares type and message")
-         TEST(()=>{throw Error("msg4")},'throw',Error, "TESTTHROW compares type")
+         TEST(()=>{throw Error("msg1")},'throw',"msg1", "TEST throw compares message")
+         TEST(()=>{throw Error("msg2")},'throw',Error("msg2"), "TEST throw compares type and message")
+         TEST(()=>{throw Error("msg3")},'throw',{message:"msg3",constructor:Error}, "TEST throw compares type and message")
+         TEST(()=>{throw Error("msg4")},'throw',Error, "TEST throw compares type")
          await TEST(()=>new Promise((_,reject)=>setTimeout(()=>reject(Error("msg7")),10)),"throw",Error("msg7"), "TEST 'throw' supports async functions")
       })
       // RUN_TEST is waiting on nested SUB_TEST (tested with executedTestCase)
@@ -687,16 +671,28 @@ async function INTERNAL_SYNTAX_TEST()
          ["log","Tested value",testedValue]
       ])
    })
-   await RUN_TEST({name:"-- TEST 'throw' fails --",timeout:100}, async (/*context*/) => {
+   await RUN_TEST({name:"-- TEST expected / unexpected exceptions --",timeout:100}, async (/*context*/) => {
       const testConsole = testenv.newTestConsole()
       TEST(()=>0,"throw",0,"TEST fails cause of NO exception",{testConsole})
+      await TEST(async ()=>0,"throw",0,"TEST fails cause of NO exception",{testConsole})
+      TEST(()=>{throw 0},"=",0,"TEST fails cause of unexpected exception",{testConsole})
+      await TEST(async ()=>{throw 0},"=",0,"TEST fails cause of unexpected exception",{testConsole})
       testConsole.compare("TEST", [
          ["error","TEST failed: TEST fails cause of NO exception"],
          ["log","Reason: Expected exception."],
-         ["log","Tested value",0]
+         ["log","Tested value",0],
+         ["error","TEST failed: TEST fails cause of NO exception"],
+         ["log","Reason: Expected exception."],
+         ["log","Tested value",0],
+         ["error","TEST failed: TEST fails cause of unexpected exception"],
+         ["log","Reason: Unexpected exception."],
+         ["log","Tested value",0],
+         ["error","TEST failed: TEST fails cause of unexpected exception"],
+         ["log","Reason: Unexpected exception."],
+         ["log","Tested value",0],
       ])
    })
-   if (testenv.executedTestCase !== 84 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 123 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       const testConsole = testenv.newTestConsole()
@@ -710,7 +706,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (testenv.executedTestCase !== 94 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 1)
+   if (testenv.executedTestCase !== 133 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest}`)
    for (let isSubTest = 0; isSubTest <= 1; ++isSubTest) {
       const testConsole = testenv.newTestConsole()
@@ -728,7 +724,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Exception: Error: -- throw --","RUN_TEST returns error")
    }
-   if (testenv.executedTestCase !== 122 || testenv.failedTestCase !== 4 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 161 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
 }
 
@@ -744,8 +740,8 @@ async function SUB_TEST(options, callback) {
    return TestEnvironment.default.runSubTest(options, callback)
 }
 
-async function END_TEST() {
-   return TestEnvironment.default.showStats().finally(() => RESET_TEST())
+async function END_TEST(options) {
+   return TestEnvironment.default.showStats(options).finally(() => RESET_TEST())
 }
 
 function RESET_TEST() {

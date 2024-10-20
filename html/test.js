@@ -1,11 +1,19 @@
 /**
- * Implements TEST
- * to test for an expected value or an expected exception.
+ * Implements TEST to test for an expected value or exception.
+ * To create a private TestEnvironment with own stats use
+ * >> const { TEST, RUN_TEST, SUB_TEST, END_TEST } = NEW_TEST()
  * (c) 2024 Jörg Seebohn
  */
 
 // namespace
-const { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST, TestEnvironment } = (() => {
+const { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, NEW_TEST } = (() => {
+
+/**
+ * Throws Error(errmsg) if typeTest is not true.
+ * @param {boolean} typeTest
+ * @param {string} errmsg
+ */
+const EXPECT = (typeTest, errmsg) => { if (!typeTest) throw Error(errmsg) }
 
 /**
  * Contains stats counter and test console for testing TEST output.
@@ -18,14 +26,15 @@ class TestEnvironment {
    executedRunTest = 0
    /** @type {number} */
    failedRunTest = 0
-   /** @type {number} */
+   /** The number of passed and failed {@link test TEST}. @type {number} */
    executedTestCase = 0
-   /** @type {number} */
+   /** The number of failed {@link test TEST}. @type {number} */
    failedTestCase = 0
    constructor() { }
    newTestConsole() { return new TestConsole(this) }
    signalStartRun() { return (++ this.executedRunTest, ++ this.runningTest) }
    signalEndRun() { return -- this.runningTest }
+   signalTestExecuted() { return ++ this.executedTestCase }
    /**
     * @param {undefined|TestConsole} testConsole
     * @param {boolean} isSubTest True says failed test is a SUB_TEST else RUN_TEST.
@@ -53,9 +62,6 @@ class TestEnvironment {
       logger.log(`Reason: ${reason}`)
       logger.log("Tested value",value)
       ++ this.failedTestCase
-   }
-   signalTestExecuted() {
-      ++ this.executedTestCase
    }
    /**
     * Shows test stats on console.
@@ -105,7 +111,7 @@ class TestEnvironment {
 
    /**
     * Runs a sequence of {@link test TEST} or nested calls to {@link runSubTest SUB_TEST}.
-    * All sub-tests are started as pseudo parallel asymc functions.
+    * All sub-tests are started as pseudo parallel async functions.
     * Use await on the return value to ensure that a SUB_TEST has ended its execution before
     * another one is started. The containing context (either RUN_TEST or SUB_TEST)
     * waits for all contained SUB_TEST. The containing context is given in the config parameter context.
@@ -114,8 +120,7 @@ class TestEnvironment {
     * @returns {Promise<string>}
     */
    async runSubTest({timeout=0, delay=0, context, testConsole}, callback) {
-      if (!(context instanceof RunContext))
-         throw Error("Missing argument »context« of type RunContext.")
+      EXPECT(context instanceof RunContext, "Missing argument »context« of type RunContext.")
       const parentContext = context
       const name = parentContext.name
       const childContext = new RunContext({name, timeout, delay, callback, parentContext, testenv: this, testConsole})
@@ -136,25 +141,25 @@ class TestEnvironment {
    }
 
    /**
-    * Exports interface to simplifiy usage.
-    * The exported methods which are bound to this object are:
+    * Exports interface to simplify usage.
+    * Exported methods which are bound to this object are:
+    * * {@link test} as "TEST"
     * * {@link runTest} as "RUN_TEST"
     * * {@link runSubTest} as "SUB_TEST"
     * * {@link showStats} as "END_TEST"
-    * * {@link test} as "TEST"
     * @returns {{
+    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>boolean,
     *    RUN_TEST:(config:{name:string,timeout?:number,delay?:number,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    SUB_TEST:(config:{timeout?:number,delay?:number,context?:RunContext,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    END_TEST:(options?:{testConsole?:TestConsole})=>Promise<void>,
-    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>boolean
     * }}
     */
    export() {
       return {
+         TEST: this.test.bind(this),
          RUN_TEST: this.runTest.bind(this),
          SUB_TEST: this.runSubTest.bind(this),
          END_TEST: this.showStats.bind(this),
-         TEST: this.test.bind(this),
       }
    }
 }
@@ -216,20 +221,13 @@ class RunContext {
     * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole:undefined|TestConsole}} options
     */
    constructor({name, timeout, delay, callback, parentContext, testenv, testConsole}) {
-      if (typeof name !== "string")
-         throw Error("Expect argument »name« of type string")
-      if (!isFinite(timeout))
-         throw Error("Expect argument »timeout« of type number")
-      if (!isFinite(delay))
-         throw Error("Expect argument »delay« of type number")
-      if (typeof callback !== "function")
-         throw Error("Expect argument »callback« of type function")
-      if (parentContext != null && !(parentContext instanceof RunContext))
-         throw Error("Expect argument »parentContext« of type RunContext")
-      if (!(testenv instanceof TestEnvironment))
-         throw Error("Expect argument »testenv« of type TestEnvironment")
-      if (testConsole && !(testConsole instanceof TestConsole))
-         throw Error("Expect argument »testConsole« of type TestConsole")
+      EXPECT(typeof name === "string", "Expect argument »name« of type string.")
+      EXPECT(isFinite(timeout), "Expect argument »timeout« of type number.")
+      EXPECT(isFinite(delay), "Expect argument »delay« of type number.")
+      EXPECT(typeof callback === "function", "Expect argument »callback« of type function.")
+      EXPECT(parentContext == null || parentContext instanceof RunContext, "Expect argument »parentContext« of type RunContext.")
+      EXPECT(testenv instanceof TestEnvironment, "Expect argument »testenv« of type TestEnvironment.")
+      EXPECT(testConsole == null || testConsole instanceof TestConsole, "Expect argument »testConsole« of type TestConsole.")
       this.name = name
       this.timeout = timeout // ms after which callback should return
       this.delay = delay // delay in ms until callback is run
@@ -313,14 +311,10 @@ class TestCase {
     * @param {undefined|TestConsole} testConsole
     */
    constructor(testFor, compare, expect, errmsg, testenv, testConsole) {
-      if (typeof compare !== "string" && typeof compare !== "function")
-         throw Error("Expect argument »compare« either of type string or function.")
-      if (typeof errmsg !== "string" && typeof errmsg !== "function")
-         throw Error("Expect argument »errmsg« either of type string or function.")
-      if (!(testenv instanceof TestEnvironment))
-         throw Error("Expect argument testenv« of type TestEnvironment.")
-      if (testConsole && !(testConsole instanceof TestConsole))
-         throw Error("Expect argument »testConsole« of type TestConsole")
+      EXPECT(typeof compare === "string" || typeof compare === "function", "Expect argument »compare« of type string or function.")
+      EXPECT(typeof errmsg === "string" || typeof errmsg === "function", "Expect argument »errmsg« of type string or function.")
+      EXPECT(testenv instanceof TestEnvironment, "Expect argument testenv« of type TestEnvironment.")
+      EXPECT(testConsole == null || testConsole instanceof TestConsole, "Expect argument »testConsole« of type TestConsole.")
       this.#testFor = testFor
       this.#value = expect
       this.#compare = compare
@@ -411,12 +405,10 @@ class TestCase {
          case ">=":
             return this.check(value >= expect, compare, value, expect)
          case "!range":
-            if (!Array.isArray(expect) || expect.length !== 2)
-               throw Error("Expect argument »expect« of type [lowerBound,upperBound]")
+            EXPECT(Array.isArray(expect) && expect.length === 2, "Expect argument »expect« of type [lowerBound,upperBound].")
             return this.check(value < expect[0] || expect[1] < value, compare, value, expect)
          case "range":
-            if (!Array.isArray(expect) || expect.length !== 2)
-               throw Error("Expect argument »expect« of type [lowerBound,upperBound]")
+            EXPECT(Array.isArray(expect) && expect.length === 2, "Expect argument »expect« of type [lowerBound,upperBound].")
             return this.check(expect[0] <= value && value <= expect[1], compare, value, expect)
          case "==":
             return this.check(value == expect, compare, value, expect)
@@ -452,8 +444,7 @@ class TestCase {
     * @returns {boolean} True if value equals expect.
     */
    compareArray(value, expect, index="") {
-      if (!Array.isArray(expect))
-         throw Error("Expect argument »expect« of type Array")
+      EXPECT(Array.isArray(expect), "Expect argument »expect« of type Array.")
       if (!Array.isArray(value))
          return this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type Array.`)
       else if (value.length != expect.length)
@@ -481,8 +472,7 @@ class TestCase {
     * @returns {boolean} True if value equals expect.
     */
    compareObject(value, expect, index="") {
-      if (typeof expect !== "object")
-         throw Error("Expect argument »expect« of type object")
+      EXPECT(typeof expect === "object", "Expect argument »expect« of type object.")
       if (typeof value !== "object")
          return this.logError(`Expect${index?" at "+index:""} value ${this.valuetoString(value)} of type object.`)
       else {
@@ -550,11 +540,11 @@ class TestCase {
    async testAsync() {
       try {
          this.#value = await this.#value
-         return this.compare()
       }
       catch(exception) {
          return this.compareException(exception)
       }
+      return this.compare()
    }
    /**
     * @returns {boolean|Promise<boolean>}
@@ -564,18 +554,17 @@ class TestCase {
       try {
          if (this.value() instanceof Promise)
             return this.testAsync()
-         return this.compare()
       }
       catch(exception) {
          return this.compareException(exception)
       }
+      return this.compare()
    }
 }
 
 async function INTERNAL_SYNTAX_TEST()
 {
-   const testenv = new TestEnvironment()
-   const { TEST, RUN_TEST, SUB_TEST } = testenv.export()
+   const { TEST, RUN_TEST, SUB_TEST, TEST_ENV: testenv } = NEW_TEST()
    await RUN_TEST({name:"Syntax of TEST",timeout:500}, async (context) => {
       TEST(testenv.runningTest,'=',1, "one test is running")
       TEST(context.parentContext,'=',undefined, "first arg of RUN_TEST points to global runContext")
@@ -672,27 +661,20 @@ async function INTERNAL_SYNTAX_TEST()
       ])
    })
    await RUN_TEST({name:"-- TEST expected / unexpected exceptions --",timeout:100}, async (/*context*/) => {
-      const testConsole = testenv.newTestConsole()
-      TEST(()=>0,"throw",0,"TEST fails cause of NO exception",{testConsole})
-      await TEST(async ()=>0,"throw",0,"TEST fails cause of NO exception",{testConsole})
-      TEST(()=>{throw 0},"=",0,"TEST fails cause of unexpected exception",{testConsole})
-      await TEST(async ()=>{throw 0},"=",0,"TEST fails cause of unexpected exception",{testConsole})
-      testConsole.compare("TEST", [
-         ["error","TEST failed: TEST fails cause of NO exception"],
-         ["log","Reason: Expected exception."],
-         ["log","Tested value",0],
-         ["error","TEST failed: TEST fails cause of NO exception"],
-         ["log","Reason: Expected exception."],
-         ["log","Tested value",0],
-         ["error","TEST failed: TEST fails cause of unexpected exception"],
-         ["log","Reason: Unexpected exception."],
-         ["log","Tested value",0],
-         ["error","TEST failed: TEST fails cause of unexpected exception"],
-         ["log","Reason: Unexpected exception."],
-         ["log","Tested value",0],
-      ])
+      for (const i of [1,2,3,4]) {
+         const testConsole = testenv.newTestConsole()
+         i === 1 && TEST(()=>1,"throw",0,"TEST fails cause of expected exception",{testConsole})
+         i === 2 && await TEST(async ()=>2,"throw",0,"TEST fails cause of expected exception",{testConsole})
+         i === 3 && TEST(()=>{throw 3},"=",0,"TEST fails cause of unexpected exception",{testConsole})
+         i === 4 && await TEST(async ()=>{throw 4},"=",0,"TEST fails cause of unexpected exception",{testConsole})
+         testConsole.compare("TEST", [
+            ["error","TEST failed: TEST fails cause of "+(i > 2 ? "un":"")+"expected exception"],
+            ["log","Reason: "+(i > 2 ? "Une":"E")+"xpected exception."],
+            ["log","Tested value",i],
+         ])
+      }
    })
-   if (testenv.executedTestCase !== 123 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 126 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       const testConsole = testenv.newTestConsole()
@@ -706,7 +688,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (testenv.executedTestCase !== 133 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 1)
+   if (testenv.executedTestCase !== 136 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest}`)
    for (let isSubTest = 0; isSubTest <= 1; ++isSubTest) {
       const testConsole = testenv.newTestConsole()
@@ -724,7 +706,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Exception: Error: -- throw --","RUN_TEST returns error")
    }
-   if (testenv.executedTestCase !== 161 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 164 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
 }
 
@@ -748,8 +730,13 @@ function RESET_TEST() {
    TestEnvironment.default = new TestEnvironment()
 }
 
-return { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, INTERNAL_SYNTAX_TEST, TestEnvironment }
-
-})()
+function NEW_TEST() {
+   const TEST_ENV = new TestEnvironment()
+   return { ...TEST_ENV.export(), TEST_ENV }
+}
 
 INTERNAL_SYNTAX_TEST()
+
+return { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, NEW_TEST }
+
+})()

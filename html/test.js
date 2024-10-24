@@ -16,6 +16,31 @@ const { TEST, RUN_TEST, SUB_TEST, END_TEST, RESET_TEST, NEW_TEST } = (() => {
 const EXPECT = (typeTest, errmsg) => { if (!typeTest) throw Error(errmsg) }
 
 /**
+ * Interface which is used to log errors during test and ot show end result.
+ * In case of a failing TEST or RUN_TEST:
+ * The first call is made to error to log a stack trace in the console for showing the location of the failed test.
+ * The log call is made next to give a reason for its failure.
+ * The last call is made to log to show the tested value or the value of a catched exception.
+ * As default implementation console is used but a customized implementation
+ * could be set in the constructor of TestEnvironment and as first argument to {@link NEW_TEST}.
+ */
+class LogInterface {
+  /**
+   * @param  {string} msg
+   */
+  error(msg) { console.error(msg) }
+  /**
+    * @param {...any} args
+    */
+  log(...args) { console.log(...args) }
+  /**
+   * @param {undefined|LogInterface} log
+   * @returns {boolean} True in case parameter log conforms to LogInterface interface.
+   */
+  static isTypeOrNull(log) { return log == null || (typeof log.error === "function" && typeof log.log === "function") }
+}
+
+/**
  * Contains stats counter and test console for testing TEST output.
  */
 class TestEnvironment {
@@ -30,13 +55,29 @@ class TestEnvironment {
    executedTestCase = 0
    /** The number of failed {@link test TEST}. @type {number} */
    failedTestCase = 0
-   constructor() { }
+   /**
+    * The wrapper for the console output.
+    * {@type LogInterface}
+    */
+   log
+   /**
+    * @param {LogInterface} [log]
+    */
+   constructor(log) {
+      EXPECT(LogInterface.isTypeOrNull(log), "Expect argument »log« of type LogInterface.")
+      this.log = log ?? console
+   }
+   /**
+    * @param {undefined|LogInterface} testConsole
+    * @returns {LogInterface}
+    */
+   getLog(testConsole) { return testConsole ?? this.log }
    newTestConsole() { return new TestConsole(this) }
    signalStartRun() { return (++ this.executedRunTest, ++ this.runningTest) }
    signalEndRun() { return -- this.runningTest }
    signalTestExecuted() { return ++ this.executedTestCase }
    /**
-    * @param {undefined|TestConsole} testConsole
+    * @param {undefined|LogInterface} testConsole
     * @param {boolean} isSubTest True says failed test is a SUB_TEST else RUN_TEST.
     * @param {string} name
     * @param {string} reason
@@ -44,31 +85,31 @@ class TestEnvironment {
     * @returns {number} The number of failed RUN_TEST&SUB_TEST.
     */
    signalRunError(testConsole, isSubTest, name, reason, exceptionValue) {
-      const logger = testConsole ?? console
-      logger.error(`${isSubTest?"SUB":"RUN"}_TEST failed: ${name}`)
-      logger.log(`Reason: ${reason}`)
-      exceptionValue && logger.log("Catched exception",exceptionValue.value)
+      const log = this.getLog(testConsole)
+      log.error(`${isSubTest?"SUB":"RUN"}_TEST failed: ${name}`)
+      log.log(`Reason: ${reason}`)
+      exceptionValue && log.log("Catched exception",exceptionValue.value)
       return ++ this.failedRunTest
    }
    /**
-    * @param {undefined|TestConsole} testConsole
+    * @param {undefined|LogInterface} testConsole
     * @param {string} errmsg
     * @param {string} reason
     * @param {any} value
     */
    signalTestError(testConsole, errmsg, reason, value) {
-      const logger = testConsole ?? console
-      logger.error(`TEST failed: ${errmsg}`)
-      logger.log(`Reason: ${reason}`)
-      logger.log("Tested value",value)
+      const log = this.getLog(testConsole)
+      log.error(`TEST failed: ${errmsg}`)
+      log.log(`Reason: ${reason}`)
+      log.log("Tested value",value)
       ++ this.failedTestCase
    }
    /**
     * Shows test stats on console.
-    * @param {{testConsole?:TestConsole}} [options]
+    * @param {{testConsole?:LogInterface}} [options]
     */
    async showStats({testConsole}={}) {
-      const logger = testConsole ?? console
+      const log = this.getLog(testConsole)
       if (this.runningTest > 0) {
          await new Promise((resolve) => {
             let counter = 1
@@ -77,7 +118,7 @@ class TestEnvironment {
                   startTimer()
                   ++ counter
                   if (counter % 4 === 0)
-                     logger.log("***** Waiting for TEST RESULT *****")
+                     log.log("***** Waiting for TEST RESULT *****")
                }
                else
                   resolve(true)
@@ -85,22 +126,22 @@ class TestEnvironment {
             startTimer()
          })
       }
-      logger.log("***** TEST RESULT *****")
-      logger.log(` Executed TEST: ${this.executedTestCase}`)
-      logger.log(` Executed [RUN|SUB]_TEST: ${this.executedRunTest}`)
+      log.log("***** TEST RESULT *****")
+      log.log(` Executed TEST: ${this.executedTestCase}`)
+      log.log(` Executed [RUN|SUB]_TEST: ${this.executedRunTest}`)
       if (!this.failedTestCase && !this.failedRunTest)
-         logger.log(` All tests working :-)`)
+         log.log(` All tests working :-)`)
       else {
          if (this.failedTestCase)
-            logger.error(` Failed TEST: ${this.failedTestCase}`)
+            log.error(` Failed TEST: ${this.failedTestCase}`)
          if (this.failedRunTest)
-            logger.error(` Failed [RUN|SUB]_TEST: ${this.failedRunTest} `)
+            log.error(` Failed [RUN|SUB]_TEST: ${this.failedRunTest} `)
       }
    }
 
    /**
     *
-    * @param {{name:string, timeout?:number, delay?:number, testConsole?:TestConsole}} config
+    * @param {{name:string, timeout?:number, delay?:number, testConsole?:LogInterface}} config
     * @param {(context:RunContext)=>void|Promise<void>} callback An asynchronous callback which is called after delay milliseconds.
     * @returns {Promise<string>}
     */
@@ -115,7 +156,7 @@ class TestEnvironment {
     * Use await on the return value to ensure that a SUB_TEST has ended its execution before
     * another one is started. The containing context (either RUN_TEST or SUB_TEST)
     * waits for all contained SUB_TEST. The containing context is given in the config parameter context.
-    * @param {{context:RunContext, timeout?:number, delay?:number, testConsole?:TestConsole}} config
+    * @param {{context:RunContext, timeout?:number, delay?:number, testConsole?:LogInterface}} config
     * @param {(context:RunContext)=>void|Promise<void>} callback An asynchronous callback which is called after delay milliseconds.
     * @returns {Promise<string>}
     */
@@ -130,9 +171,9 @@ class TestEnvironment {
    /**
     * @param {any|(()=>any)} testValue
     * @param {string|((testValue:any, expect:any)=>boolean)} compare Either built in comparison functions (string) or a comparison function. Returning a non empty string is considered the reason why the comparison failed. Returning false is also considered as a failed test.
-    * @param {any} expect The expected value argument testValue should be compared with.
-    * @param {string|(() => string)} errmsg The error message to show if TEST failed.
-    * @param {{testConsole?:TestConsole}} [options]
+    * @param {any} expect The expected value »testValue« should be compared with.
+    * @param {string|(() => string)} errmsg The logged error message if TEST fails.
+    * @param {{testConsole?:LogInterface}} [options]
     * @returns {boolean|Promise<boolean>} True indicates a successful test.
     */
    test(testValue, compare, expect, errmsg, options) {
@@ -148,10 +189,10 @@ class TestEnvironment {
     * * {@link runSubTest} as "SUB_TEST"
     * * {@link showStats} as "END_TEST"
     * @returns {{
-    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:TestConsole})=>boolean,
-    *    RUN_TEST:(config:{name:string,timeout?:number,delay?:number,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
-    *    SUB_TEST:(config:{timeout?:number,delay?:number,context?:RunContext,testConsole?:TestConsole},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
-    *    END_TEST:(options?:{testConsole?:TestConsole})=>Promise<void>,
+    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:LogInterface})=>boolean,
+    *    RUN_TEST:(config:{name:string,timeout?:number,delay?:number,testConsole?:LogInterface},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
+    *    SUB_TEST:(config:{timeout?:number,delay?:number,context?:RunContext,testConsole?:LogInterface},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
+    *    END_TEST:(options?:{testConsole?:LogInterface})=>Promise<void>,
     * }}
     */
    export() {
@@ -182,18 +223,21 @@ class TestConsole {
     * @param  {...any} args
     */
    error(...args) { this.calls.push(["error",...args]) }
+   /**
+    * @param {"TEST"|"RUN_TEST"|"SUB_TEST"} name
+    * @param {["log"|"error", string, any?][]} expect
+    */
    compare(name, expect) {
       const calls = this.calls
       const { TEST } = this.testenv.export()
-      TEST(calls.length,"=",expect.length,`Failed ${name} produces ${expect.length} console output-lines`)
+      TEST(calls.length,"=",expect.length,`Expect ${name} to call log ${expect.length} times`)
       for (let i=0; i<calls.length; ++i) {
-         TEST(calls[i].length,"=",expect[i].length,`${name} output-line ${i+1} logs ${expect[i].length-1} arguments`)
-         TEST(calls[i][0],"=",expect[i][0],`${name} output-line ${i+1} calls console.${expect[i][0]}`)
-         TEST(calls[i][1],"=",expect[i][1],`${name} output-line ${i+1} calls console.${expect[i][0]} with correct 1st argument`)
+         TEST(calls[i][0],"=",expect[i][0],`Expect ${name} to make the ${i+1}. call to console.${expect[i][0]}`)
+         TEST(calls[i][1],"=",expect[i][1],`Expect ${name} to make the ${i+1}. call to console with correct 1st argument`)
+         TEST(calls[i].length,"<=",3,`Expect ${name} to make the ${i+1}. call to console with no more than 2 arguments`)
+         TEST(calls[i].length,"=",expect[i].length,`Expect ${name} to make the ${i+1}. call to console with exact number of arguments`)
          if (calls[i].length == 3)
-            TEST(calls[i][2],"=",expect[i][2],`${name} output-line ${i+1} calls console.${expect[i][0]} with correct 2nd argument`)
-         else
-            TEST(calls[i].length,"=",2,`${name} output-line ${i+1} calls console.${expect[i][0]} with one argument`)
+            TEST(calls[i][2],"=",expect[i][2],`Expect ${name} to make the ${i+1}. call to console with correct 2nd argument`)
       }
    }
 }
@@ -204,8 +248,8 @@ class RunContext {
    ID = ++RunContext.ID
    /** @type {RunContext[]} */
    subContext = []
-   /** @type {string|Promise<string>} */
-   waitAll = "Error: run() not called"
+   /** @type {Promise<string>} */
+   waitAll = Promise.resolve("Error: run() not called")
    /** @type {string} */
    signaledError = "Error: run() not called"
 
@@ -218,7 +262,7 @@ class RunContext {
 
    /**
     *
-    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole:undefined|TestConsole}} options
+    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole:undefined|LogInterface}} options
     */
    constructor({name, timeout, delay, callback, parentContext, testenv, testConsole}) {
       EXPECT(typeof name === "string", "Expect argument »name« of type string.")
@@ -227,7 +271,7 @@ class RunContext {
       EXPECT(typeof callback === "function", "Expect argument »callback« of type function.")
       EXPECT(parentContext == null || parentContext instanceof RunContext, "Expect argument »parentContext« of type RunContext.")
       EXPECT(testenv instanceof TestEnvironment, "Expect argument »testenv« of type TestEnvironment.")
-      EXPECT(testConsole == null || testConsole instanceof TestConsole, "Expect argument »testConsole« of type TestConsole.")
+      EXPECT(LogInterface.isTypeOrNull(testConsole), "Expect argument »testConsole« of type LogInterface.")
       this.name = name
       this.timeout = timeout // ms after which callback should return
       this.delay = delay // delay in ms until callback is run
@@ -236,7 +280,6 @@ class RunContext {
       this.parentContext = parentContext
       this.testenv = testenv
       this.testConsole = testConsole
-      this.waitAll = this.signaledError = "Error: run() not called"
       parentContext?.subContext?.push(this)
    }
 
@@ -308,13 +351,13 @@ class TestCase {
     * @param {any} expect
     * @param {string|(()=>string)} errmsg
     * @param {TestEnvironment} testenv
-    * @param {undefined|TestConsole} testConsole
+    * @param {undefined|LogInterface} testConsole
     */
    constructor(testFor, compare, expect, errmsg, testenv, testConsole) {
       EXPECT(typeof compare === "string" || typeof compare === "function", "Expect argument »compare« of type string or function.")
       EXPECT(typeof errmsg === "string" || typeof errmsg === "function", "Expect argument »errmsg« of type string or function.")
-      EXPECT(testenv instanceof TestEnvironment, "Expect argument testenv« of type TestEnvironment.")
-      EXPECT(testConsole == null || testConsole instanceof TestConsole, "Expect argument »testConsole« of type TestConsole.")
+      EXPECT(testenv instanceof TestEnvironment, "Expect argument »testenv« of type TestEnvironment.")
+      EXPECT(LogInterface.isTypeOrNull(testConsole), "Expect argument »testConsole« of type LogInterface.")
       this.#testFor = testFor
       this.#value = expect
       this.#compare = compare
@@ -386,7 +429,7 @@ class TestCase {
     * @returns {boolean} Returns cmparison result.
     */
    check(cmpResult, compare, value, expect) {
-      return cmpResult || (this.logError(`Expect ${this.valuetoString(value)} ${compare} ${this.valuetoString(expect)}.`), false)
+      return cmpResult || this.logError(`Expect ${this.valuetoString(value)} ${compare} ${this.valuetoString(expect)}.`)
    }
    /**
     * @param {string} compare
@@ -590,7 +633,7 @@ async function INTERNAL_SYNTAX_TEST()
       TEST(101,'>=',100, "test for greater than or equality")
       TEST(100,'>=',100, "test for greater than or equality")
       TEST(100,(v,e)=>e===v,100, "use comparison function v_alue and e_xpected value")
-      TEST(100,(v,e)=>e!==v,101, "use comparison function v_alue and e_xpected value") // 20
+      TEST(100,(v,e)=>e!==v,101, "use comparison function v_alue and e_xpected value") // 24
       await SUB_TEST({context, delay:0}, (/*context*/) => {
          TEST(testenv.runningTest,'=',2, "SUB_TEST increments runningTest")
       })
@@ -607,7 +650,7 @@ async function INTERNAL_SYNTAX_TEST()
          // - two objects -
          const s1 = Symbol(1)
          const o1 = { [s1]: 1, name:"tester" }, o2 = { [s1]: 1, name:"tester" }
-         TEST(o1,"{=}",o2,"object o1 equals o2")
+         TEST(o1,"{=}",o2,"object o1 equals o2") // 30
       })
       SUB_TEST({context, delay:10}, async (/*context*/) => {
          TEST(sub_test1,'=',1, "sub test1 executed before sub test2")
@@ -630,8 +673,8 @@ async function INTERNAL_SYNTAX_TEST()
             TEST(context,'=',context3.parentContext, "nested SUB_TEST runs within top level context")
          })
          // outer SUB_TEST is waiting until end of nested SUB_TEST
-         // cause of providing argument context
-         // if context is undefined RUN_TEST would wait on double nested SUB_TEST
+         // cause of providing argument »context«
+         // if context is the one from RUN_TEST then RUN_TEST would wait on double nested SUB_TEST
          SUB_TEST({context:context2, delay:100}, (context3) => {
             TEST(context2,'=',context3.parentContext, "nested SUB_TEST runs within context provided as argument")
             waitedOnNestedContext = true
@@ -674,7 +717,7 @@ async function INTERNAL_SYNTAX_TEST()
          ])
       }
    })
-   if (testenv.executedTestCase !== 126 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 132 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 0 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
    await RUN_TEST({name:"-- Timeout --",timeout:100}, async (context) => {
       const testConsole = testenv.newTestConsole()
@@ -688,7 +731,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Timeout after 20ms","SUB_TEST returns error")
    })
-   if (testenv.executedTestCase !== 136 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 1)
+   if (testenv.executedTestCase !== 142 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 1)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest}`)
    for (let isSubTest = 0; isSubTest <= 1; ++isSubTest) {
       const testConsole = testenv.newTestConsole()
@@ -706,7 +749,7 @@ async function INTERNAL_SYNTAX_TEST()
       ])
       TEST(error,"=","Exception: Error: -- throw --","RUN_TEST returns error")
    }
-   if (testenv.executedTestCase !== 164 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
+   if (testenv.executedTestCase !== 172 || testenv.failedTestCase !== 7 || testenv.failedRunTest !== 3 || testenv.runningTest !== 0)
       throw Error(`Internal error in TEST module nrExecutedTest=${testenv.executedTestCase} failed=${testenv.failedTestCase} failedRun=${testenv.failedRunTest} nrRunning=${testenv.runningTest}`)
 }
 
@@ -730,8 +773,8 @@ function RESET_TEST() {
    TestEnvironment.default = new TestEnvironment()
 }
 
-function NEW_TEST() {
-   const TEST_ENV = new TestEnvironment()
+function NEW_TEST(log) {
+   const TEST_ENV = new TestEnvironment(log)
    return { ...TEST_ENV.export(), TEST_ENV }
 }
 

@@ -149,6 +149,15 @@ class TestEnvironment {
     */
 
    /**
+    * Options for running a test. See {@link RUN_TEST}.
+    * @typedef {object} RunOptions2
+    * @property {string} [name]
+    * @property {number} [timeout]
+    * @property {number} [delay]
+    * @property {LogInterface} [testConsole]
+    */
+
+   /**
     * Options for running a sub test. See {@link SUB_TEST}.
     * @typedef {object} SubOptions
     * @property {RunContext} context
@@ -166,7 +175,7 @@ class TestEnvironment {
     * Supports 2 or 3 arguments. The callback must be supplied as 2nd argument or 3d.
     * If supplied as 2nd argument the 3d one is not used.
     * @param {string|RunOptions} arg1 Name of test or Options. If arg1 contains the name the »name« within Options is not used and could be undefined.
-    * @param {RunOptions|RunCallback} arg2 Either options or callback. If arg1 provides the options then arg2 should contain the callback.
+    * @param {RunOptions2|RunCallback} arg2 Either options or callback. If arg1 provides the options then arg2 should contain the callback.
     * @param {RunCallback} arg3 An asynchronous callback which is called after delay milliseconds.
     * @returns {Promise<string>}
     */
@@ -190,22 +199,20 @@ class TestEnvironment {
     */
    async runSubTest({timeout=0, delay=0, context, testConsole}, callback) {
       EXPECT(context instanceof RunContext, "Missing argument »context« of type RunContext.")
-      const parentContext = context
-      const name = parentContext.name
-      const childContext = new RunContext({name, timeout, delay, callback, parentContext, testenv: this, testConsole})
+      const childContext = new RunContext({name:context.name, timeout, delay, callback, context, testenv: this, testConsole})
       return childContext.run()
    }
 
    /**
-    * @param {any|(()=>any)} testValue
+    * @param {any|(()=>any)} testedValue
     * @param {string|((testValue:any, expect:any)=>boolean)} compare Either built in comparison functions (string) or a comparison function. Returning a non empty string is considered the reason why the comparison failed. Returning false is also considered as a failed test.
     * @param {any} expect The expected value »testValue« should be compared with.
     * @param {string|(() => string)} errmsg The logged error message if TEST fails.
-    * @param {{testConsole?:LogInterface}} [options]
+    * @param {{testConsole?:LogInterface, context?:RunContext}} [options]
     * @returns {boolean|Promise<boolean>} True indicates a successful test.
     */
-   test(testValue, compare, expect, errmsg, options) {
-      const tc = new TestCase(testValue, compare, expect, errmsg, this, options?.testConsole)
+   test(testedValue, compare, expect, errmsg, options) {
+      const tc = new TestCase({testedValue, compare, expect, errmsg, testenv:this, testConsole:options?.testConsole, context:options?.context})
       return tc.test()
    }
 
@@ -217,8 +224,8 @@ class TestEnvironment {
     * * {@link runSubTest} as "SUB_TEST"
     * * {@link showStats} as "END_TEST"
     * @returns {{
-    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:LogInterface})=>boolean,
-    *    RUN_TEST:(name:string|Options,options:Options|RunCallback,callback?:RunCallback)=>Promise<string>,
+    *    TEST:(testValue:any,compare:string|((value:any,expect:any)=>boolean|string),expect:any,errmsg:string|(()=>string),options?:{testConsole?:LogInterface,context?:RunContext})=>boolean,
+    *    RUN_TEST:(name:string|RunOptions,options:RunOptions2|RunCallback,callback?:RunCallback)=>Promise<string>,
     *    SUB_TEST:(options:{timeout?:number,delay?:number,context?:RunContext,testConsole?:LogInterface},callback:(context:RunContext)=>void|Promise<void>)=>Promise<string>,
     *    END_TEST:(options?:{testConsole?:LogInterface})=>Promise<void>,
     * }}
@@ -276,39 +283,56 @@ class RunContext {
    ID = ++RunContext.ID
    /** @type {RunContext[]} */
    subContext = []
+   /** @type {TestCase[]} */
+   asyncTestCases = []
    /** @type {Promise<string>} */
    waitAll = Promise.resolve("Error: run() not called")
    /** @type {string} */
    signaledError = "Error: run() not called"
+   /** @type {undefined|RunContext} */
+   parentContext
+   /** @type {string} */
+   name
+   /** @type {number} timeout in millisecons ms after which callback should return. A value <= 0 disables the timeout. */
+   timeout
+   /** @type {number} delay in milliseconds after callback is called. A value <= 0 disables the delay. */
+   delay
+   /** @type {(context:RunContext)=>void|Promise<void>} Async callback is supported */
+   callback
+   /** @type {null|number} Timer which is used for measuring timeout. */
+   timer
+   /** @type {TestEnvironment} */
+   testenv
+   /** @type {undefined|LogInterface} */
+   testConsole
 
    toString() {
       if (this.parentContext)
-         return `RunContext(ID:${this.ID},name:»${this.name}«,parentContext:{${String(this.parentContext)}})`
+         return `RunContext(ID:${this.ID},name:»${this.name}«,parent:{${String(this.parentContext)}})`
       else
          return `RunContext(ID:${this.ID},name:»${this.name}«)`
    }
 
    /**
-    *
-    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, parentContext?:RunContext, testenv:TestEnvironment, testConsole:undefined|LogInterface}} options
+    * @param {{name:string, timeout:number, delay:number, callback:(context:RunContext)=>void|Promise<void>, context?:RunContext, testenv:TestEnvironment, testConsole:undefined|LogInterface}} options
     */
-   constructor({name, timeout, delay, callback, parentContext, testenv, testConsole}) {
+   constructor({name, timeout, delay, callback, context, testenv, testConsole}) {
       EXPECT(typeof name === "string", "Expect argument »name« of type string.")
       EXPECT(isFinite(timeout), "Expect argument »timeout« of type number.")
       EXPECT(isFinite(delay), "Expect argument »delay« of type number.")
       EXPECT(typeof callback === "function", "Expect argument »callback« of type function.")
-      EXPECT(parentContext == null || parentContext instanceof RunContext, "Expect argument »parentContext« of type RunContext.")
+      EXPECT(context == null || context instanceof RunContext, "Expect argument »context« of type RunContext.")
       EXPECT(testenv instanceof TestEnvironment, "Expect argument »testenv« of type TestEnvironment.")
       EXPECT(LogInterface.isTypeOrNull(testConsole), "Expect argument »testConsole« of type LogInterface.")
       this.name = name
-      this.timeout = timeout // ms after which callback should return
-      this.delay = delay // delay in ms until callback is run
+      this.timeout = timeout
+      this.delay = delay
       this.callback = callback
       this.timer = null
-      this.parentContext = parentContext
+      this.parentContext = context
       this.testenv = testenv
       this.testConsole = testConsole
-      parentContext?.subContext?.push(this)
+      context?.subContext.push(this)
    }
 
    startTimer() {
@@ -334,6 +358,13 @@ class RunContext {
          if (error) this.signaledError = error // already signaled in sub_test, only return value in waitall, but do not signal twice (by calling signalError)
       }
    }
+
+   async waitForAllTestCases() {
+      for (const tc of this.asyncTestCases) {
+         await tc.waitForCompletion()
+      }
+   }
+
    /**
     * @param {string} reason
     * @param {{value:any}} [exceptionValue]
@@ -356,6 +387,7 @@ class RunContext {
             this.signalError("Exception: " + exception.toString(), { value: exception })
          })
          .then(() => this.waitForAllSubContext())
+         .then(() => this.waitForAllTestCases())
          .then(() => this.clearTimer())
          .then(() => this.testenv.signalEndRun())
          .then(() => this.signaledError)
@@ -364,29 +396,43 @@ class RunContext {
 }
 
 class TestCase {
-   #testFor
+   #testedValue
    #value
    #compare
    #expect
    #testOK
+   /** @type {string|(()=>string)} */
    #errmsg
+   /** @type {TestEnvironment} */
    #testenv
+   /** @type {undefined|LogInterface} */
    #testConsole
+   /** @type {undefined|RunContext} */
+   #context
+   /** @type {undefined|Promise} */
+   #waitForCompletion
 
    /**
-    * @param {any|(()=>any)} testFor
-    * @param {string|((value:any,expect:any)=>boolean|string)} compare
-    * @param {any} expect
-    * @param {string|(()=>string)} errmsg
-    * @param {TestEnvironment} testenv
-    * @param {undefined|LogInterface} testConsole
+    * @typedef {object} TestCaseParams
+    * @property {any|(()=>any)} testedValue
+    * @property {string|((value:any,expect:any)=>boolean|string)} compare
+    * @property {any} expect
+    * @property {string|(()=>string)} errmsg
+    * @property {TestEnvironment} testenv
+    * @property {undefined|LogInterface} testConsole
+    * @property {RunContext} [context]
     */
-   constructor(testFor, compare, expect, errmsg, testenv, testConsole) {
+
+   /**
+    * @param {TestCaseParams} params
+    */
+   constructor({testedValue, compare, expect, errmsg, testenv, testConsole, context}) {
       EXPECT(typeof compare === "string" || typeof compare === "function", "Expect argument »compare« of type string or function.")
       EXPECT(typeof errmsg === "string" || typeof errmsg === "function", "Expect argument »errmsg« of type string or function.")
       EXPECT(testenv instanceof TestEnvironment, "Expect argument »testenv« of type TestEnvironment.")
       EXPECT(LogInterface.isTypeOrNull(testConsole), "Expect argument »testConsole« of type LogInterface.")
-      this.#testFor = testFor
+      EXPECT(!context || context instanceof RunContext, "Expect argument »context« of type RunContext.")
+      this.#testedValue = testedValue
       this.#value = expect
       this.#compare = compare
       this.#expect = expect
@@ -394,6 +440,7 @@ class TestCase {
       this.#errmsg = errmsg
       this.#testenv = testenv
       this.#testConsole = testConsole
+      this.#context = context
    }
 
    get testenv() {
@@ -602,18 +649,39 @@ class TestCase {
     * @returns {any} Returns value to test for or returned value of called function.
     */
    value() {
-      return this.#value = (typeof this.#testFor === "function")
-                           ? this.#testFor() : this.#testFor
+      return this.#value = (typeof this.#testedValue === "function")
+                           ? this.#testedValue() : this.#testedValue
+   }
+   /**
+    * @returns {Promise<undefined|"">}
+    */
+   async waitForCompletion() {
+      return await this.#waitForCompletion
+   }
+   /**
+    * @returns {undefined|((result:"")=>void)}
+    */
+   prepareWaitForCompletion() {
+      if (this.#context) {
+         let resolve
+         this.#waitForCompletion = new Promise((res)=>resolve=res)
+         this.#context.asyncTestCases.push(this)
+         return resolve
+      }
    }
    /**
     * @returns {Promise<boolean>}
     */
    async testAsync() {
+      const resolve = this.prepareWaitForCompletion()
       try {
          this.#value = await this.#value
       }
       catch(exception) {
          return this.compareException(exception)
+      }
+      finally {
+         resolve?.("")
       }
       return this.compare()
    }
@@ -698,6 +766,16 @@ async function INTERNAL_SYNTAX_TEST()
          TEST(testenv.runningTest,'=',2, "SUB_TEST increments runningTest")
          ++ nestedContextCounter
       })
+      let timerSignaled=false
+      await SUB_TEST({context}, (subcontext) => {
+         TEST(()=>new Promise(resolve=>setTimeout(()=>{timerSignaled=true;resolve("timeout")},100)),"=","timeout","wait for 100ms",{context:subcontext})
+      })
+      TEST(timerSignaled,"=",true,"SUB_TEST waits on TEST if context is provided in options")
+      let thrownException=false
+      await SUB_TEST({context}, (subcontext) => {
+         TEST(()=>new Promise((_,reject)=>setTimeout(()=>{thrownException=true;reject("timeout")},100)),"throw","timeout","wait for 100ms",{context:subcontext})
+      })
+      TEST(thrownException,"=",true,"SUB_TEST waits on TEST if context is provided in options")
       SUB_TEST({context, delay:0}, (/*context*/) => {
          TEST(nestedContextCounter,'=',1, "2nd SUB_TEST executed after first")
          ++ nestedContextCounter
@@ -732,7 +810,7 @@ async function INTERNAL_SYNTAX_TEST()
    TEST(testenv.failedTestCase,'=',1, "failedTestCase counts nr of failed TEST")
    TEST(testenv.failedRunTest,'=',0, "no RUN_TEST/SUB_TEST failed")
    TEST(testenv.runningTest,'=',0, "no running tests at this point")
-   nrExecutedTest+=16
+   nrExecutedTest+=20
    TEST(testenv.executedTestCase,'=',nrExecutedTest, "testenv.executedTestCase counts nr of executed tests")
    /////////////////////////
    // Test Console Output //
@@ -828,8 +906,8 @@ async function INTERNAL_SYNTAX_TEST()
    TEST(testenv.runningTest,'=',0, "no running tests at this point")
 }
 
-function TEST(testValue, compare, expect, errmsg, options) {
-   return TestEnvironment.default.test(testValue, compare, expect, errmsg, options)
+function TEST(testedValue, compare, expect, errmsg, options) {
+   return TestEnvironment.default.test(testedValue, compare, expect, errmsg, options)
 }
 
 async function RUN_TEST(arg1, arg2, arg3) {

@@ -9,75 +9,72 @@
    <script src="bootstrap/bootstrap.bundle.js" integrity="sha384-5xO2n1cyGKAe630nacBqFQxWoXjUIkhoc/FxQrWM07EIZ3TuqkAsusDeyPDOIeid" crossorigin="anonymous"></script>
    <script src="test.js"></script>
    <style>
-      .js-window {
+      .vmx-window {
          --border-color: #333;
          background-color: black; color: white;
          border-radius: 12px 12px 0 0; border: 1px var(--border-color) solid;
          box-sizing: border-box; position: fixed;
          display: grid; grid-template-rows: auto 1fr;
       }
-      .js-d-none {
-         display: none;
-      }
-      .js-window .js-head {
+      .vmx-window .head {
          flex: 0 0 auto;
          box-sizing: border-box;
          border-bottom: 1px var(--border-color) solid;
          display: flex; flex-flow: row nowrap;
          overflow: hidden;
       }
-      .js-window .js-body {
+      .vmx-window .body {
          flex: 1 1 auto;
          background-color: lightcoral;
          box-sizing: border-box;
          overflow: hidden; contain: layout;
          display: grid; place-items: stretch;
       }
-      .js-window .js-head .js-controls {
+      .vmx-window .head .controls {
          flex: 0 0 auto; align-self: center; order: 2;
          padding: 3px 5px 3px 3px;
       }
-      .js-window .js-head .js-title {
+      .vmx-window .head .title {
          flex: 1 1 auto; align-self: stretch; order: 1;
          border-radius: 12px 0 0 0; padding: 3px 0px 3px 10px;
          box-sizing: border-box; overflow: hidden; white-space: nowrap;
       }
-      .js-controls [data-slot='min'], .js-controls [data-slot='max'], .js-controls [data-slot='close'] {
+      .vmx-window .controls :is([data-slot='min'], [data-slot='max'], [data-slot='close']) {
          margin-left: 0.5em; padding: 2px 3px;
          box-sizing: border-box;
          width: 1em;
          cursor: pointer;
       }
-      .js-controls [data-slot='min']:hover, .js-controls [data-slot='max']:hover, .js-controls [data-slot='close']:hover {
+      .vmx-window .controls :is([data-slot='min']:hover, [data-slot='max']:hover, [data-slot='close']:hover) {
          padding-left: 4px; padding-right: 2px;
          background-color: lightslategray;
       }
-      .js-controls .maximized[data-slot='max']::before {
-         text-decoration: underline dotted;
-      }
-      .js-controls [data-slot='close']:hover {
+      .vmx-window .controls [data-slot='close']:hover {
          background-color: lightcoral;
       }
+      .vmx-window.maximized .controls [data-slot='max']::before {
+         text-decoration: underline dotted;
+      }
 
-      .js-window-stack {
+      .vmx-window-stack {
          border: 1px darkgrey solid; background-color: lemonchiffon;
          padding: 3px;
          position: fixed; left: 5px; bottom: 5px;
          display: flex; flex-flow: column-reverse nowrap; place-items: stretch; gap: 5px;
       }
-      .js-window-stack > * {
+      .vmx-window-stack > * {
          position: static;
       }
-      .js-window-stack .js-window .js-title:hover {
+      .vmx-window-stack .vmx-window .title:hover {
          background-color: lightslategray;
          cursor: pointer;
       }
-      .js-window-stack button {
+      .vmx-window-stack button {
          color:white; background-color:cadetblue;
          border:1px darkgoldenrod solid;
          padding:3px;
       }
-      .js-window-stack button:hover {
+      .vmx-window-stack button:hover {
          color:#fafafa;
          outline:1px darkgoldenrod solid;
          padding:4px 2px 2px 4px;
@@ -94,21 +91,20 @@
    </style>
 </head>
 <body>
-   <template id="js-window-template">
-      <!-- use  » data-config="hiddenClassName: class-name, ..." « to config other class name for hidden=true ==> (display=none) -->
-      <div class="js-window">
-         <div class="js-head" data-slot="minimized-height">
-            <div class="js-title" data-slot="title"></div>
-            <div class="js-controls"><i data-slot="min" class="bi-dash-lg"></i><i data-slot="max" class="bi-square"></i><i data-slot="close" class="bi-x-lg"></i></div>
+   <template id="vmx-window-template">
+      <div class="vmx-window">
+         <div class="head">
+            <div class="title" data-slot="title"></div>
+            <div class="controls"><i data-slot="min" class="bi-dash-lg"></i><i data-slot="max" class="bi-square"></i><i data-slot="close" class="bi-x-lg"></i></div>
          </div>
-         <div class="js-body" data-slot="content"></div>
+         <div class="body" data-slot="content"></div>
       </div>
    </template>
-   <template id="js-minimized-window-template">
-      <div class="js-window">
-         <div class="js-head">
-            <div class="js-title" data-slot="title"></div>
-            <div class="js-controls"><i data-slot="close" class="bi-x-lg"></i></div>
+   <template id="vmx-minimized-template">
+      <div class="vmx-window">
+         <div class="head">
+            <div class="title" data-slot="title"></div>
+            <div class="controls"><i data-slot="close" class="bi-x-lg"></i></div>
          </div>
       </div>
    </template>
@@ -117,16 +113,11 @@
       <dt>Components</dt>
       <dd>
          <ul>
-            <li>View (Encapsulates HTMLElement)</li>
-            <li>View-Model (Adds operations/logic to View)</li>
+            <li>TODO: Replace View/ViewModel with View2/ViewModel2.</li>
+            <li>ViewElem (Encapsulates HTMLElement)</li>
+            <li>View-Model (Adds state/operations/logic to View)</li>
             <li>View-Controller (Event-Listeners-Handling (no logic))</li>
-            <li>Decorator (Binds HTMLElement to View,-Model,-Controller)</li>
-         </ul>
-      </dd>
-      <dt>Missing Features</dt>
-      <dd>
-         <ul>
-            <li>All things Model</li>
+            <li>ViewExtension decorates View</li>
          </ul>
       </dd>
    </dl>
@@ -142,17 +133,17 @@
 
    <div id=window3 style="position:fixed;left:300px;top:230px;width:200px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
       (fixed)<br>call test() or test2()
-      <br><input type="text" value="don't touch me" size="10">
+      <br><input type="text" value="non moveable" size="10">
    </div>
 
-   <div class="js-window-stack">
+   <div class="vmx-window-stack">
       <button>Restore closed window</button>
    </div>
 
    <code><pre style="margin-block:8px">
       # start upload server (localhost:9090)
       > bun server.js</pre></code>
-   <div id="radios">
+   <form id="radios">
       <input type="radio" value="-1-" name="selection-1">
       <input type="radio" value="-2-" name="selection-1">
       <input type="radio" value="-3-" name="selection-1">
@@ -163,7 +154,8 @@
          <option value="-2-">value 2</option>
          <option value="-3-">value 3</option>
       </select>
-   </div>
+      <br><input id=MMMM type="date">
+   </form>
    <div>== LOG ==</div>
    <div id="LOG"></div>
    <div style="height:1000px;"></div>
@@ -173,33 +165,42 @@
       // LOG //
       /////////
       let logLines = 0
+      /**
+       * @type {(msg:string)=>void}
+       */
       const logError = (msg) => {
          ++ logLines
-         let append = document.getElementById("LOG").innerHTML
-         if (logLines > 15) {
-            append = append.substring(0,append.lastIndexOf("<br>"))
-         }
-         document.getElementById("LOG").innerHTML = (logLines%100) + " " + msg + "<br>" + append
+         const append = document.getElementById("LOG").innerHTML
+         const lastindex = append.lastIndexOf("<br>:"+(logLines-15)+": ")
+         const log = append.substring(Math.max(0, lastindex)) + "<br>"
+                     + ":"+logLines + ": " + msg.trim().replaceAll("\n","<br>...")
+         document.getElementById("LOG").innerHTML = log
       }
       const logException = (exc) => {
          console.error(exc)
-         if (exc?.stack)
-            exc.stack.toString().split("\n").reverse().forEach(traceLine => traceLine.trim() && logError("&nbsp; "+traceLine))
-         logError(`line ${exc.lineno}: ${exc.message}`)
+         const msg = `${exc.message}\n${exc?.stack??""}`
+         logError(msg)
       }
       const logCatch = (exc) => {
-         const catchedAt = Error("Previous exception catched at")
-         logException(catchedAt)
-         logException(exc)
+         logException(Error(`Catched exception: ${exc}`,{cause:exc}))
       }
       window.addEventListener("error", (e) => {
          logException(e.error)
+         e.preventDefault()
       })
    </script>
 
    <script src="vmx.js"></script>
 
    <script>
+
+      VMX.log.setLevel(Logger.DEBUG)
+      VMX.log.writeLog = (level, context, message) => {
+         const args = [context, VMX.log.levelName(level)+":", message]
+         console.log(...args)
+         logError(args.map( x => x instanceof Error ? `${x.message}\n${x?.stack??""}` : x).join(" "))
+      }
+
       //////////////////
       // TEST SECTION //
       //////////////////
@@ -208,25 +209,27 @@
       const div2 = document.getElementById("window2")
       const div3 = document.getElementById("window3")
 
-      const frame = View.clone("#js-window-template")
-      const win1VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div1, title:"Hello 1", moveable:false })
-      const win2VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div2, title:"Hello 2" })
-      const win3VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:div3, title:"Hello 3" })
-      const win4VM = new WindowVM(View.clone("#js-window-template"), {
+      const win1VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div1, title:"Hello 1"/*, moveable:false*/ })
+      const win2VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div2, title:"Hello 2",
+         left:20, width:540,
+      })
+      const win3VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div3, title:"Hello 3" })
+      const win4VM = WindowVM.create(DOM.clone("#vmx-window-template"), {
          top:240, left:600, width:140, height:100, title:"Hello 4",
          content: "<div style='background-color:beige; color:maroon;'>Created Window</div>"
       })
       win4VM.vWindowState = "visible"
 
-      const child = View.newElement("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px; right:10px; bottom:150px;'>Created Window</div>")
-      const win5VM = new WindowVM(View.clone("#js-window-template"), { decoratedHtmlElem:child, title:"Hello 5" })
-      win5VM.vWindowState = "visible"
+      const child = DOM.newElement("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px; right:10px; bottom:150px;'>Created Window</div>")
+      DOM.connect(child)
+      const win5VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:child, title:"Hello 5" })
+      // not needed: win5VM.vWindowState = "visible"
 
-      console.log("listened elements",ViewListeners.getListenedElements(document))
+      console.log("listened elements",VMX.getListenedElements(document))
 
-      const winstackVM = new WindowStackVM(View.query("[class='js-window-stack']"))
+      const winstackVM = WindowStackVM.create(DOM.query("[class='vmx-window-stack']"), { minimizedTemplate:DOM.query("#vmx-minimized-template") })
 
-      View.query("[class='js-window-stack'] button").addEventListener("click", (e) => {
+      DOM.query("[class='vmx-window-stack'] button").addEventListener("click", (e) => {
          if (win1VM.vWindowState === WindowVM.CLOSED)
             (win1VM.vWindowState = WindowVM.VISIBLE, winstackVM.register(win1VM))
          else if (win2VM.vWindowState === WindowVM.CLOSED)
@@ -279,17 +282,16 @@
 
       let redecorationCount = 0
       function test3() {
-         deco2.undecorate()
+         if (win2VM.replaceWithContent() !== div2)
+            throw Error("content is not div2")
          setTimeout( () => {
-            deco2.decorate(win2VM, {decoratedHtmlElem:div2, moveable:true})
+            win2VM.vContent = div2
             win2VM.vTitle = `Hello 2-(${++redecorationCount})`
          }, 800)
       }
 
-      const dropzone = View.query(".dropzone")
-      const scrollDown = () => new ViewUpdateListener( () => {
-                                    dropzone.scrollBy({top:1000, behavior:"smooth"})
-                                 }, 1)
+      const dropzone = DOM.query(".dropzone")
+      const scrollDown = () => new ViewUpdateListener(1, () => dropzone.scrollBy({top:1000, behavior:"smooth"}))
       function do_upload_image(file) {
          if (!file.type.startsWith("image/")) {
             dropzone.innerHTML += `<br>Failed: unexpected type »${file.type}«`
@@ -302,9 +304,10 @@
                if (fr.error)
                   dropzone.innerHTML += `<br>error reading file »${file.name}«`
                else {
-                  dropzone.innerHTML += `<br>try uploading <img src='${fr.result}' width="30px">`
+                  dropzone.innerHTML += `<br>try uploading <img src='${fr.result}' width="40px">`
                   upload_file(file).then(result => {
-                     dropzone.innerHTML += `<br>${result.ok?'':'Failed: '}${result.answer||result.error?.message}`
+                     console.log("set result",result.ok,result.answer)
+                     dropzone.innerHTML += `<br>${result.ok?'':'Failed: '}${result.answer}`
                      scrollDown()
                   })
                }
@@ -314,15 +317,16 @@
       }
 
       var dc1 = new DropController(dropzone, (e) => {
-         console.log(e.type,"target",e.target,"items",e.items)
+         console.log(e.type,"currentTarget",e.eventCurrentTarget,"items",e.items)
+         const target = e.eventCurrentTarget
          const items = [...e.items]
          switch (e.type) {
             case "dropstart":
                const allowed = items.every(item => item.kind == "file" && item.type.startsWith("image/"))
-               e.target.classList.add(allowed ? "dropallowed" : "dropforbidden")
+               target.classList.add(allowed ? "dropallowed" : "dropforbidden")
                break
             case "dropend":
-               e.target.classList.remove("dropallowed","dropforbidden")
+               target.classList.remove("dropallowed","dropforbidden")
                break
             case "drop":
                const wrongItems = items.filter(item => item.kind != "file" || !item.type.startsWith("image/"))
@@ -335,48 +339,33 @@
          }
       })
 
-      var registeredClientID = null
-
       function upload_file(file) {
-         const result = { ok:false, status:0, answer:"", error:null/*network error*/ }
-         return Promise.resolve(registeredClientID == null && registerClient()).then( () => {
-            return fetch(`http://${window.location.hostname}:9090/uploads/${file.name}/?clientid=${registeredClientID}`, {
+         const result = { ok:false, status:0, answer:"" }
+         return fetch(`http://${window.location.hostname}:9090/uploads/${file.name}`, {
                method:"PUT",
                credentials:"include",
                mode:"cors",
                headers:{ "Content-Type": file.type },
                body:file,
-            })
          }).then( resp => {
             result.ok = resp.ok; result.status = resp.status; return resp.text()
          }).then( answer => {
-            result.answer = answer; return result
+            result.answer = answer
+            return result
          }).catch( error => {
             logCatch(error)
-            result.ok = false; result.error = error; return result
+            return { ok:false, status:result.status, answer:error }
          })
       }
 
-      function registerClient() {
-         if (registeredClientID == null)
-            registeredClientID = crypto.randomUUID()
-         return fetch("http://localhost:9090/register",
-            { method:"POST", mode:"cors", body:registeredClientID, credentials:"include" }
-         ).then(resp => {
-            if (!resp.ok) {
-               console.log("register client failed",resp.status,resp.headers)
-            }
-            return resp.text()
-         }).then(text => console.log(text))
-      }
-
-      const fileinput = View.newElement("<input type='file' hidden>")
+      const fileinput = DOM.newElement("<input type='file' hidden>")
       dropzone.append(fileinput)
       new ClickController(dropzone, (e) => {
-         console.log("dropzone click",e.currentTarget,e)
-         if (e.target!==fileinput) {
+         console.log("dropzone click",e.eventCurrentTarget,e)
+         if (e.eventTarget!==fileinput) {
             console.log("fileinput click")
             fileinput.click()
+            console.log("after fileinput click")
          }
       })
       fileinput.addEventListener("change", (e) => {
@@ -390,11 +379,13 @@
 
          async function test_window(vm) {
 
-            await RUN_TEST({name:"Transition-Controller",timeout:100}, () => {
+            await RUN_TEST({name:"No-Transition",timeout:100}, () => {
                let callbackCalled = false
                new TransitionController(document.body, (e) => {
-                  TEST(e.target,'=',document.documentElement, "target points to html tag if no transition is active")
-                  TEST(e.currentTarget,'=',document.body, "currentTarget points to element listener is registered for")
+                  TEST(e.type,'=',"transitionend", "all transition end as string")
+                  TEST(e.isTransition,'=',false, "all transition end as flag")
+                  TEST(e.eventTarget,'=',null, "target points to null if no transition is active")
+                  TEST(e.eventCurrentTarget,'=',document.body, "currentTarget points to element listener is registered for")
                   callbackCalled = true
                }).ensureInTransitionElseEnd()
                TEST(callbackCalled,'=',true, "ensureInTransitionElseEnd calls callback if no transition is running")
@@ -402,25 +393,25 @@
 
             await RUN_TEST({name:"vLeft does not change during transition",timeout:1000}, async (context) => {
                vm.vWindowState = "visible"
-               await vm.asyncOnTransitionEnd()
+               await vm.onceOnTransitionEnd()
                TEST(vm.vWindowState,'=',"visible", "wrong precondition: window not in state 'visible'")
                const visibleLeft = vm.vLeft
                vm.vWindowState = "minimized"
                TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not yet started")
                let onceCalled = 0
-               await SUB_TEST({delay:300, context}, (context) => {
+               await SUB_TEST({context, delay:300}, (context) => {
                   const minimizedLeft = vm.vLeft
                   vm.vWindowState = "visible"
                   TEST(vm.vLeft,'=',minimizedLeft, "transition not yet started")
                   vm.onceOnTransitionEnd(() => {
                      TEST(vm.vLeft,'=',visibleLeft, "vLeft same at end of transition")
                   })
-                  vm.onceOnViewUpdate( () => {
+                  vm.onceOnViewUpdate(2, () => {
                      TEST(vm.vLeft,'=',visibleLeft, "vLeft same at start of transition")
                      TEST(parseFloat(vm.view.getComputedStyle().left),'range',[minimizedLeft+1,visibleLeft-1], "left is animated during tansition")
                      ++ onceCalled
-                  }, 2)
-                  SUB_TEST({context}, async () => await vm.asyncOnTransitionEnd())
+                  })
+                  SUB_TEST({context}, async () => await vm.onceOnTransitionEnd())
                })
                TEST(onceCalled,'=',1, "onceOnViewUpdate called exactly once")
             })
@@ -432,11 +423,11 @@
                vm.onceOnTransitionEnd(() => {
                   TEST(vm.vLeft,'=',0, "vLeft == 0 in maximized state")
                })
-               vm.onceOnViewUpdate(() => {
+               vm.onceOnViewUpdate(4, () => {
                   TEST(vm.vLeft,'=',0, "vLeft == 0 at start of transition into maximized state")
                   TEST(parseFloat(vm.view.getComputedStyle().left),'range',[1,left-1], "left is animated during tansition")
-               }, 4)
-               SUB_TEST({context}, async () => await vm.asyncOnTransitionEnd())
+               })
+               SUB_TEST({context}, async () => await vm.onceOnTransitionEnd())
             })
 
             // TODO: add more tests
@@ -452,46 +443,66 @@
       //////////////////////////
       // Debug Control Center //
       //////////////////////////
-      class ControlCenter extends WindowVM {
-         log={}
-         panel={}
-         viewsList={}
+      class ControlCenter {
+         #log
+         #panel
+         #viewsList
+         static WindowAdapter = class WindowAdapter extends WindowVM {
+            #overwittenClose
+            close() { this.#overwittenClose() }
+            // TODO: add overwritesupport to !!! ViewModel !!!
+            init({overwiteClose, ...initOptions}) {
+               this.#overwittenClose = overwiteClose
+               return super.init(initOptions)
+            }
+         }
          constructor() {
-            super(ControlCenter.createPanelElement(),{initInSuperClass:true})
-            const log = this.log
+            const log = {}
             log.htmlElem = ControlCenter.createLogWindowElement()
-            log.winVM = new WindowVM(log.htmlElem)
+            log.winVM = ControlCenter.WindowAdapter.create(log.htmlElem, { overwiteClose:this.hideLogWindow.bind(this) })
             log.winVM.show()
             log.width = log.winVM.vWidth
-            log.winVM.setEventHandler("close",this.hideLogWindow.bind(this))
-            const panel = this.panel
-            panel.htmlElem = this.htmlElem // ControlCenter.createPanelElement()
+            this.#log = log
+            const panel = {}
+            panel.htmlElem = ControlCenter.createPanelElement()
             panel.logWindowCheckbox = panel.htmlElem.querySelector("[data-slot=LogWindowCheckbox]")
-            panel.winVM = this // new WindowVM(panel.htmlElem)
+            panel.winVM = ControlCenter.WindowAdapter.create(panel.htmlElem, { overwiteClose:this.hidePanel.bind(this) })
             panel.winVM.show()
             panel.top = panel.winVM.vTop
-            panel.winVM.setEventHandler("close",this.hidePanel.bind(this))
             panel.onEscape = new KeyController(document, (e) => {
-               e.key === "Escape" && e.type === "keydown" && this.togglePanel()
-               // e.event.preventDefault()
+               // (e.type === KeyController.KEYDOWN) && console.log(e) // TODO: remove line
+               if (e.key === KeyController.KEYS.ESCAPE && e.type === KeyController.KEYDOWN) {
+                  if (KeyController.lockKeyFromEvent(e)) {
+                     this.togglePanel()
+                  }
+               }
             })
             panel.onLogSwitch = new ChangeController(panel.logWindowCheckbox, (e) => {
                this.switchLogWindow(e.checked)
             })
+            this.#panel = panel
          }
-
-         get hiddenLogWindow() {
+         get log() {
+            return this.#log
+         }
+         get panel() {
+            return this.#panel
+         }
+         get isLogWindowHidden() {
             return this.log.winVM.hidden
          }
+         get viewsList() {
+            return this.#viewsList
+         }
          showLogWindow() {
-            if (this.hiddenLogWindow) {
+            if (this.isLogWindowHidden) {
                this.log.winVM.show()
                this.log.winVM.visiblePos = {transition:true, width:this.log.width}
                this.panel.logWindowCheckbox.checked = true
             }
          }
          hideLogWindow() {
-            if (!this.hiddenLogWindow) {
+            if (!this.isLogWindowHidden) {
                this.log.width = this.log.winVM.vWidth
                this.log.winVM.visiblePos = {transition:true, width:0}
                this.panel.logWindowCheckbox.checked = false
@@ -531,7 +542,7 @@
          }
          endEditName(e, abort) {
             const table = this.viewsList
-            const row = e ? e.target.closest("tr") : table.edits[0]?.row
+            const row = e ? e.eventTarget.closest("tr") : table.edits[0]?.row
             if (!row || row.parentElement.nodeName !== "TBODY") return
             const editIndex = table.edits.findIndex(edit => edit.row === row)
             if (editIndex >= 0) {
@@ -541,10 +552,10 @@
                edit.col.append(edit.colchilds)
                edit.col2.append(edit.col2childs)
                for (const ctrl in edit.controller)
-                  edit.controller[ctrl].remove()
+                  edit.controller[ctrl].free()
                if (!abort) {
-                  edit.viewModel.name = edit.input.value.trim()
-                  edit.col.querySelector("label").textContent = edit.viewModel.LID
+                  // TODO: does no more work, edit.viewModel.name = edit.input.value.trim()
+                  edit.col.querySelector("label").textContent = edit.viewModel.LID.toString(edit.viewModel)
                }
                this.unhighlight()
             }
@@ -554,13 +565,12 @@
 
          openViewsList() {
             this.closeViewsList()
-            const table = this.viewsList
+            const table = this.#viewsList = {}
             table.edits = []
             table.lastHighlighted = {}
             table.htmlElem = this.createViewsListElement()
-            table.winVM = new WindowVM(table.htmlElem)
+            table.winVM = ControlCenter.WindowAdapter.create(table.htmlElem, { overwiteClose:this.closeViewsList.bind(this) })
             table.winVM.show()
-            table.winVM.setEventHandler("close",this.closeViewsList.bind(this))
             table.htmlElem.addEventListener("focusin", (e) => {
                      console.log("focusin",e)
                   })
@@ -569,77 +579,71 @@
                   })
             table.onTouch = new TouchController(table.htmlElem, (e) => {
                const viewmodels = this.viewsList.viewmodels
-               const row = e.target.closest("tr")
-               const col = e.target.closest("td")
-               const childindex = col ? Array.prototype.indexOf.call(col.parentNode.children,col) : -1
-               logError("touch "+e.orig.type+":"+e.target?.nodeName+"["+childindex+"],"+e.target.id+","+e.currentTarget?.nodeName)
-               e.type === "touchend" && this.unhighlight()
+               const row = e.eventTarget.closest("tr")
+               logError("touch "+e.type+":"+e.eventTarget?.nodeName+","+e.eventTarget.id+","+e.eventCurrentTarget?.nodeName)
+               e.type === TouchController.TOUCHEND && this.unhighlight()
                if (!row || row.parentElement.nodeName !== "TBODY") return
                const rowOffset = row.sectionRowIndex
                if (! (0 <= rowOffset && rowOffset < viewmodels.length)) return
-               if (e.type === "touchend") {
-                  if (col.parentElement.children[0] === col && row === table.edits[0]?.row)
-                     return
+               if (e.type === TouchController.DOUBLECLICK && row && row !== table.edits[0]?.row) {
                   this.endEditName(null)
-                  if (col.parentElement.children[0] === col)
-                  {
-                     logError("new input")
-                     const input = View.newElement("<input type=text class='w-100'>")
-                     const cancel = View.newElement("<a class='btn btn-warning'>cancel <i class='bi bi-trash'></i></a>")
-                     const controller = {}
-                     const edit = { input, cancel, row, col, col2: col.nextElementSibling,
-                                    colchilds: document.createDocumentFragment(),
-                                    col2childs: document.createDocumentFragment(),
-                                    viewModel: viewmodels[rowOffset], controller }
-                     edit.colchilds.append(...col.childNodes)
-                     edit.col2childs.append(...edit.col2.childNodes)
-                     input.id = "inp-"+(this.ID++)
-                     // input.value = edit.viewModel.name
-                     col.append(input)
-                     edit.col2.append(cancel)
-                     controller.onKey = new KeyController(input, (e) => {
-                        if (e.type === "keydown" && (e.key === "Escape" || e.key==="Enter" ))
-                           this.endEditName(e, e.key === "Escape")
-                     })
-                     controller.onCancel = new ClickController(cancel, (e) => {
-                        logError("onCancel: "+e.type+" "+e.device)
-                        this.endEditName(e, true)
-                     })
-                     table.winVM.onceOnViewUpdate(() => {
-                        input.focus()
-                        input.value = edit.viewModel.name
-                        input.setSelectionRange(input.value.length,input.value.length)
-                     }, 1)
-                     table.edits.push(edit)
-                  }
+                  const col = row.children[0]
+                  const input = DOM.newElement("<input type=text class='w-100'>")
+                  const cancel = DOM.newElement("<a class='btn btn-warning'>cancel <i class='bi bi-trash'></i></a>")
+                  const controller = {}
+                  const edit = { input, cancel, row, col, col2: col.nextElementSibling,
+                                 colchilds: document.createDocumentFragment(),
+                                 col2childs: document.createDocumentFragment(),
+                                 viewModel: viewmodels[rowOffset], controller }
+                  edit.colchilds.append(...col.childNodes)
+                  edit.col2childs.append(...edit.col2.childNodes)
+                  input.id = "inp-"+(this.ID++)
+                  // input.value = edit.viewModel.name
+                  col.append(input)
+                  edit.col2.append(cancel)
+                  controller.onKey = new KeyController(input, (e) => {
+                     console.log(e.type, e.key, KeyController.KEYS.ENTER)
+                     if (e.type === KeyController.KEYDOWN && (e.key === KeyController.KEYS.ESCAPE || e.key === KeyController.KEYS.ENTER)
+                        && KeyController.lockKeyFromEvent(e))
+                        this.endEditName(e, e.key === KeyController.KEYS.ESCAPE)
+                  })
+                  controller.onCancel = new ClickController(cancel, (e) => {
+                     this.endEditName(e, true)
+                  })
+                  table.winVM.onceOnViewUpdate(1, () => {
+                     input.focus()
+                     input.value = edit.viewModel.name
+                     input.setSelectionRange(input.value.length,input.value.length)
+                  })
+                  table.edits.push(edit)
                }
-               if (e.type === "touchstart" && !table.lastHighlighted.viewModel) {
+               if (e.type === TouchController.TOUCHSTART && !table.lastHighlighted.viewModel) {
                   const vm = viewmodels[rowOffset]
                   table.lastHighlighted.viewModel = vm
                   table.lastHighlighted.oldStyle = vm.view.setStyles({
                      outline: "#FF9D77 dashed 3px", outlineOffset: 0
                   })
                }
-            })
+            }, {enableDoubleClick:true})
          }
          closeViewsList() {
             const table = this.viewsList
-            if (table.htmlElem) {
+            if (table) {
                this.endEditName()
-               table.onTouch.remove()
+               table.onTouch.free()
                table.winVM.free().remove()
             }
-            this.viewsList = {}
+            this.#viewsList = null
          }
 
 
          static createLogWindowElement() {
-            const logID = View.nextUnusedID("LogWindow")
-            return View.newElement(`
+            const logID = DOM.nextUnusedID("LogWindow")
+            return DOM.newElement(`
                <div id="${logID}" style="position:fixed; width:50%; top:0; right:0;">
                   <div class="card overflow-hidden" style="height:100%">
                      <div class="card-header">
-                        <span data-slot="title">Log Window <tt><small><small>(TODO: implement)</small></small></tt></span>
+                        <span data-slot="title">Log Window</span> <tt><small><small>(TODO: implement)</small></small></tt>
                         <button type="button" class="btn-close float-end" aria-label="Close" data-slot="close"></button>
                      </div>
                      <div class="card-body overflow-y-scroll" data-slot="content">
@@ -658,8 +662,8 @@
          }
 
          static createPanelElement() {
-            const panelID = View.nextUnusedID("ControlPanel")
-            return View.newElement(`
+            const panelID = DOM.nextUnusedID("ControlPanel")
+            return DOM.newElement(`
                <div id="${panelID}" class="toast show position-fixed" style="top:0; left:0;" role="alert" aria-live="assertive" aria-atomic="true">
                   <div class="toast-header">
                      <div class="rounded me-2 bg-secondary bg-gradient" style="width:1.3em">&nbsp;</div>
@@ -676,13 +680,13 @@
          }
 
          createViewsListElement() {
-            const tableID = View.nextUnusedID("ViewsList")
+            const tableID = DOM.nextUnusedID("ViewsList")
             let rows = ""
             this.viewsList.viewmodels = []
             let id=6
-            for (const vm of VMX.getBoundViewModels(document)) {
+            for (const vm of VMX.getConnectedViewModels()) {
                const decorator = vm.decorator
-               rows += "<tr><td style='cursor:initial' id='"+(++id)+"'><label>"+vm.LID+"</label></td>"
+               rows += "<tr><td style='cursor:initial' id='"+(++id)+"'><label>"+vm.LID.toString(vm)+"</label></td>"
                rows += "<td id='"+(++id)+"'>"+(decorator?decorator.constructor.name:'&mdash;')+"</td>"
                rows += "<td id='"+(++id)+"'>"+vm.constructor.name+"</td>"
                rows += "<td id='"+(++id)+"'>"+(vm.vTitle
@@ -691,11 +695,11 @@
                this.viewsList.viewmodels.push(vm)
             }
             const bStyle = getComputedStyle(document.body)
-            return View.newElement(`
+            return DOM.newElement(`
                <div id="${tableID}" style="position:fixed; height:50%; width:50%; top:20px; left:${parseFloat(bStyle.width)/4}px;">
                   <div class="card overflow-hidden" style="height:100%">
                      <div class="card-header" data-slot="move">
-                        <span data-slot="title">Decorated Elements <tt><small><small>(try clicking row)</small></small></tt></span>
+                        <span data-slot="title">Decorated Elements <tt><small><small>(try pressing / dbl-clicking row)</small></small></tt></span>
                         <button type="button" class="btn-close float-end" aria-label="Close" data-slot="close"></button>
                      </div>
                      <div class="card-body overflow-y-scroll" data-slot="content" >
@@ -725,9 +729,6 @@
 
       // 1. assign IDs to every element
       // 2. write logs into log-window
-      // 3. (DONE) prevent MOUSE-CLICK simulation of Touch-Device
-      // 4. (DONE) Event names
-      //    4.1 { name:"click" device:"[touch|mouse]" }
       // 10. Create ViewListener and add it to ViewListeners instead of
       //     providing all arguments to Addlistener which pipes
       //     them through to constructor of ViewListener
@@ -737,12 +738,163 @@
       // X. overlapping Escape key handling
 
       new ChangeController(document.getElementById("radios"), (e) => {
-         console.log("change",e)
+         console.log("change form",e.checked,e)
       })
-      new ChangeController(document.getElementById("radios").querySelectorAll("[type=radio]"), (e) => {
-         console.log("change",e)
-      })
+      new ChangeController(document.getElementById("radios"), (e) => {
+         console.log("change group (radio buttons in form radios)",e.checked,e)
+      }, { group: document.getElementById("radios").querySelectorAll("[type=radio]") })
 
-   </script>
+      function logEvent(e) {
+         console.log("event",new Date().valueOf(),ViewListener.eventToString(e),e)
+      }
+
+      document.addEventListener(ViewListener.KEYDOWN,logEvent)
+      // document.addEventListener(ViewListener.KEYUP,logEvent)
+
+      async function testOptionsParser() {
+         const parse = OptionsParser.parse
+         RUN_TEST({name:"parse-empty",timeout:100}, (context) => {
+            TEST(parse(``),"{=}",{},"Expect empty object")
+            TEST(parse(`{}`),"{=}",{},"Expect empty object")
+            TEST(parse(`\t   \t\t `),"{=}",{},"Expect empty object")
+            TEST(parse(` \t\t {\t \t} \t\t `),"{=}",{},"Expect empty object")
+         })
+         RUN_TEST({name:"parse-boolean",timeout:100}, () => {
+            TEST(parse(`v:true`).v,"=",true,"Expect true value")
+            TEST(parse(`v:false`).v,"=",false,"Expect false value")
+         })
+         RUN_TEST({name:"parse-string",timeout:100}, () => {
+            TEST(parse(`v:'string'`).v,"=","string","Expect string value")
+            TEST(parse(`v:"\\1234\\"`).v,"=","\\1234\\","Expect string value")
+            TEST(parse(`v:''''`).v,"=","'","Doubling enclosing character removes special meaning")
+            TEST(parse(`v:""""""`).v,"=",'""',"Doubling enclosing character removes special meaning")
+            TEST(()=>parse(`v:"`),"throw",new Error(`OptionsParser error: expect »"« instead of »end of input« after name »v«.\ninput=v:"`),"Unclosed string")
+            TEST(()=>parse(`v:'`),"throw",new Error(`OptionsParser error: expect »'« instead of »end of input« after name »v«.\ninput=v:'`),"Unclosed string")
+         })
+         RUN_TEST({name:"parse-number",timeout:100}, () => {
+            TEST(parse(`v:123`).v,"=",123,"Expect number 123")
+            TEST(parse(`v:-1.87`).v,"=",-1.87,"Expect number -1.87")
+            TEST(parse(`v:+12.3e5`).v,"=",1.23e6,"Expect number -1.23e6")
+            TEST(parse(`v:-9.22e+30`).v,"=",-9.22e30,"Expect number -9.22e+30")
+            TEST(()=>parse(`v:-1.3e`),"throw",Error,"Missing exponent")
+         })
+         RUN_TEST({name:"parse-array",timeout:100}, () => {
+            TEST(parse(`v:[]`).v,"[=]",[],"Expect empty array")
+            TEST(parse(` v  :  [  ]  `).v,"[=]",[],"Expect empty array")
+            TEST(parse(`v:[ 1 ,   ]`).v,"[=]",[1],"Expect array with one element")
+            TEST(parse(`v:[ 1, true, 'xy', {} ]`).v,"[=]",[1,true,"xy",{}],"Expect array with 3 elements")
+         })
+         RUN_TEST({name:"parse-object",timeout:100}, () => {
+            TEST(parse(`a : 1 , b : false, c3po: 'gold', r2d2: { x: -30, y: +40 }`),"{=}",{a:1,b:false,c3po:"gold",r2d2:{x:-30,y:40}},"Expect object with 4 elements")
+         })
+         await END_TEST()
+      }
+      const win2FrameContainer = win2VM.htmlElem.parentElement
+      let xvm, xvv
+      function xxx() {
+         let win2Frame = win2VM.htmlElem
+         while (win2Frame.parentElement !== win2FrameContainer) win2Frame = win2Frame.parentElement;
+         const content=new ViewElem(win2Frame)
+         const vm=new WindowVM2()
+         const vv=new WindowView(ViewElem.query("#vmx-window-template").clone(), vm)
+         if (false) {
+            if (false) {
+               vv.viewElem.setPos({width:300, height:120, top:10, left:0})
+               vv.viewElem.connect()
+               vv.init({content:ViewElem.fromHtml("<div>Hello</div>")})
+            }
+            else {
+               vv.init({content, reframe:true})
+            }
+            return
+         }
+         const connection = {
+            locks: {
+               click: { path:[["click"]], shared:true },
+               resize: { path:[["resize"]], notlocked:"click" },
+               resizeTop: { path:[["resize"],["top"]], notlocked:"click" },
+               resizeTopRight: { path:[["resize"],["top","right"]], notlocked:"click" },
+               resizeRight: { path:[["resize"],["right"]], notlocked:"click" },
+               resizeRightBottom: { path:[["resize"],["right","bottom"]], notlocked:"click" },
+               resizeBottom: { path:[["resize"],["bottom"]], notlocked:"click" },
+               resizeBottomLeft: { path:[["resize"],["bottom","left"]], notlocked:"click" },
+               resizeLeft: { path:[["resize"],["left"]], notlocked:"click" },
+               resizeLeftTop: { path:[["resize"],["left","top"]], notlocked:"click" },
+            },
+            // view-controller event (e) --> view-model method (mapArgs(e))
+            actions: {
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               move: { method:"move", lock:"resize", mapArgs:(e) => ({ dx:e.dx, dy:e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(TouchResizeControllerEvent)=>any)}} */
+               resize: { method:"resize", lock:"resize", mapArgs:(e) => ({ dtop:e.dy, dright:e.dx, dbottom:e.dy, dleft:e.dx }) },
+               /** @type {{method:string, lock:string, mapArgs:(TouchResizeControllerEvent)=>any)}} */
+               resizeNotMoveable: { method:"resize", lock:"resize", mapArgs:(e) => ({ dright:2*e.dx, dbottom:2*e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeTop: { method:"resize", lock:"resizeTop", mapArgs:(e) => ({ dtop:-e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeTopRight: { method:"resize", lock:"resizeTopRight", mapArgs:(e) => ({ dtop:-e.dy, dright:e.dx }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeRight: { method:"resize", lock:"resizeRight", mapArgs:(e) => ({ dright:e.dx }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeRightBottom: { method:"resize", lock:"resizeRightBottom", mapArgs:(e) => ({ dright:e.dx, dbottom:e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeBottom: { method:"resize", lock:"resizeBottom", mapArgs:(e) => ({ dbottom:e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeBottomLeft: { method:"resize", lock:"resizeBottomLeft", mapArgs:(e) => ({ dbottom:e.dy, dleft:-e.dx }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeLeft: { method:"resize", lock:"resizeLeft", mapArgs:(e) => ({ dleft:-e.dx }) },
+               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
+               resizeLeftTop: { method:"resize", lock:"resizeLeftTop", mapArgs:(e) => ({ dleft:-e.dx, dtop:-e.dy }) },
+               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
+               close: { method:"close", lock:"click", mapArgs:(e) => (undefined) },
+               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
+               minimize: { method:"minimize", lock:"click", mapArgs:(e) => (undefined) },
+               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
+               toggleMaximize: { method:"toggleMaximize", lock:"click", mapArgs:(e) => (undefined) },
+            },
+            properties: [
+               { init:"vm", view:"hidden", vm:"windowState", mapToVM:(isHidden)=>isHidden?"hidden":"visible" },
+               { update:"both", init:"vm", view:"pos", vm:"pos", mapToVM:null, mapToView:null },
+               { update:"view", view:"windowState", vm:"windowState", mapToView:null },
+            ],
+            // restrictions are transfered from view to view-model during init once to adapt vm to view imposed restrictions
+            restrictions: [
+               { view:"moveable", vm:"moveable", mapToVM:null },
+               { view:"resizeable", vm:"resizeable", mapToVM:null }
+            ],
+         }
+         vv.init({content, controls:true, reframe:true, resizeable:true, moveable:true, connection, viewModel:vm})
+
+         setTimeout( () => {
+            vv.viewElem.startTransition(true, () => vv.pos = {top:0,left:0})
+         }, 10)
+         setTimeout( () => {
+            vv.viewElem.startTransition(false, () => {
+               vv.pos = {top:200,left:0}
+            })
+         }, 1000)
+         xvm = vm, xvv = vv
+         return { vm, vv }
+      }
+
+      function xx() {
+         const type = "keydown"
+         document.addEventListener(type,(e) => {
+            console.log("document click",e)
+         })
+         window.addEventListener(type,(e) => {
+            console.log("window click",e)
+         })
+         win3VM.htmlElem.addEventListener(type,(e) => {
+            console.log("win3 click",e)
+            queueMicrotask(()=>console.log("win3 microtask"))
+         })
+         document.body.addEventListener(type,(e) => {
+            console.log("body click",e)
+         })
+      }
+
+      setTimeout(xxx,1000)
+</script>
 </body>
 </html>

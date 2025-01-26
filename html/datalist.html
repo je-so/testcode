@@ -37,10 +37,12 @@
 
    <h5>Autocomplete HTML component</h5>
    <h6><small><tt>less than 120 LOC of JavaScript</tt></small></h6>
+
    <div class="autocomplete-container">
       <input type="text" placeholder="Search..." class="form-control">
       <ul class="list-group"></ul>
    </div>
+
    <p>Focus the text input to open the list of all autocompletion entries.</p>
    <ul>
       <li>Pressing <kbd>Enter</kbd> autocompletes the entered text with content of active element.</li>
@@ -140,13 +142,15 @@ class AutocompleteTextInput {
       htmlInput.addEventListener("blur", this.onBlur.bind(this))
       htmlInput.addEventListener("keydown", this.onKeydown.bind(this))
       htmlList.addEventListener("scroll", this.onScroll.bind(this))
-      htmlList.addEventListener("click", this.onClickList.bind(this))
+      htmlList.addEventListener("mousedown", this.onTouchList.bind(this))
+      htmlList.addEventListener("touchstart", this.onTouchList.bind(this))
       this.htmlInput = htmlInput
       this.htmlList = htmlList
       this.suggestions = suggestions
       this.idmap = idmap
       this.activeClass = activeClass
       this.liClass = liClass
+      this.selected = undefined
    }
    // VIEW
    showList(show) { this.htmlList.style.display = show ? "block" : "none" }
@@ -181,9 +185,10 @@ class AutocompleteTextInput {
       return target
    }
    autoComplete(li) {
-      if (!li) return
-      this.htmlInput.value = this.suggestions[this.idmap[li.dataset["id"]] ?? li.dataset["id"]]
-      this.setActive(li)
+      if (li) {
+         this.htmlInput.value = this.suggestions[this.idmap[li.dataset["id"]] ?? li.dataset["id"]]
+         this.setActive(li)
+      }
       this.showList(false)
    }
    ensureActiveVisible() {
@@ -194,13 +199,14 @@ class AutocompleteTextInput {
                   lr.bottom - 10 < ar.top ? document.elementFromPoint(lr.left+lr.width/2,lr.bottom-10) :
                   this.getActive())
       if (visible) this.setActive(visible.getBoundingClientRect().top < lr.top-10 ? visible.nextElementSibling : visible.getBoundingClientRect().bottom > lr.bottom+10 ? visible.previousElementSibling : visible)
+      this.selected = undefined
    }
    // CONTROLLER
    onClickInput() { this.makeListVisible() }
-   onClickList(e) { this.autoComplete(this.listEntry(e.target)) }
+   onTouchList(e) { this.selected = this.listEntry(e.target) }
    onInput() { this.updateList(this.htmlInput.value) }
    onFocus() { this.updateList(this.htmlInput.value) }
-   onBlur() { setTimeout(() => this.showList(false), 150) }
+   onBlur() { this.autoComplete(this.selected) }
    onScroll() { this.ensureActiveVisible() }
    onKeydown(e) {
       switch(this.htmlList.childElementCount && e.key) {

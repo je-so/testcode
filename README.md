@@ -16,6 +16,20 @@ is to build the deterministic version for the left and right hand side of `&!` a
 
 JavaScript
 ----------
+[Autocomplete in ~120 SLOC](https://github.com/je-so/testcode/blob/master/html/datalist.html) as replacement for a datalist.
+```html
+<div class="autocomplete-container">
+   <input type="text" placeholder="Search..." class="...">
+   <ul class="..."></ul>
+</div>
+<script>
+   new AutocompleteTextInput(
+      document.querySelector(".autocomplete-container"),
+      [ 'Word1', 'Word2', ... ]
+   )
+</script>
+```
+
 [Mini-Options-Parser in ~57 SLOC.](https://github.com/je-so/testcode/blob/master/html/vmx.js#L1478) It supports string, number, boolean, null, object and array values.
 ```javascript
 const labels = OptionsParser.parse("className: 'd-none', complex: { labels:[1,2,3,], pos:{x:0,y:0}}").complex.labels

@@ -149,20 +149,18 @@ class DatalistInput {
       htmlInput.addEventListener("blur", this.onBlur.bind(this))
       htmlInput.addEventListener("keydown", this.onKeydown.bind(this))
       htmlList.addEventListener("scroll", this.onScroll.bind(this))
-      htmlList.addEventListener("mousedown", this.onTouchList.bind(this))
-      htmlList.addEventListener("touchstart", this.onTouchList.bind(this))
+      htmlList.addEventListener("mousedown", this.onClickList.bind(this))
       this.htmlInput = htmlInput
       this.htmlList = htmlList
       this.suggestions = suggestions
       this.idmap = idmap
       this.activeClass = activeClass
       this.liClass = liClass
-      this.selected = undefined
    }
    // VIEW
    showList(show) { this.htmlList.style.display = show ? "block" : "none" }
    getActive() { return this.htmlList.querySelector("li."+this.activeClass) ?? this.htmlList.firstElementChild }
-   setActive(active) { this.getActive()?.classList.remove(this.activeClass); active.classList.add(this.activeClass) }
+   setActive(active) { this.getActive().classList.remove(this.activeClass); active.classList.add(this.activeClass) }
    setActiveScroll(active) { this.setActive(active); active.scrollIntoView({block:"nearest"}) }
    makeListVisible() { this.showList(Boolean(this.htmlList.firstElementChild)) }
    // MODEL
@@ -206,18 +204,17 @@ class DatalistInput {
                   lr.bottom - 10 < ar.top ? document.elementFromPoint(lr.left+lr.width/2,lr.bottom-10) :
                   this.getActive())
       if (visible) this.setActive(visible.getBoundingClientRect().top < lr.top-10 ? visible.nextElementSibling : visible.getBoundingClientRect().bottom > lr.bottom+10 ? visible.previousElementSibling : visible)
-      this.selected = undefined
    }
    // CONTROLLER
    onClickInput() { this.makeListVisible() }
-   onTouchList(e) { this.selected = this.listEntry(e.target) }
+   onClickList(e) { this.autoComplete(this.listEntry(e.target)) }
    onInput() { this.updateList(this.htmlInput.value) }
    onFocus() { this.updateList(this.htmlInput.value) }
-   onBlur() { this.autoComplete(this.selected) }
+   onBlur() { this.showList(false) }
    onScroll() { this.ensureActiveVisible() }
    onKeydown(e) {
       switch(this.htmlList.childElementCount && e.key) {
-      case "Escape": this.htmlInput.blur(); return this.showList(false)
+      case "Escape": return this.htmlInput.blur()
       case "Home": return this.setActiveScroll(this.htmlList.firstElementChild)
       case "End": return this.setActiveScroll(this.htmlList.lastElementChild)
       case "Enter": return this.autoComplete(this.getActive())

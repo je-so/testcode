@@ -6,14 +6,14 @@
    <script src="bootstrap/bootstrap.bundle.js"></script>
    <style>
 
-.autocomplete-container {
+.datalist-container {
     position: relative;
     width: 100%;
     max-width: 300px;
     margin: 20px auto;
 }
 
-.autocomplete-container ul {
+.datalist-container ul {
     display: none;
     position: absolute;
     cursor: pointer;
@@ -26,7 +26,7 @@
     z-index: 1000;
 }
 
-.autocomplete-container ul li {
+.datalist-container ul li {
     border: none;
 }
 
@@ -35,10 +35,10 @@
 <body>
    <div class="container my-4">
 
-   <h5>Autocomplete HTML component</h5>
+   <h5>Datalist Replacement for Autocompletion</h5>
    <h6><small><tt>less than 120 LOC of JavaScript</tt></small></h6>
 
-   <div class="autocomplete-container">
+   <div class="datalist-container">
       <input type="text" placeholder="Search..." class="form-control">
       <ul class="list-group"></ul>
    </div>
@@ -63,17 +63,17 @@
    <p>Before adding the following HTML to your page replace classes <code>form-control</code> and <code>list-group</code>
       with those of your framework:</p>
    <code><pre>
-   &lt;div class="autocomplete-container">
+   &lt;div class="datalist-container">
       &lt;input type="text" placeholder="Search..." class="form-control">
       &lt;ul class="list-group">&lt;/ul>
    &lt;/div>
    </pre></code>
 
    <pre class="my-2">Javascript</pre>
-   <p>Initialize component with <code>new AutocompleteTextInput(container, data, options)</code></p>
+   <p>Initialize component with <code>new DatalistInput(container, data, options)</code></p>
    <code><pre>
-   new AutocompleteTextInput(
-      document.querySelector(".autocomplete-container"),
+   new DatalistInput(
+      document.querySelector(".datalist-container"),
       [ 'Apple', 'Banana', 'Cherry', 'Mapped-Cherr_y' ],
       {
          activeClass: "active",
@@ -85,17 +85,17 @@
    <pre class="my-2">CSS</pre>
    <p>The container needs to be positioned to work as anchor point for the positioned list.</p>
    <code><pre>
-   .autocomplete-container { position: relative; }
+   .datalist-container { position: relative; }
    </pre></code>
    <p>
-      The autocompletion list needs a little more styling and is positioned absolute.<br>
+      The data list for autocompletion needs a little more styling and is positioned absolute.<br>
       It should not be displayed (<code>display:none</code>) initially.<br>
       Use <code>max-height</code> and <code>overflow-y:auto</code> to set the maximum height of visible entries and to enable scrolling.<br>
       With <code>left:0;right:0</code> the list takes the whole width of the container.<br>
       Use <code>top:100%</code> to position the list below the text input field.
    </p>
    <code><pre>
-   .autocomplete-container ul {
+   .datalist-container ul {
       display: none;
       position: absolute;
       cursor: pointer;
@@ -108,10 +108,17 @@
       z-index: 1000;
    }
    </pre></code>
+   <p>For this demonstration I have disabled the borders between the list entries which is Bootstrap's default.</p>
+   <code><pre>
+   .datalist-container ul li {
+      border: none;
+   }
+   </pre></code>
    </div>
-<script>
 
-class AutocompleteTextInput {
+   <script>
+
+class DatalistInput {
    constructor(container, data, { datamap={}, activeClass="active", liClass="" }={}) {
       const suggestions = [], idmap = [], index = new Map()
       const htmlInput = container.querySelector("input[type='text']")
@@ -228,14 +235,14 @@ class AutocompleteTextInput {
 
 document.addEventListener('DOMContentLoaded', function() {
    const data = ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry', 'Fig', 'Grape', 'Honeydew', 'Kiwi', 'Lemon', 'Apple2', 'Banana2', 'Cherry2', 'Date2', 'Elderberry2', 'Fig2', 'Grape2', 'Honeydew2', 'Kiwi2', 'Lemon2', 'Apple3', 'Banana3', 'Cherry3', 'Date3', 'Elderberry3', 'Fig3', 'Grape3', 'Honeydew3', 'Kiwi3', 'Lemon3', 'Mapped-Appl_e', 'Mapped-Banan_a', 'Mapped-Cherr_y', 'Mapped-Dat_e', 'Mapped-Elderberr_y', 'Mapped-Fi_g', 'Mapped-Grap_e', 'Mapped-Honeyde_w', 'Mapped-Kiw_i', 'Mapped-Lemo_n' ]
-   const autoComplete = new AutocompleteTextInput(document.querySelector(".autocomplete-container"), data,
+   const datalist = new DatalistInput(document.querySelector(".datalist-container"), data,
    { liClass: "list-group-item list-group-item-action", datamap: {  'Mapped-Appl_e':'Apple', 'Mapped-Banan_a':'Banana', 'Mapped-Cherr_y':'Cherry',
       'Mapped-Dat_e':'Date', 'Mapped-Elderberr_y':'Elderberry', 'Mapped-Fi_g':'Fig',
       'Mapped-Grap_e':'Grape', 'Mapped-Honeyde_w':'Honeydew', 'Mapped-Kiw_i':'Kiwi',
       'Mapped-Lemo_n':'Lemon' } })
 })
 
-</script>
+   </script>
 
 </body>
 </html>

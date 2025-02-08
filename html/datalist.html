@@ -36,7 +36,7 @@
    <div class="container my-4">
 
    <h5>Datalist Replacement for Autocompletion</h5>
-   <h6><small><tt>less than 110 LOC of JavaScript</tt></small></h6>
+   <h6><small><tt>less than 80 LOC of JavaScript</tt></small></h6>
 
    <div class="datalist-container">
       <input type="text" placeholder="Search..." class="form-control">
@@ -53,8 +53,8 @@
       <li>The order of elements is determined once at construction.</li>
    </ul>
 
-   <h6>Usage with Bootstrap</h6>
-   <p>You can style the component with other CSS frameworks.</p>
+   <h6>Usage</h6>
+   <p>You can style the component with any CSS frameworks but in this example it is styled with Bootstrap.</p>
    <ul>
       <li>The active element is marked with class options.activeClass.</li>
       <li>A list entry is styled with options.liClass.</li>
@@ -66,11 +66,10 @@
    &lt;div class="datalist-container">
       &lt;input type="text" placeholder="Search..." class="form-control">
       &lt;ul class="list-group">&lt;/ul>
-   &lt;/div>
-   </pre></code>
+   &lt;/div></pre></code>
 
    <pre class="my-2">Javascript</pre>
-   <p>Initialize component with <code>new DatalistInput(container, data, options)</code></p>
+   <p>Initialize component with <code>new DatalistInput(container, suggestions, options)</code></p>
    <code><pre>
    new DatalistInput(
       document.querySelector(".datalist-container"),
@@ -78,15 +77,27 @@
       {
          activeClass: "active",
          liClass: "list-group-item list-group-item-action",
-         datamap: {'Mapped-Cherr_y':'Cherry'}
-      })
-   </pre></code>
+         aliases: {'Mapped-Cherr_y':'Cherry'}
+      })</pre></code>
+   <p>To adapt the filter algorithm of all suggestions shown in the list overwrite
+      method match which is currently implemented as:</p>
+   <code><pre>
+   match(value) {
+      const searchTerm = value.toLowerCase()
+      return this.suggestions.flatMap((text,id) => text.toLowerCase().includes(searchTerm)
+         || this.suggestions[this.idmap[id]]?.toLowerCase().includes(searchTerm)
+         ? [{id, text}] : []
+      )
+   }</pre></code>
+   <ul>
+      <li>Property suggestions contains the array of all list entries given as argument in constructor.</li>
+      <li>Property idmap maps the index of an alias to the expected value.</li>
+   </ul>
 
    <pre class="my-2">CSS</pre>
    <p>The container needs to be positioned to work as anchor point for the positioned list.</p>
    <code><pre>
-   .datalist-container { position: relative; }
-   </pre></code>
+   .datalist-container { position: relative; }</pre></code>
    <p>
       The data list for autocompletion needs a little more styling and is positioned absolute.<br>
       It should not be displayed (<code>display:none</code>) initially.<br>
@@ -106,127 +117,98 @@
       max-height: 200px;
       overflow-y: auto;
       z-index: 1000;
-   }
-   </pre></code>
+   }</pre></code>
    <p>For this demonstration I have disabled the borders between the list entries which is Bootstrap's default.</p>
    <code><pre>
    .datalist-container ul li {
       border: none;
-   }
-   </pre></code>
+   }</pre></code>
    </div>
 
    <script>
-
 class DatalistInput {
-   constructor(container, data, { datamap={}, activeClass="active", liClass="" }={}) {
-      const suggestions = [], idmap = [], index = new Map()
-      const htmlInput = container.querySelector("input[type='text']")
-      const htmlList = container.querySelector("ul")
-      if (!htmlInput) throw Error(`Missing tag <input type="text">.`)
-      if (!htmlList) throw Error(`Missing tag <ul>.`)
-      if (!Array.isArray(data)) throw Error(`Expect data of type string[].`)
-      if (typeof datamap !== "object") throw Error(`Expect datamap of type object.`)
-      for (let di=0; di<data.length; ++di) {
-         const suggestion=data[di]
-         if (typeof suggestion !== "string") throw Error(`Expect data[${di}] of type string.`)
-         if (!index.has(suggestion)) {
-            index.set(suggestion, suggestions.length)
-            suggestions.push(suggestion)
-         }
-      }
-      for (const [ searchTerm, mapTo ] of Object.entries(datamap)) {
-         if (typeof mapTo !== "string") throw Error(`Expect datamap['${searchTerm}'] of type string.`)
-         const idfrom = index.get(searchTerm)
-         const idto = index.get(mapTo)
-         if (idfrom === undefined) throw Error(`Expect data to contain '${searchTerm}'.`)
-         if (idto === undefined) throw Error(`Expect data to contain '${mapTo}'.`)
-         idmap[idfrom] = idto
-      }
-      this.htmlInput = htmlInput
-      this.htmlList = htmlList
-      this.suggestions = suggestions
-      this.idmap = idmap
-      this.activeClass = activeClass
-      this.liClass = liClass
-      this.initController()
+   throwError(msg) { throw Error(msg) }
+   constructor(container, suggestions, { aliases={}, activeClass="active", liClass="" }={}) {
+      const idmap=[], index=new Map(), htmlInput=container.querySelector("input[type='text']") ?? this.throwError(`Missing tag <input type="text">.`)
+      if (!Array.isArray(suggestions)) this.throwError(`Expect suggestions of type array.`)
+      if (typeof aliases !== "object") this.throwError(`Expect aliases of type object.`)
+      Object.assign(this, { htmlInput, mousedown:null, activeClass, liClass,
+         htmlList: container.querySelector("ul") ?? this.throwError(`Missing tag <ul>.`),
+         value:htmlInput.value, activeID:0, idmap, suggestions: suggestions.map((txt,id) => index.set(String(txt),id) && String(txt)),
+      })
+      for (const [ alias, mapTo ] of Object.entries(aliases))
+         idmap[index.get(alias) ?? this.throwError(`Expect suggestions to contain '${alias}'.`)] = index.get(String(mapTo)) ?? this.throwError(`Expect suggestions to contain '${String(mapTo)}'.`)
+      void this.initController() ?? this.buildList(this.value)
    }
    // VIEW
    isListShown() { return this.htmlList.style.display === "block" }
-   showList(show) { this.htmlList.style.display = show ? "block" : "none" }
-   getActive() { return this.htmlList.querySelector("li."+this.activeClass) ?? this.htmlList.firstElementChild }
-   setActive(active) { this.getActive().classList.remove(this.activeClass); active.classList.add(this.activeClass) }
-   setActiveScroll(active) { this.setActive(active); active.scrollIntoView({block:"nearest"}) }
-   makeListVisible() { this.showList(Boolean(this.htmlList.firstElementChild)) }
-   listEntry(target) { return target?.parentElement === this.htmlList ? target : target ? listEntry(target.parentElement) : undefined }
+   isShowListPossible() { return this.htmlList.firstElementChild && this.htmlInput.matches(":focus") }
+   showList(show) { return (this.htmlList.style.display = (show &&= this.isShowListPossible()) ? "block" : "none", show && this.setActive(this.getActive()), show) }
+   getActive() { return this.htmlList.querySelector("li[data-id='"+this.activeID+"']") ?? this.htmlList.firstElementChild }
+   setActiveClass(id) { this.htmlList.querySelector("li."+this.activeClass)?.classList.remove(this.activeClass); this.htmlList.querySelector("li[data-id='"+id+"']").classList.add(this.activeClass) }
+   setActive(active) { this.setActiveID(active.dataset["id"]); active.scrollIntoView({block:"nearest"}) }
+   listEntry(target) { return !target || target===this.htmlList ? null : target.parentElement === this.htmlList ? target : this.listEntry(target.parentElement) }
    ensureActiveVisible() {
-      const lr = this.htmlList.getBoundingClientRect()
-      const ar = this.getActive().getBoundingClientRect()
-      const visible = this.listEntry(
-                  lr.top + 10 > ar.bottom ? document.elementFromPoint(lr.left+lr.width/2,lr.top+10) :
-                  lr.bottom - 10 < ar.top ? document.elementFromPoint(lr.left+lr.width/2,lr.bottom-10) :
-                  this.getActive())
-      if (visible) this.setActive(visible.getBoundingClientRect().top < lr.top-10 ? visible.nextElementSibling : visible.getBoundingClientRect().bottom > lr.bottom+10 ? visible.previousElementSibling : visible)
-   }
-   // MODEL
-   updateList(searchTerm) {
-      const activeID = Number(this.getActive()?.dataset?.["id"] ?? 0)
-      searchTerm = searchTerm.toLowerCase()
-      this.htmlList.innerHTML = ''
-      let active = null
-      this.suggestions.forEach( (suggestion, id) => {
-         if (suggestion.toLowerCase().includes(searchTerm) || this.suggestions[this.idmap[id]??-1]?.toLowerCase().includes(searchTerm)) {
-            const li = document.createElement('li')
-            li.textContent = suggestion
-            li.dataset["id"] = id
-            li.className = this.liClass
-            this.htmlList.appendChild(li)
-            activeID === id && (active = li)
-         }
-      })
-      if (this.htmlList.firstElementChild)
-         this.setActiveScroll(active ?? this.htmlList.firstElementChild)
-      this.makeListVisible()
-   }
-   autoComplete(li) {
-      if (li) {
-         this.htmlInput.value = this.suggestions[this.idmap[li.dataset["id"]] ?? li.dataset["id"]]
-         this.setActive(li)
+      const lr=this.htmlList.getBoundingClientRect(), ls=getComputedStyle(this.htmlList), top=lr.top+parseFloat(ls.borderTop), bottom=lr.bottom-parseFloat(ls.borderBottom)
+      for(let ar, active=this.getActive(); ar=active.getBoundingClientRect(); active = ar.bottom <= top ? active.nextElementSibling : active.previousElementSibling) {
+         if ((ar.bottom <= top && active.nextElementSibling) || (ar.top >= bottom && active.previousElementSibling)) continue
+         this.setActiveID(( ar.top+3 < top && ar.bottom-top < bottom-Number(active.nextElementSibling?.getBoundingClientRect().top)
+            ? active.nextElementSibling : ar.bottom-3 > bottom && bottom-ar.top < Number(active.previousElementSibling?.getBoundingClientRect().bottom)-top
+            ? active.previousElementSibling : active).dataset["id"])
+         break
       }
-      this.showList(false)
    }
+   buildList(value) {
+      const newLI = (id) => {const li=document.createElement('li'); return (li.dataset["id"]=id, li) }
+      this.htmlList.replaceChildren(...this.match(value).map( ({id, text}) => Object.assign(newLI(id),{textContent:text, className:this.liClass+(id===this.activeID?" "+this.activeClass:"")}) ))
+      if (this.htmlInput.value !== value) this.htmlInput.value=value
+      this.showList(true)
+   }
+   autoComplete(li) { li && void this.complete(li.dataset["id"]) || this.showList(false) }
+   // MODEL
+   setActiveID(id) { return this.activeID!==Number(id) && (this.setActiveClass(this.activeID=Number(id)), true) }
+   setValue(value) { return this.value!==value && (this.buildList(this.value=value), true) }
+   match(value) {
+      const searchTerm = value.toLowerCase()
+      return this.suggestions.flatMap((text,id) => text.toLowerCase().includes(searchTerm) || this.suggestions[this.idmap[id]]?.toLowerCase().includes(searchTerm) ? [{id,text}] : [])
+   }
+   complete(id) { return (this.setActiveID(id), this.setValue(this.suggestions[this.idmap[id] ?? id])) }
    // CONTROLLER
+   addEventsListener(elem, events, listener) { events.forEach(e=>elem.addEventListener(e, listener)) }
    initController() {
-      this.htmlInput.addEventListener("click", ()=>this.makeListVisible())
-      this.htmlInput.addEventListener("input", ()=>this.updateList(this.htmlInput.value))
-      this.htmlInput.addEventListener("focus", ()=>this.updateList(this.htmlInput.value))
-      this.htmlInput.addEventListener("blur", ()=>this.showList(false))
+      this.htmlInput.addEventListener("input", ()=>this.setValue(this.htmlInput.value))
+      this.addEventsListener(this.htmlInput, ["click","focus"], ()=>this.showList(true))
+      this.htmlInput.addEventListener("blur", ()=>!this.mousedown && this.showList(false))
       this.htmlInput.addEventListener("keydown", (e)=>this.onKeydown(e))
       this.htmlList.addEventListener("scroll", ()=>this.ensureActiveVisible())
-      this.htmlList.addEventListener("mousedown", (e)=>this.autoComplete(this.listEntry(e.target)))
+      this.addEventsListener(this.htmlList, ["mousedown","touchstart"], (e)=>this.mousedown=this.listEntry(e.target)??e.target)
+      this.addEventsListener(this.htmlList, ["mouseup","touchcancel","touchend"], (e)=>(!this.htmlInput.matches(":focus") && this.autoComplete(this.listEntry(e.target) === this.mousedown ? this.mousedown : null), this.mousedown=null))
    }
    onKeydown(e) {
-      switch(this.htmlList.childElementCount && e.key) {
+      switch(e.key) {
       case "Escape": return this.htmlInput.blur()
-      case "Home": return this.isListShown() && this.setActiveScroll(this.htmlList.firstElementChild)
-      case "End": return this.isListShown() && this.setActiveScroll(this.htmlList.lastElementChild)
-      case "Enter": return this.autoComplete(this.getActive())
+      case "Home": return this.isListShown() && this.setActive(this.htmlList.firstElementChild)
+      case "End": return this.isListShown() && this.setActive(this.htmlList.lastElementChild)
+      case "Enter": return this.isListShown() && this.autoComplete(this.getActive())
       case "PageDown": case "ArrowDown": case "ArrowRight": case "PageUp": case "ArrowUp": case "ArrowLeft":
          let height = this.htmlList.getBoundingClientRect().height, active = this.getActive(), isUp = e.key.endsWith("Up") || e.key.endsWith("Left")
-         this.makeListVisible()
-         for (var repeat=e.key.startsWith("Page") ? 50 : 1; height>0 && repeat>0; --repeat) {
-            const next = isUp ? active.previousElementSibling : active.nextElementSibling
-            if ((height -= next?.getBoundingClientRect().height??height+1) >= 0) active = next
+         if (this.showList(true)) {
+            for (var repeat=e.key.startsWith("Page") ? 50 : 1; height>0 && repeat>0; --repeat) {
+               const next = isUp ? active.previousElementSibling : active.nextElementSibling
+               if ((height -= next?.getBoundingClientRect().height??height+1) >= 0) active = next
+            }
+            return this.setActive(active)
          }
-         return this.setActiveScroll(active)
       }
    }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+var datalist
+
+document.addEventListener('DOMContentLoaded', () => {
    const data = ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry', 'Fig', 'Grape', 'Honeydew', 'Kiwi', 'Lemon', 'Apple2', 'Banana2', 'Cherry2', 'Date2', 'Elderberry2', 'Fig2', 'Grape2', 'Honeydew2', 'Kiwi2', 'Lemon2', 'Apple3', 'Banana3', 'Cherry3', 'Date3', 'Elderberry3', 'Fig3', 'Grape3', 'Honeydew3', 'Kiwi3', 'Lemon3', 'Mapped-Appl_e', 'Mapped-Banan_a', 'Mapped-Cherr_y', 'Mapped-Dat_e', 'Mapped-Elderberr_y', 'Mapped-Fi_g', 'Mapped-Grap_e', 'Mapped-Honeyde_w', 'Mapped-Kiw_i', 'Mapped-Lemo_n' ]
-   const datalist = new DatalistInput(document.querySelector(".datalist-container"), data,
-   { liClass: "list-group-item list-group-item-action", datamap: {  'Mapped-Appl_e':'Apple', 'Mapped-Banan_a':'Banana', 'Mapped-Cherr_y':'Cherry',
+   datalist = new DatalistInput(document.querySelector(".datalist-container"), data,
+   { liClass: "list-group-item list-group-item-action", aliases: {  'Mapped-Appl_e':'Apple', 'Mapped-Banan_a':'Banana', 'Mapped-Cherr_y':'Cherry',
       'Mapped-Dat_e':'Date', 'Mapped-Elderberr_y':'Elderberry', 'Mapped-Fi_g':'Fig',
       'Mapped-Grap_e':'Grape', 'Mapped-Honeyde_w':'Honeydew', 'Mapped-Kiw_i':'Kiwi',
       'Mapped-Lemo_n':'Lemon' } })

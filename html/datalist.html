@@ -145,7 +145,7 @@ class DatalistInput {
    isShowListPossible() { return this.htmlList.firstElementChild && this.htmlInput.matches(":focus") }
    showList(show) { return (this.htmlList.style.display = (show &&= this.isShowListPossible()) ? "block" : "none", show && this.setActive(this.getActive()), show) }
    getActive() { return this.htmlList.querySelector("li[data-id='"+this.activeID+"']") ?? this.htmlList.firstElementChild }
-   setActiveClass(id) { this.htmlList.querySelector("li."+this.activeClass)?.classList.remove(this.activeClass); this.htmlList.querySelector("li[data-id='"+id+"']").classList.add(this.activeClass) }
+   setActiveClass(id) { this.htmlList.querySelector("li."+this.activeClass)?.classList.remove(this.activeClass); this.htmlList.querySelector("li[data-id='"+id+"']")?.classList.add(this.activeClass) }
    setActive(active) { this.setActiveID(active.dataset["id"]); active.scrollIntoView({block:"nearest"}) }
    listEntry(target) { return !target || target===this.htmlList ? null : target.parentElement === this.htmlList ? target : this.listEntry(target.parentElement) }
    ensureActiveVisible() {
@@ -166,13 +166,14 @@ class DatalistInput {
    }
    autoComplete(li) { li && void this.complete(li.dataset["id"]) || this.showList(false) }
    // MODEL
-   setActiveID(id) { return this.activeID!==Number(id) && (this.setActiveClass(this.activeID=Number(id)), true) }
-   setValue(value) { return this.value!==value && (this.buildList(this.value=value), true) }
+   sanitizeID(id) { return typeof id === "number" ? id : Number(String(id)) }
+   setActiveID(id) { return (id=this.sanitizeID(id), isFinite(id) && this.activeID!==id && (this.setActiveClass(this.activeID=id), true)) }
+   setValue(value) { return this.value!==String(value) && (this.buildList(this.value=String(value)), true) }
    match(value) {
       const searchTerm = value.toLowerCase()
       return this.suggestions.flatMap((text,id) => text.toLowerCase().includes(searchTerm) || this.suggestions[this.idmap[id]]?.toLowerCase().includes(searchTerm) ? [{id,text}] : [])
    }
-   complete(id) { return (this.setActiveID(id), this.setValue(this.suggestions[this.idmap[id] ?? id])) }
+   complete(id) { return (id=this.sanitizeID(id), this.setActiveID(id), this.setValue(this.suggestions[this.idmap[id] ?? id])) }
    // CONTROLLER
    addEventsListener(elem, events, listener) { events.forEach(e=>elem.addEventListener(e, listener)) }
    initController() {

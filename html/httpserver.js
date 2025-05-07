@@ -15,6 +15,7 @@
  * The server listens on port 9090 but only for local connections from the same host.
  * Set hostname to HttpServer.INADDR_ANY for supporting access from LAN.
  */
+// import { stat } from "node:fs/promises";
 
 class HTTP {
    /////////////////
@@ -52,26 +53,60 @@ class HttpResponse {
     * @type {Headers}
     */
    #headers
+   /**
+    * @type {Map<string,HttpCookie>}
+    */
+   #cookies
    constructor() {
       this.#headers = new Headers()
+      this.#cookies = new Map()
    }
+   /**
+    * Adds cookie to response. Overwrites previously set cookie value.
+    * @param {HttpCookie} cookie
+    */
+   setCookie(cookie) { this.#cookies.set(cookie.getName(), cookie) }
    // Headers support //
+   /**
+    * @return {Headers}
+    */
    getHeaders() { return this.#headers }
+   /**
+    * @param {string} name
+    * @param {string} value
+    */
    appendHeader(name, value) { this.#headers.append(name, value) }
+   /**
+    * @param {string} name
+    */
+   deleteHeader(name) { this.#headers.delete(name) }
+   /**
+    * @param {string} name
+    * @param {string} value
+    */
    setHeader(name, value) { this.#headers.set(name, value) }
    // Send response //
-   sendNoContent() { return new Response(null, { status:HTTP.NO_CONTENT, headers:this.#headers }) }
+   /**
+    * @returns {Response}
+    */
+   sendNoContent() { return this.sendStatus(HTTP.NO_CONTENT, null) }
    /**
     * @param {null|string|ReadableStream|Blob} body
     * @returns {Response}
     */
-   sendOK(body=null) { return new Response(body, { status:HTTP.OK, headers:this.#headers  }) }
+   sendOK(body=null) { return this.sendStatus(HTTP.OK, body) }
    /**
     * @param {number} status
     * @param {null|string|ReadableStream|Blob} body
     * @returns {Response}
     */
-   sendError(status, body=null) { return new Response(body, { status, headers:this.#headers  }) }
+   sendStatus(status, body=null) {
+      for (const cookie of this.#cookies.values()) {
+         cookie.append(this)
+      }
+      this.#cookies.clear()
+      return new Response(body, { status, headers:this.#headers })
+   }
    /**
     * @param {Request} req
     * @param {number} status
@@ -84,7 +119,7 @@ class HttpResponse {
       response.setHeader("Access-Control-Allow-Origin", req.headers.get("origin") ?? "")
       response.setHeader("Access-Control-Allow-Headers", req.headers.get("access-control-request-headers") ?? "")
       response.setHeader("Access-Control-Allow-Credentials", "true")
-      return response.sendError(status, body)
+      return response.sendStatus(status, body)
    }
    /**
     * @param {Request} req
@@ -114,6 +149,26 @@ class HttpCookie {
    secure=false
    /** @type {null|string} */
    domain=null
+
+   /**
+    * @param {Request} request
+    * @param {string} name
+    * @returns {null|string} Value of cookie.
+    */
+   static fromRequest(request, name) {
+      const reqCookie = request.headers.get("cookie")
+      if (reqCookie) {
+         const nameEq = name+"="
+         const start = reqCookie.startsWith(nameEq) ? 0 : reqCookie.indexOf("; "+nameEq)+2
+         if (start !== 1) {
+            const vstart = start + nameEq.length
+            const end = reqCookie.indexOf(';', vstart)
+            return reqCookie.substring(vstart,end > 0 ? end : undefined)
+         }
+      }
+      return null
+   }
+
    /**
     * @param {string} name
     * @param {string} value
@@ -122,6 +177,10 @@ class HttpCookie {
       this.name=name
       this.value=value.replaceAll(";","")
    }
+   /**
+    * @returns {string} Name of cookie.
+    */
+   getName() { return this.name }
    /**
     * @returns {number} Maximum age in seconds (default value is -1). If negative, the cookie is deleted after browser exits.
     */
@@ -177,55 +236,73 @@ class HttpCookie {
 
 class HttpSessions {
    /**
-    * @type {Map<string,HttpSession>}
-    */
-   static sessions=new Map()
-   /**
     * @type {HttpSession[]}
     */
-   static testSessionForExpiration=[]
+   testSessionForExpiration=[]
    /**
     * @returns {string}
     */
    static generateSessionID() { return crypto.randomUUID().replaceAll("-","").toUpperCase() }
    /**
-    * @param {HttpService} service
-    * @returns {null|HttpSession}
+    * @param {string} id
+    * @returns {HttpCookie}
     */
-   static getSession(service) {
-      this.testExpiration()
-      const sessionid = service.getCookie("JS_SESSIONID")
-      const session = sessionid ? this.sessions.get(sessionid) : null
-      if (session && session.isExpired()) {
-         session.invalidate(service)
-         return null
-      }
-      else if (session)
-         session.append(service) // renew max-age
-      else if (sessionid)
-         new HttpSession(sessionid).invalidate(service)
-      return session ?? null
-   }
+   static newSessionCookie(id) { return new HttpCookie("JS_SESSIONID",id) }
    /**
-    * @param {HttpService} service
-    * @returns {HttpSession}
+    * @param {Request} request
+    * @returns {null|string}
     */
-   static newSession(service) {
-      const session = new HttpSession(null)
-      session.append(service)
-      return session
+   sessionIDFromRequest(request) {
+      this.testExpiration()
+      const sessionid = HttpCookie.fromRequest(request,"JS_SESSIONID")
+      return sessionid
    }
    /**
     * @returns {undefined}
     */
-   static testExpiration() {
-      if (HttpSessions.testSessionForExpiration.length) {
-         const session = HttpSessions.testSessionForExpiration.pop()
-         if (session && session.isExpired()) session.invalidate(null)
+   testExpiration() {
+      if (this.testSessionForExpiration.length) {
+         const session = this.testSessionForExpiration.pop()
+         if (session && session.isExpired()) session.invalidate()
       }
       else
-         HttpSessions.testSessionForExpiration = [...HttpSessions.sessions.values()]
+         this.testSessionForExpiration = [...(this.getSessions()?.values() ?? [])]
    }
+   ////////////////////////////
+   // Overwritten in Subtype //
+   ////////////////////////////
+   /**
+    * @returns {Map<string,HttpSession>}
+    */
+   getSessions() { throw Error(`getSessions not implemented.`) }
+}
+
+class HttpServiceSessions extends HttpSessions {
+   /**
+    * @type {Map<string,HttpServiceSession>}
+    */
+   sessions=new Map()
+   /**
+    * @returns {Map<string,HttpServiceSession>}
+    */
+   getSessions() { return this.sessions }
+   /**
+    * @param {Request} request
+    * @returns {null|HttpServiceSession}
+    */
+   fromRequest(request) {
+      const sessionid = this.sessionIDFromRequest(request)
+      const session = sessionid ? this.sessions.get(sessionid) : null
+      return session ?? null
+   }
+   /**
+    * @param {HttpServiceSession} session
+    */
+   register(session) { this.sessions.set(session.ID(), session) }
+   /**
+    * @param {HttpServiceSession} session
+    */
+   unregister(session) { this.sessions.delete(session.ID()) }
 }
 
 class HttpSession {
@@ -238,7 +315,7 @@ class HttpSession {
    /** @type {{[attr:string]:any}} */
    #attributes
    /**
-    * @param {string?} sessionid
+    * @param {string} [sessionid]
     */
    constructor(sessionid) {
       this.#sessionid = sessionid ? sessionid : HttpSessions.generateSessionID()
@@ -247,55 +324,77 @@ class HttpSession {
       this.#attributes = {}
    }
    timeSeconds() { return Date.now()/1000 }
-   getID() { return this.#sessionid }
+   ID() { return this.#sessionid }
    isValid() { return this.#sessionid !== "" }
    /**
     * @returns {boolean} *true* if session has reached its maxage.
     */
    isExpired() { return this.timeSeconds() > this.#expiration }
    attributes() { return Object.assign({}, this.#attributes) }
-   getAttribute(name) { return this.#attributes[String(name)] }
-   setAttribute(name, value) { this.#attributes[String(name)] = value }
-   append(service) {
+   /**
+    * @param {string} name
+    * @returns {any} Either value else undefined.
+    */
+   attribute(name) { return this.#attributes[name] }
+   /**
+    * @param {string} name
+    * @param {any} value
+    */
+   setAttribute(name, value) { this.#attributes[name] = value }
+   /**
+    * @returns {void}
+    */
+   invalidate() {
       if (!this.#sessionid) return
-      const sessionCookie = new HttpCookie("JS_SESSIONID", this.#sessionid)
-      sessionCookie.setMaxAge(this.#maxage)
-      sessionCookie.append(service.getResponse())
-      HttpSessions.sessions.set(this.#sessionid, this)
+      this.#sessionid = ""
    }
    /**
-    * @param {null|HttpService} service
+    * @param {HttpResponse} response
     */
-   invalidate(service) {
+   attachTo(response) {
       if (!this.#sessionid) return
-      const sessionCookie = new HttpCookie("JS_SESSIONID", this.#sessionid)
+      const sessionCookie = HttpSessions.newSessionCookie(this.#sessionid)
+      sessionCookie.setMaxAge(this.#maxage)
+      response.setCookie(sessionCookie)
+   }
+   /**
+    * @param {HttpResponse} response
+    */
+   static removeFrom(response) {
+      const sessionCookie = HttpSessions.newSessionCookie("")
       sessionCookie.setMaxAge(0)
-      service && sessionCookie.append(service.getResponse())
-      HttpSessions.sessions.delete(this.#sessionid)
-      this.#sessionid = ""
+      response.setCookie(sessionCookie)
    }
 }
 
-class HttpSessionWrapper {
+class HttpServiceSession extends HttpSession {
+   static sessions = new HttpServiceSessions()
+   /**
+    * @param {Request} request
+    * @returns {null|HttpServiceSession}
+    */
+   static fromRequest(request) { return this.sessions.fromRequest(request) }
+
    /** @type {HttpService} */
    service
-   /** @type {HttpSession} */
-   session
    /**
     * @param {HttpService} service
-    * @param {HttpSession} session
+    * @param {string} [sessionid]
     */
-   constructor(service, session) {
+   constructor(service, sessionid) {
+      super(sessionid)
       this.service = service
-      this.session = session
+      HttpServiceSession.sessions.register(this)
    }
-   invalidate() { const result = this.session.invalidate(this.service); this.service.invalidateSession(); return result }
-   getID() { return this.session.getID() }
-   isValid() { return this.session.isValid() }
-   isExpired() { return this.session.isExpired() }
-   attributes() { return this.session.attributes() }
-   getAttribute(name) { return this.session.getAttribute(name) }
-   setAttribute(name, value) { return this.session.setAttribute(name, value) }
+   /**
+    * @returns {void}
+    */
+   invalidate() {
+      if (!this.isValid()) return
+      HttpServiceSession.sessions.unregister(this)
+      super.invalidate()
+      this.service.invalidateSession()
+   }
 }
 
 class HttpService {
@@ -324,7 +423,7 @@ class HttpService {
     */
    #clientIP
    /**
-    * @type {null|HttpSessionWrapper}
+    * @type {null|HttpServiceSession}
     */
    #session
    /**
@@ -339,61 +438,99 @@ class HttpService {
       this.#url = url
       this.#pathname = pathname
       this.#clientIP = clientIP
-      const session = HttpSessions.getSession(this)
-      this.#session = session ? new HttpSessionWrapper(this, session) : null
+      const session = this.#session = HttpServiceSession.fromRequest(req)
+      if (!session || session.isExpired())
+         this.#invalidateSession()
    }
-   getCookie(name) {
-      const reqCookie = this.#request.headers.get("cookie")
-      if (reqCookie) {
-         const nameEq = name+"="
-         const start = reqCookie.startsWith(nameEq) ? 0 : reqCookie.indexOf("; "+nameEq)+2
-         if (start !== 1) {
-            const vstart = start + nameEq.length
-            const end = reqCookie.indexOf(';', vstart)
-            return reqCookie.substring(vstart,end > 0 ? end : undefined)
-         }
-      }
-      return null
-   }
+   /**
+    * @param {string} name
+    * @returns {null|string}
+    */
+   getCookie(name) { return HttpCookie.fromRequest(this.#request,name) }
    getPathname() { return this.#pathname }
    getDirectory() { return this.#pathname.substring(0,this.#pathname.lastIndexOf("/")+1) }
-   invalidateSession() {
-      const session = this.#session
-      if (session) {
-         this.#session = null
-         session.invalidate()
-      }
-   }
-   createSession() {
-      this.#session ??= new HttpSessionWrapper(this, HttpSessions.newSession(this))
-      return this.#session
-   }
-   getSession() { return this.#session }
    getRequest() { return this.#request }
    getResponse() { return this.#response }
    getURL() { return this.#url }
-   setContentType(value) { this.#response.setHeader("Content-Type", value) }
-   setResponseHeader(name, value) { this.#response.setHeader(name, value) }
-   appendResponseHeader(name, value) { this.#response.appendHeader(name, value) }
-   getAllowOptions(req, pathname) {
-      // method, origin, headers could null
-      return { pathname, method:req.headers.get("Access-Control-Request-Method"), origin:req.headers.get("origin"), headers:req.headers.get("access-control-request-headers") }
+   //// Session
+   getSession() { return this.#session }
+   #invalidateSession() {
+      const session = this.#session
+      this.#session = null
+      session?.invalidate()
+      HttpServiceSession.removeFrom(this.#response)
    }
+   invalidateSession() {
+      if (!this.#session) return
+      this.#invalidateSession()
+   }
+   /**
+    * Returns a newly created session. An already existing session is invalidated before a new one is created.
+    * @returns {HttpServiceSession} The newly created session.
+    */
+   newSession() {
+      this.invalidateSession()
+      return this.ensureSession()
+   }
+   /**
+    * Returns a session, either an existing or a newly created one if no one exists.
+    * @returns {HttpServiceSession} The existing or newly created session.
+    */
+   ensureSession() {
+      this.#session ??= new HttpServiceSession(this)
+      this.#session.attachTo(this.getResponse()) // renew max-age
+      return this.#session
+   }
+   //// Header
+   /** @param {string} value */
+   setContentType(value) { this.#response.setHeader("Content-Type", value) }
+   /** @param {string} name @param {null|string} value */
+   setResponseHeader(name, value) { value ? this.#response.setHeader(name, value) : this.#response.deleteHeader(name) }
+   /** @param {string} name @param {string} value */
+   appendResponseHeader(name, value) { this.#response.appendHeader(name, value) }
+   /**
+    * @typedef {{req:Request,pathname:string,acrMethod:null|string,origin:null|string,acrHeaders:null|string}} AllowOptions Type of parameter used in all allow<Name> methods.
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {AllowOptions} {@link AllowOptions}
+    */
+   getAllowOptions(req, pathname) {
+      return { req, pathname, acrMethod:req.headers.get("access-control-request-method"), origin:req.headers.get("origin"), acrHeaders:req.headers.get("access-control-request-headers") }
+   }
+   /////////
+   // I/O //
+   /////////
+   /**
+   * @typedef {any} BunFile
+   */
+   /**
+    * @param {BunFile} file
+    * @returns {Promise<number>} Number of written bytes
+    */
+   receiveFile(file) { return Bun.write(file, this.getRequest()) }
+   /**
+    * @param {BunFile} file
+    * @returns {Response}
+    */
+   sendFile(file) { return this.getResponse().sendOK(file) }
    /////////////////////////////
    // Generic Service Methods //
    /////////////////////////////
+   /**
+    * @returns {Promise<Response>}
+    */
    async serve() {
       const req = this.#request
       if (req.method !== "OPTIONS") {
          const site = req.headers.get("Sec-Fetch-Site")
-         const sameOrigin = ("none" === site || "same-origin" === site)
-         if (!sameOrigin) {
+         const crossOrigin = ("none" !== site && "same-origin" !== site)
+         if (crossOrigin) {
             const options = this.getAllowOptions(req, this.#pathname)
             const origin = this.allowOrigin(options)
             this.setResponseHeader("Access-Control-Allow-Origin", origin)
             this.allowCredentials(options) && this.setResponseHeader("Access-Control-Allow-Credentials", "true")
             if (origin !== options.origin) {
-               return this.getResponse().sendError(HTTP.FORBIDDEN, `Access forbidden.`)
+               return this.getResponse().sendStatus(HTTP.FORBIDDEN, `Access forbidden.`)
             }
          }
       }
@@ -406,13 +543,18 @@ class HttpService {
          default: return this.doUnknown(req, this.#pathname)
       }
    }
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doOptions(req, pathname) {
       const options = this.getAllowOptions(req, pathname)
-      if (options.method) {
+      if (options.acrMethod) {
          this.setResponseHeader("Access-Control-Allow-Methods", this.allowMethods(options))
          this.setResponseHeader("Access-Control-Allow-Origin", this.allowOrigin(options))
          this.setResponseHeader("Access-Control-Allow-Headers", this.allowHeaders(options))
-         this.allowCredentials(options) && this.setResponseHeader("Access-Control-Allow-Credentials", "true")
+         this.setResponseHeader("Access-Control-Allow-Credentials", this.allowCredentials(options)?"true":null)
       }
       else {
          this.setResponseHeader("Allow", this.allowMethods(options))
@@ -422,17 +564,46 @@ class HttpService {
    //////////////////////////////////////////
    // Cors Support / overwrite in sub type //
    //////////////////////////////////////////
-   allowMethods(options) { return "DELETE,GET,HEAD,OPTIONS,POST,PUT" /*"" no methods*/}
-   allowOrigin(options) { return options.origin /*"" no origin*/}
-   allowHeaders(options) { return options.headers /*"" no headers*/}
-   allowCredentials(options) { return true /*false no credentials*/}
+   /** @param {AllowOptions} options @returns {string} */
+   allowMethods(options) { return "DELETE,GET,HEAD,OPTIONS,POST,PUT" /*"":no methods*/}
+   /** @param {AllowOptions} options @returns {null|string} */
+   allowOrigin(options) { return options.origin }
+   /** @param {AllowOptions} options @returns {string} */
+   allowHeaders(options) { return options.acrHeaders ?? ""/*no headers*/}
+   /** @param {AllowOptions} options @returns {boolean} */
+   allowCredentials(options) { return true/*with credentials*/}
    /////////////////////////////////////////////
    // Service Methods / overwrite in sub type //
    /////////////////////////////////////////////
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doGet(req, pathname) { return HttpResponse.sendMethodNotAllowedError(req, pathname) }
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doHead(req, pathname) { return HttpResponse.sendMethodNotAllowedError(req, pathname) }
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doPost(req, pathname) { return HttpResponse.sendMethodNotAllowedError(req, pathname) }
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doPut(req, pathname) { return HttpResponse.sendMethodNotAllowedError(req, pathname) }
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doUnknown(req, pathname) { return HttpResponse.sendMethodNotAllowedError(req, pathname) }
 }
 
@@ -507,6 +678,11 @@ class HttpServer {
       return HttpResponse.sendError(req,HTTP.INTERNAL_SERVER_ERROR,"Service failed.")
    }
 
+   /**
+    * @param {Request} req
+    * @param {any} server
+    * @returns {Promise<Response>}
+    */
    async serve(req, server) {
       try {
          const clientIP = server.requestIP(req)
@@ -517,7 +693,7 @@ class HttpServer {
          // console.log("server", server)
          try {
             const service = this.#serviceDispatcher.getService(pathname)
-            console.log(`${clientIP.address}:${clientIP.port}  ${req.method}  ${pathname}`)
+            console.log(`${clientIP.address}:${clientIP.port}  ${req.method}  ${pathname}  origin:${req.headers.get("origin")}`)
             if (service)
                return new service(req, url, pathname, clientIP).serve().catch(e => this.sendInternalServerError(req,e))
             else
@@ -534,39 +710,53 @@ class HttpServer {
 }
 
 class StaticFileWebService extends HttpService {
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doGet(req, pathname) {
-      const file = Bun.file("."+pathname)
+      const filename = "."+pathname
+      const file = Bun.file(filename)
 
-      console.log("id=",this.createSession().getID())
+      console.log("id=",this.ensureSession().ID())
+
 
       if (await file.exists()) {
-         const headers = this.getResponse().getHeaders()
+         const headers = this.getResponse().sendOK().headers // this.getResponse().getHeaders()
+         // const info = await stat(filename).catch(()=>null)
+         // if (info) this.setResponseHeader("Last-Modified",new Date(info.mtimeMs).toUTCString())
          this.setContentType(file.type)
          console.log("response headers",headers)
-         return this.getResponse().sendOK(file)
+         return this.sendFile(file)
       }
 
-      return this.getResponse().sendError(HTTP.NOT_FOUND,"file not found: "+pathname)
+      return this.getResponse().sendStatus(HTTP.NOT_FOUND,`File not found: ${pathname}`)
    }
 }
 
 class UploadWebService extends HttpService {
 
+   /**
+    * @param {Request} req
+    * @param {string} pathname
+    * @returns {Promise<Response>}
+    */
    async doPut(req, pathname) {
       const name = pathname.substring(9).replaceAll(/[^-_.;:?a-zA-Z0-9üöäÖÄÜß]/g,"")
       const file = Bun.file(name)
 
       if (!name) {
-         return this.getResponse().sendError(HTTP.BAD_REQUEST, pathname.length <= 9 ? `Empty file name` : `Invalid file name`)
+         return this.getResponse().sendStatus(HTTP.BAD_REQUEST, pathname.length <= 9 ? `Empty file name` : `Invalid file name`)
       }
       if (await file.exists()) {
-         return this.getResponse().sendError(HTTP.CONFLICT, `File exists »${name}«`)
+         return this.getResponse().sendStatus(HTTP.CONFLICT, `File exists »${name}«`)
       }
 
       console.log("upload »"+name+"«")
-      return Bun.write(file, req)
+      return this.receiveFile(file)
       .then( (/*writtenBytes*/) => this.getResponse().sendOK(`Saved file »${name}«`))
-      .catch( (/*e*/) => this.getResponse().sendError(HTTP.CONFLICT, `Error writing file »${name}«`))
+      .catch( (/*e*/) => this.getResponse().sendStatus(HTTP.CONFLICT, `Error writing file »${name}«`))
    }
 }
 

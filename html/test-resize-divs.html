@@ -16,15 +16,16 @@
          box-sizing: border-box; position: fixed;
          display: grid; grid-template-rows: auto 1fr;
       }
+      .vmx-window.template {
+         position: relative;
+      }
       .vmx-window .head {
-         flex: 0 0 auto;
          box-sizing: border-box;
          border-bottom: 1px var(--border-color) solid;
          display: flex; flex-flow: row nowrap;
          overflow: hidden;
       }
       .vmx-window .body {
-         flex: 1 1 auto;
          background-color: lightcoral;
          box-sizing: border-box;
          overflow: hidden; contain: layout;
@@ -59,11 +60,12 @@
       .vmx-window-stack {
          border: 1px darkgrey solid; background-color: lemonchiffon;
          padding: 3px;
-         position: fixed; left: 5px; bottom: 5px;
-         display: flex; flex-flow: column-reverse nowrap; place-items: stretch; gap: 5px;
+         position: fixed;  bottom: 5px;
+         right: 5px;
       }
-      .vmx-window-stack > * {
-         position: static;
+      .vmx-window-stack .childs {
+         margin-bottom: 3px;
+         display: flex; flex-flow: column-reverse nowrap; place-items: stretch; gap: 1px;
       }
       .vmx-window-stack .vmx-window .title:hover {
          background-color: lightslategray;
@@ -88,6 +90,28 @@
       .dropzone.dropforbidden {
          box-shadow: inset 0 0 3px 2px red;
       }
+      /* uncomment to overwrite maximized position
+      .vmx-window.maximized {
+         height: 50% !important;
+      }
+      */ /* uncomment to overwrite minimized position */
+      /* TODO: 1. supprt right / bottom in maximize / minimize
+               2. positioncontrol support only setFixedPos(config,classname !!!) (insteaf of minimize + maximize)
+               3. could position control be removed ??? */
+      .vmx-window.minimized {
+         height: 0% !important; left: unset !important; right: 50px !important;
+      }
+
+      table.log tr.info > td {
+         --bs-border-width:0;
+      }
+      table.log tr.info > td {
+         padding-bottom:0 !important;
+      }
+      table.log tr.msg > td {
+         padding-top:0 !important;
+      }
+      /* */
    </style>
 </head>
 <body>
@@ -101,7 +125,7 @@
       </div>
    </template>
    <template id="vmx-minimized-template">
-      <div class="vmx-window">
+      <div class="vmx-window template">
          <div class="head">
             <div class="title" data-slot="title"></div>
             <div class="controls"><i data-slot="close" class="bi-x-lg"></i></div>
@@ -113,7 +137,7 @@
       <dt>Components</dt>
       <dd>
          <ul>
-            <li>TODO: Replace View/ViewModel with View2/ViewModel2.</li>
+            <li>TODO: Replace View with View2.</li>
             <li>ViewElem (Encapsulates HTMLElement)</li>
             <li>View-Model (Adds state/operations/logic to View)</li>
             <li>View-Controller (Event-Listeners-Handling (no logic))</li>
@@ -122,21 +146,22 @@
       </dd>
    </dl>
 
-   <div id=window class="dropzone" style="width:30%;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:auto;box-sizing:border-box;position:relative;left:30px;">
+   <div id=windowID class="dropzone" style="width:30%;height:150px;background-color:darkblue;color:white;font-size:18px;padding:18px;text-align:center;overflow:auto;box-sizing:border-box;position:relative;left:30px;">
       <div>Drop Image (for upload)</div>
       <div>call testrun()</div>
    </div>
 
-   <div id=window2 style="position:absolute;left:440px;top:160px;width:200px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
+   <div id=window2ID style="position:absolute;left:440px;top:160px;width:200px;height:150px;background-color:darkviolet;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
       (absolute)<br>undecorate with test3()
    </div>
 
-   <div id=window3 style="position:fixed;left:300px;top:230px;width:200px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
+   <div id=window3ID style="position:fixed;left:300px;top:230px;width:200px;height:150px;background-color:teal;color:white;font-size:18px;padding:18px;text-align:center;overflow:visible;box-sizing:border-box;">
       (fixed)<br>call test() or test2()
       <br><input type="text" value="non moveable" size="10">
    </div>
 
    <div class="vmx-window-stack">
+      <div class="childs" data-slot="childs"></div>
       <button>Restore closed window</button>
    </div>
 
@@ -156,7 +181,7 @@
       </select>
       <br><input id=MMMM type="date">
    </form>
-   <div>== LOG ==</div>
+   <div>== LOG == <span id="INFO"></span></div>
    <div id="LOG"></div>
    <div style="height:1000px;"></div>
 
@@ -164,6 +189,11 @@
       /////////
       // LOG //
       /////////
+      const LOG = {
+         lastNr: 0,
+         lastTimestamp: 0,
+         lines: []
+      }
       let logLines = 0
       /**
        * @type {(msg:string)=>void}
@@ -176,13 +206,10 @@
                      + ":"+logLines + ": " + msg.trim().replaceAll("\n","<br>...")
          document.getElementById("LOG").innerHTML = log
       }
-      const logException = (exc) => {
-         console.error(exc)
-         const msg = `${exc.message}\n${exc?.stack??""}`
+      const logException = (except) => {
+         console.error(except)
+         const msg = `${except.message}\n${except?.stack??""}`
          logError(msg)
-      }
-      const logCatch = (exc) => {
-         logException(Error(`Catched exception: ${exc}`,{cause:exc}))
       }
       window.addEventListener("error", (e) => {
          logException(e.error)
@@ -193,105 +220,113 @@
    <script src="vmx.js"></script>
 
    <script>
+      let ccCenter = null
 
-      VMX.log.setLevel(Logger.DEBUG)
-      VMX.log.writeLog = (level, context, message) => {
-         const args = [context, VMX.log.levelName(level)+":", message]
-         console.log(...args)
-         logError(args.map( x => x instanceof Error ? `${x.message}\n${x?.stack??""}` : x).join(" "))
+      VMX.log.level = Logger.DEBUG
+      VMX.log.writeLog = (level, levelName, component, message, args) => {
+         const args2 = [component, VMX.log.levelName(level)+":", message]
+         console.log(...args2)
+         if (args) console.log("Log args:",args)
+         const timestamp = Date.now()
+         const diff = timestamp - LOG.lastTimestamp
+         const ms = diff > 30000 ? timestamp : "+" + diff + "ms"
+         LOG.lastTimestamp = timestamp
+         LOG.lines.push({nr:++LOG.lastNr, ms, levelName, component, message, args})
+         ccCenter?.addLogLine(LOG.lines.at(-1))
       }
 
       //////////////////
       // TEST SECTION //
       //////////////////
 
-      const div1 = document.getElementById("window")
-      const div2 = document.getElementById("window2")
-      const div3 = document.getElementById("window3")
+      const div1 = document.getElementById("windowID")
+      const div2 = document.getElementById("window2ID")
+      const div3 = document.getElementById("window3ID")
 
-      const win1VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div1, title:"Hello 1"/*, moveable:false*/ })
-      const win2VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div2, title:"Hello 2",
-         left:20, width:540,
-      })
-      const win3VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:div3, title:"Hello 3" })
-      const win4VM = WindowVM.create(DOM.clone("#vmx-window-template"), {
-         top:240, left:600, width:140, height:100, title:"Hello 4",
-         content: "<div style='background-color:beige; color:maroon;'>Created Window</div>"
-      })
-      win4VM.vWindowState = "visible"
+      const win1VM = null
+      const window1 = WindowView.create(ViewElem.clone("#vmx-window-template"), { content:div1, title:"Hello 1", moveable:false })
+      const win2VM = null
+      const window2 = WindowView.create(ViewElem.clone("#vmx-window-template"), { content:div2, title:"Hello 2", left:20, width:540 })
+      const win3VM = null
+      const window3 = WindowView.create(ViewElem.clone("#vmx-window-template"), { content:div3, title:"Hello 3" })
+      const win4content = ViewElem.fromHtml("<div style='background-color:beige; color:maroon;'>Created Window</div>")
+      const win4VM = null
+      const window4 = WindowView.create(ViewElem.clone("#vmx-window-template"), { content:win4content, title:"Hello 4", top:240, left:600, width:140, height:100 })
 
-      const child = DOM.newElement("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px; right:10px; bottom:150px;'>Created Window</div>")
-      DOM.connect(child)
-      const win5VM = WindowVM.create(DOM.clone("#vmx-window-template"), { content:child, title:"Hello 5" })
-      // not needed: win5VM.vWindowState = "visible"
+      const win5VM = null
+      const win5content = ViewElem.fromHtml("<div style='background-color:#154360; color:#eafaf1; position:fixed; width:95px; height:85px; right:10px; bottom:150px;'>Created Window</div>")
+      win5content.connect()
+      const window5 = WindowView.create(ViewElem.clone("#vmx-window-template"), { content:win5content, title:"Hello 5", hide:true })
+      window5.viewModel.windowState = WindowVM.SHOWN
+
+      // TODO: 1. add test case positioned (with class) window frame + content
+      //       view.pos should return (0,0,0,0)
+      //       ensure that view.pos set correctly to computedPos without reframing !!
+      //       2. use pos option and set view position instead of top,left,width,height
 
       console.log("listened elements",VMX.getListenedElements(document))
 
-      const winstackVM = WindowStackVM.create(DOM.query("[class='vmx-window-stack']"), { minimizedTemplate:DOM.query("#vmx-minimized-template") })
-
-      DOM.query("[class='vmx-window-stack'] button").addEventListener("click", (e) => {
-         if (win1VM.vWindowState === WindowVM.CLOSED)
-            (win1VM.vWindowState = WindowVM.VISIBLE, winstackVM.register(win1VM))
-         else if (win2VM.vWindowState === WindowVM.CLOSED)
-            (win2VM.vWindowState = WindowVM.VISIBLE, winstackVM.register(win2VM))
-         else if (win3VM.vWindowState === WindowVM.CLOSED)
-            (win3VM.vWindowState = WindowVM.VISIBLE, winstackVM.register(win3VM))
-         else if (win4VM.vWindowState === WindowVM.CLOSED)
-            (win4VM.vWindowState = WindowVM.VISIBLE, winstackVM.register(win4VM))
-      })
-
-      winstackVM.register(win1VM)
-      winstackVM.register(win2VM)
-      winstackVM.register(win3VM)
-      winstackVM.register(win4VM)
-      winstackVM.register(win5VM)
-
-      const deco1 = win1VM.decorator
-      const deco2 = win2VM.decorator
-      const deco3 = win3VM.decorator
-      const deco4 = win4VM.decorator
-      const deco5 = win5VM.decorator
-
-      logError(devicePixelRatio+"dppx")
+      console.log("devicePixelRatio:",devicePixelRatio+"dppx")
 
       function test() {
-         console.log("win3VM.vWindowState=",win3VM.vWindowState)
-         //win3VM.vWindowState="hidden"
-         //win3VM.vWindowState="maximized"
-         //win3VM.vWindowState="visible"
-         win3VM.vWindowState="maximized"
+         console.log("window3.windowState=",window3.viewModel.windowState)
+         window3.viewModel.maximize()
          setTimeout( () => {
-            win3VM.vWindowState="visible"
+            window3.viewModel.show()
             setTimeout( () => {
-               win3VM.vWindowState="minimized"
+               window3.viewModel.minimize()
                setTimeout( () => {
-                  win3VM.vWindowState="visible"
+                  window3.viewModel.show()
                }, 130)
-            }, 30)
+            }, 20)
          }, 100)
       }
 
       function test2() {
-         const oldPos = win3VM.visiblePos
-         console.log("old win3VM.visiblePos", oldPos)
-         win3VM.visiblePos = { width:500, height:300, top:50, left:50, transition:true }
+         const oldPos = window3.vm.pos
+         console.log("old window3 pos", oldPos)
+         window3.vm.pos = { width:500, height:300, top:50, left:50, transition:true }
          setTimeout( () => {
-            win3VM.visiblePos = oldPos
+            window3.vm.pos = oldPos
          }, 600)
       }
 
       let redecorationCount = 0
       function test3() {
-         if (win2VM.replaceWithContent() !== div2)
+         const content = window2.unframeContent()
+         if (content?.htmlElem !== div2)
             throw Error("content is not div2")
          setTimeout( () => {
-            win2VM.vContent = div2
-            win2VM.vTitle = `Hello 2-(${++redecorationCount})`
+            window2.init({ content, title:"Hello 2-"+(++redecorationCount), left:20, width:540 })
          }, 800)
       }
 
-      const dropzone = DOM.query(".dropzone")
-      const scrollDown = () => new ViewUpdateListener(1, () => dropzone.scrollBy({top:1000, behavior:"smooth"}))
+      function test4() {
+         window4.viewModel.maximize()
+         setTimeout( () => {
+            window4.viewModel.show()
+            const oldpos = window4.viewModel.pos
+            setTimeout( () =>window4.viewModel.pos = {left:50, top:100}, 20)
+            setTimeout( () => window4.viewModel.pos = oldpos, 800)
+         }, 800)
+      }
+
+      function test5() {
+         const viewElem = window4.elem
+         const oldStyles = {}
+         viewElem.stylesManager.startTransition(viewElem, false, true, () => {
+            Object.assign(oldStyles,viewElem.setStyles({left:"0px", top:"0px"}))
+         })
+         setTimeout(()=> {
+            viewElem.stylesManager.startTransition(viewElem, false, false, () => {
+               viewElem.updateStyles(oldStyles)
+            })
+            console.log("sm=",viewElem.isStylesManager,"isTrans=",viewElem.isTransition())
+         }, 90)
+      }
+
+      const dropzone = document.querySelector(".dropzone")
+      const scrollDown = () => new ViewDrawListener(1, () => dropzone.scrollBy({top:1000, behavior:"smooth"}))
       function do_upload_image(file) {
          if (!file.type.startsWith("image/")) {
             dropzone.innerHTML += `<br>Failed: unexpected type »${file.type}«`
@@ -316,9 +351,9 @@
          }
       }
 
-      var dc1 = new DropController(dropzone, (e) => {
-         console.log(e.type,"currentTarget",e.eventCurrentTarget,"items",e.items)
-         const target = e.eventCurrentTarget
+      var dc1 = new DropController(dropzone, null, (e) => {
+         console.log(e.type,"currentTarget",e.eventControllerTarget,"items",e.items)
+         const target = e.eventControllerTarget
          const items = [...e.items]
          switch (e.type) {
             case "dropstart":
@@ -352,16 +387,16 @@
          }).then( answer => {
             result.answer = answer
             return result
-         }).catch( error => {
-            logCatch(error)
-            return { ok:false, status:result.status, answer:error }
+         }).catch( except => {
+            VMX.logException(window,"upload_file failed",except)
+            return { ok:false, status:result.status, answer:except }
          })
       }
 
-      const fileinput = DOM.newElement("<input type='file' hidden>")
+      const fileinput = ViewElem.newHTMLElement("<input type='file' hidden>")
       dropzone.append(fileinput)
-      new ClickController(dropzone, (e) => {
-         console.log("dropzone click",e.eventCurrentTarget,e)
+      new ClickController(dropzone, null, (e) => {
+         console.log("dropzone click",e.eventControllerTarget,e)
          if (e.eventTarget!==fileinput) {
             console.log("fileinput click")
             fileinput.click()
@@ -381,39 +416,40 @@
 
             await RUN_TEST({name:"No-Transition",timeout:100}, () => {
                let callbackCalled = false
-               new TransitionController(document.body, (e) => {
+               new TransitionController(document.body, null, (e) => {
                   TEST(e.type,'=',"transitionend", "all transition end as string")
                   TEST(e.isTransition,'=',false, "all transition end as flag")
-                  TEST(e.eventTarget,'=',null, "target points to null if no transition is active")
-                  TEST(e.eventCurrentTarget,'=',document.body, "currentTarget points to element listener is registered for")
+                  TEST(e.eventTarget,'=',document.body, "target points to element controller is registered for")
+                  TEST(e.eventListenerTarget,'=',document.body, "target points to element controller is registered for")
+                  TEST(e.eventControllerTarget,'=',document.body, "controllerTarget points to element controller is registered for")
                   callbackCalled = true
                }).ensureInTransitionElseEnd()
                TEST(callbackCalled,'=',true, "ensureInTransitionElseEnd calls callback if no transition is running")
             })
 
             await RUN_TEST({name:"vLeft does not change during transition",timeout:1000}, async (context) => {
-               vm.vWindowState = "visible"
+               vm.vWindowState = "shown"
                await vm.onceOnTransitionEnd()
-               TEST(vm.vWindowState,'=',"visible", "wrong precondition: window not in state 'visible'")
+               TEST(vm.vWindowState,'=',"shown", "wrong precondition: window not in state 'visible'")
                const visibleLeft = vm.vLeft
                vm.vWindowState = "minimized"
                TEST(vm.htmlElem.getAnimations().length,'=',0, "transition not yet started")
                let onceCalled = 0
                await SUB_TEST({context, delay:300}, (context) => {
                   const minimizedLeft = vm.vLeft
-                  vm.vWindowState = "visible"
+                  vm.vWindowState = "shown"
                   TEST(vm.vLeft,'=',minimizedLeft, "transition not yet started")
                   vm.onceOnTransitionEnd(() => {
                      TEST(vm.vLeft,'=',visibleLeft, "vLeft same at end of transition")
                   })
-                  vm.onceOnViewUpdate(2, () => {
+                  vm.onceOnDrawFrame(2, () => {
                      TEST(vm.vLeft,'=',visibleLeft, "vLeft same at start of transition")
                      TEST(parseFloat(vm.view.getComputedStyle().left),'range',[minimizedLeft+1,visibleLeft-1], "left is animated during tansition")
                      ++ onceCalled
                   })
                   SUB_TEST({context}, async () => await vm.onceOnTransitionEnd())
                })
-               TEST(onceCalled,'=',1, "onceOnViewUpdate called exactly once")
+               TEST(onceCalled,'=',1, "onceOnDrawFrame called exactly once")
             })
 
             await RUN_TEST({name:"vLeft == 0 if window maximized",timeout:1000}, (context) => {
@@ -423,7 +459,7 @@
                vm.onceOnTransitionEnd(() => {
                   TEST(vm.vLeft,'=',0, "vLeft == 0 in maximized state")
                })
-               vm.onceOnViewUpdate(4, () => {
+               vm.onceOnDrawFrame(4, () => {
                   TEST(vm.vLeft,'=',0, "vLeft == 0 at start of transition into maximized state")
                   TEST(parseFloat(vm.view.getComputedStyle().left),'range',[1,left-1], "left is animated during tansition")
                })
@@ -447,95 +483,98 @@
          #log
          #panel
          #viewsList
-         static WindowAdapter = class WindowAdapter extends WindowVM {
-            #overwittenClose
-            close() { this.#overwittenClose() }
-            // TODO: add overwritesupport to !!! ViewModel !!!
-            init({overwiteClose, ...initOptions}) {
-               this.#overwittenClose = overwiteClose
-               return super.init(initOptions)
-            }
-         }
          constructor() {
-            const log = {}
+            const log = this.#log = {}
             log.htmlElem = ControlCenter.createLogWindowElement()
-            log.winVM = ControlCenter.WindowAdapter.create(log.htmlElem, { overwiteClose:this.hideLogWindow.bind(this) })
-            log.winVM.show()
-            log.width = log.winVM.vWidth
-            this.#log = log
-            const panel = {}
+            log.win = WindowView.create(log.htmlElem)
+            log.vm = log.win.viewModel
+            log.tbody = log.win.viewElem.query("tbody")
+            log.autoscroll = log.win.viewElem.query("[name='autoscroll']")
+            VMX.vmObserver.addPropertyObserver(log.vm,"windowState",() => this.panel.logWindowCheckbox.checked = this.isLogShown)
+            const panel = this.#panel = {}
             panel.htmlElem = ControlCenter.createPanelElement()
             panel.logWindowCheckbox = panel.htmlElem.querySelector("[data-slot=LogWindowCheckbox]")
-            panel.winVM = ControlCenter.WindowAdapter.create(panel.htmlElem, { overwiteClose:this.hidePanel.bind(this) })
-            panel.winVM.show()
-            panel.top = panel.winVM.vTop
-            panel.onEscape = new KeyController(document, (e) => {
-               // (e.type === KeyController.KEYDOWN) && console.log(e) // TODO: remove line
+            panel.win = WindowView.create(panel.htmlElem)
+            panel.win.setUserConfig("MinimizedStyle", { bottom:"100vh", top:"unset" })
+            panel.vm = panel.win.viewModel
+            panel.onEscape = new KeyController(document, null, (e) => {
                if (e.key === KeyController.KEYS.ESCAPE && e.type === KeyController.KEYDOWN) {
                   if (KeyController.lockKeyFromEvent(e)) {
                      this.togglePanel()
                   }
                }
             })
-            panel.onLogSwitch = new ChangeController(panel.logWindowCheckbox, (e) => {
-               this.switchLogWindow(e.checked)
+            panel.onLogSwitch = new ChangeController(panel.logWindowCheckbox, null, (e) => {
+               this.switchLog(e.checked)
             })
-            this.#panel = panel
          }
-         get log() {
-            return this.#log
-         }
-         get panel() {
-            return this.#panel
-         }
-         get isLogWindowHidden() {
-            return this.log.winVM.hidden
-         }
-         get viewsList() {
-            return this.#viewsList
-         }
-         showLogWindow() {
-            if (this.isLogWindowHidden) {
-               this.log.winVM.show()
-               this.log.winVM.visiblePos = {transition:true, width:this.log.width}
-               this.panel.logWindowCheckbox.checked = true
-            }
-         }
-         hideLogWindow() {
-            if (!this.isLogWindowHidden) {
-               this.log.width = this.log.winVM.vWidth
-               this.log.winVM.visiblePos = {transition:true, width:0}
-               this.panel.logWindowCheckbox.checked = false
-               this.log.winVM.onceOnTransitionEnd( () => this.log.winVM.hide())
-            }
-         }
-         switchLogWindow(switchOn) {
-            switchOn ? this.showLogWindow() : this.hideLogWindow()
-         }
-
-         get hiddenPanel() {
-            return this.panel.winVM.hidden
-         }
+         get log() { return this.#log }
+         get panel() { return this.#panel }
+         get viewsList() { return this.#viewsList }
+         get isLogShown() { return !this.log.vm.minimized }
+         get isPanelShown() { return !this.panel.vm.minimized }
+         switchLog(switchOn) { switchOn ? this.showLog() : this.hideLog() }
+         togglePanel() { this.isPanelShown ? this.hidePanel() : this.showPanel() }
+         showLog() { this.log.vm.show() }
+         hideLog() { this.log.vm.minimize() }
          showPanel() {
-            if (this.hiddenPanel) {
-               this.panel.winVM.show()
-               this.panel.winVM.visiblePos = {transition:true, top:this.panel.top}
+            if (!this.isPanelShown) {
+               if (this.panel.vm.pos.top < 0)
+                  this.panel.vm.pos = { top:0 }
+               if (this.panel.vm.pos.left < 0)
+                  this.panel.vm.pos = { left:0 }
+               this.panel.vm.show()
             }
          }
-         hidePanel() {
-            if (!this.hiddenPanel) {
-               this.panel.top = Math.max(0,this.panel.winVM.vTop)
-               this.panel.winVM.visiblePos = {transition:true, top:-this.panel.winVM.vHeight-30}
-               this.panel.winVM.onceOnTransitionEnd( () => this.panel.winVM.hide())
+         hidePanel() { this.panel.vm.minimize() }
+         formatHtml(msg) { return String(msg).replaceAll("<","&lt;").replaceAll("\n","<br>") }
+         /** @return {string|{msg:string,stacktrace:string[][],cause:any} */
+         analyseMessage(msg) {
+            if (typeof msg === "object") {
+               if (msg instanceof Error) {
+                  return { msg:String(msg), stacktrace:String(msg.stack).trim().split("\n").map( location => location.startsWith("@") ? ["<anonymous>",location.substring(1)] : location.split("@")),
+                           cause: msg.cause }
+               }
+               return VMX.stringOf(msg)
+            }
+            return String(msg)
+         }
+         formatMessage(msg) {
+            const msg2 = this.analyseMessage(msg)
+            if (typeof msg2 === "string")
+               return this.formatHtml(msg2)
+            return "<span style='color:darkred;'>" + this.formatHtml(msg2.msg) + "</span><details><summary>Stacktrace</summary><table><tbody>"
+                  + msg2.stacktrace.flatMap(row => ["<tr>",...row.map(col => `<td>${this.formatHtml(col)}</td>`),"</tr>"]).join("") + "</tbody></table></details>"
+                  + (msg2.cause ? "Caused by: " + this.formatMessage(msg2.cause) : "")
+         }
+         addLogLine(line) {
+            try {
+               const message = this.formatMessage(line.message, "<br>", "&nbsp;&nbsp;")
+               const tableBody = this.log.tbody
+               tableBody.appendChildren(
+                  ViewElem.fromHtml(`<tr class="info"><td>${line.nr}.</td><td>${line.ms}</td><td>${line.component}</td></tr>`),
+                  ViewElem.fromHtml(`<tr class="msg"><td>${line.levelName}</td><td colspan="2">${message}</td></tr>`)
+               )
+               if (tableBody.nrChilds() > 2000) {
+                  tableBody.removeChildAt(0)
+                  tableBody.removeChildAt(0)
+               }
+               if (this.log.autoscroll.checked())
+                  tableBody.htmlElem.lastChild.scrollIntoView()
+            } catch(e) { console.log("Can not log line",line,e) }
+         }
+         highlight(vm) {
+            const table = this.viewsList
+            if (table && !table.lastHighlighted.viewModel) {
+               table.lastHighlighted.viewModel = vm
+               table.lastHighlighted.oldStyle = vm.view.setStyles({
+                  outline:"#FF9D77 dashed 3px", outlineOffset:0
+               })
             }
          }
-         togglePanel() {
-            this.hiddenPanel ? this.showPanel() : this.hidePanel()
-         }
-
          unhighlight() {
             const table = this.viewsList
-            if (table.lastHighlighted.viewModel) {
+            if (table && table.lastHighlighted.viewModel) {
                table.lastHighlighted.viewModel.view.setStyles(table.lastHighlighted.oldStyle)
                table.lastHighlighted.viewModel = null
             }
@@ -554,8 +593,8 @@
                for (const ctrl in edit.controller)
                   edit.controller[ctrl].free()
                if (!abort) {
-                  // TODO: does no more work, edit.viewModel.name = edit.input.value.trim()
-                  edit.col.querySelector("label").textContent = edit.viewModel.LID.toString(edit.viewModel)
+                  edit.viewModel.title = edit.input.value.trim()
+                  edit.col.querySelector("label").textContent = edit.viewModel.title
                }
                this.unhighlight()
             }
@@ -569,91 +608,87 @@
             table.edits = []
             table.lastHighlighted = {}
             table.htmlElem = this.createViewsListElement()
-            table.winVM = ControlCenter.WindowAdapter.create(table.htmlElem, { overwiteClose:this.closeViewsList.bind(this) })
-            table.winVM.show()
+            table.win = WindowView.create(table.htmlElem)
+            table.vm = table.win.viewModel
+            table.closedObserver = (n) => n.from === this.viewsList?.vm && this.freeViewsList()
+            VMX.vmObserver.addPropertyObserver(table.vm,"closed",table.closedObserver)
             table.htmlElem.addEventListener("focusin", (e) => {
                      console.log("focusin",e)
                   })
             table.htmlElem.addEventListener("focusout", (e) => {
                      console.log("focusout",e)
                   })
-            table.onTouch = new TouchController(table.htmlElem, (e) => {
+            table.onTouch = new TouchController(table.htmlElem, {enableDoubleClick:true}, (e) => {
                const viewmodels = this.viewsList.viewmodels
                const row = e.eventTarget.closest("tr")
-               logError("touch "+e.type+":"+e.eventTarget?.nodeName+","+e.eventTarget.id+","+e.eventCurrentTarget?.nodeName)
+               console.log("touch "+e.type+":"+e.eventTarget?.nodeName+","+e.eventTarget.id+","+e.eventControllerTarget.nodeName)
                e.type === TouchController.TOUCHEND && this.unhighlight()
                if (!row || row.parentElement.nodeName !== "TBODY") return
                const rowOffset = row.sectionRowIndex
                if (! (0 <= rowOffset && rowOffset < viewmodels.length)) return
                if (e.type === TouchController.DOUBLECLICK && row && row !== table.edits[0]?.row) {
                   this.endEditName(null)
-                  const col = row.children[0]
-                  const input = DOM.newElement("<input type=text class='w-100'>")
-                  const cancel = DOM.newElement("<a class='btn btn-warning'>cancel <i class='bi bi-trash'></i></a>")
+                  const col = row.children[0], col2 = col.nextElementSibling
+                  const input = ViewElem.newHTMLElement("<input type=text class='w-100'>")
+                  const cancel = ViewElem.newHTMLElement("<a class='btn btn-warning'>cancel <i class='bi bi-trash'></i></a>")
                   const controller = {}
-                  const edit = { input, cancel, row, col, col2: col.nextElementSibling,
+                  const edit = { input, cancel, row, col, col2,
                                  colchilds: document.createDocumentFragment(),
                                  col2childs: document.createDocumentFragment(),
                                  viewModel: viewmodels[rowOffset], controller }
                   edit.colchilds.append(...col.childNodes)
-                  edit.col2childs.append(...edit.col2.childNodes)
+                  edit.col2childs.append(...col2.childNodes)
                   input.id = "inp-"+(this.ID++)
-                  // input.value = edit.viewModel.name
                   col.append(input)
-                  edit.col2.append(cancel)
-                  controller.onKey = new KeyController(input, (e) => {
+                  col2.append(cancel)
+                  controller.onKey = new KeyController(input, null, (e) => {
                      console.log(e.type, e.key, KeyController.KEYS.ENTER)
                      if (e.type === KeyController.KEYDOWN && (e.key === KeyController.KEYS.ESCAPE || e.key === KeyController.KEYS.ENTER)
                         && KeyController.lockKeyFromEvent(e))
                         this.endEditName(e, e.key === KeyController.KEYS.ESCAPE)
                   })
-                  controller.onCancel = new ClickController(cancel, (e) => {
+                  controller.onCancel = new ClickController(cancel, null, (e) => {
                      this.endEditName(e, true)
                   })
-                  table.winVM.onceOnViewUpdate(1, () => {
+                  new ViewDrawListener(1, () => {
                      input.focus()
-                     input.value = edit.viewModel.name
+                     input.value = edit.viewModel.title
                      input.setSelectionRange(input.value.length,input.value.length)
                   })
                   table.edits.push(edit)
                }
-               if (e.type === TouchController.TOUCHSTART && !table.lastHighlighted.viewModel) {
-                  const vm = viewmodels[rowOffset]
-                  table.lastHighlighted.viewModel = vm
-                  table.lastHighlighted.oldStyle = vm.view.setStyles({
-                     outline: "#FF9D77 dashed 3px", outlineOffset: 0
-                  })
+               if (e.type === TouchController.TOUCHSTART) {
+                  this.highlight(viewmodels[rowOffset])
                }
-            }, {enableDoubleClick:true})
+            })
          }
-         closeViewsList() {
+         closeViewsList() { this.viewsList?.vm.close() }
+         freeViewsList() {
             const table = this.viewsList
             if (table) {
+               VMX.vmObserver.removePropertyObserver(table.vm,"closed",table.closedObserver)
+               try { winmanModel.removeClosed(table.vm) } catch (e) {/*ignore*/}
                this.endEditName()
                table.onTouch.free()
-               table.winVM.free().remove()
             }
             this.#viewsList = null
          }
 
-
          static createLogWindowElement() {
-            const logID = DOM.nextUnusedID("LogWindow")
-            return DOM.newElement(`
-               <div id="${logID}" style="position:fixed; width:50%; top:0; right:0;">
+            const logID = ViewElem.nextID("LogWindow")
+            return ViewElem.newHTMLElement(
+               `<div id="${logID}" style="position:fixed; width:50%; top:0; right:0;">
                   <div class="card overflow-hidden" style="height:100%">
                      <div class="card-header">
-                        <span data-slot="title">Log Window</span> <tt><small><small>(TODO: implement)</small></small></tt>
-                        <button type="button" class="btn-close float-end" aria-label="Close" data-slot="close"></button>
+                        <span data-slot="title">Log Window</span> <small class='ps-3'><label class='form-check form-check-inline'><input type='checkbox' name='autoscroll' checked class='form-check-input'> auto-scroll</label></small>
+                        <button type="button" class="btn-close float-end" aria-label="Close" data-slot="min"></button>
                      </div>
                      <div class="card-body overflow-y-scroll" data-slot="content">
-                        <table class="table">
-                           <thead>
-                              <tr><th>nr&nbsp;</th><th>ms</th><th>name</th><th>msg</th></tr>
+                        <table class="table log text-nowrap">
+                           <thead class="align-top">
+                              <tr><th>nr<br>level</th><th>ms (epoch)<br>message ...</th><th>component</th></tr>
                            </thead>
-                           <tbody>
-                              <tr><td>1.</td><td>1234567</td><td>Log-Window</td><td>Shown</td></tr>
-                           </tbody>
+                           <tbody></tbody>
                         </table>
                      </div>
                   </div>
@@ -662,14 +697,14 @@
          }
 
          static createPanelElement() {
-            const panelID = DOM.nextUnusedID("ControlPanel")
-            return DOM.newElement(`
-               <div id="${panelID}" class="toast show position-fixed" style="top:0; left:0;" role="alert" aria-live="assertive" aria-atomic="true">
+            const panelID = ViewElem.nextID("ControlPanel")
+            return ViewElem.newHTMLElement(
+               `<div id="${panelID}" class="toast show position-fixed" style="top:0; left:0;" role="toolbar">
                   <div class="toast-header">
                      <div class="rounded me-2 bg-secondary bg-gradient" style="width:1.3em">&nbsp;</div>
                      <strong class="me-auto" data-slot="title">Control Center</strong>
                      <small>Toggle with ESC</small>
-                     <button type="button" class="btn-close" aria-label="Close" data-slot="close"></button>
+                     <button type="button" class="btn-close" aria-label="Close" data-slot="min"></button>
                   </div>
                   <div class="toast-body" data-slot="content">
                      This is under construction!
@@ -680,23 +715,20 @@
          }
 
          createViewsListElement() {
-            const tableID = DOM.nextUnusedID("ViewsList")
+            const tableID = ViewElem.nextID("ViewsList")
             let rows = ""
             this.viewsList.viewmodels = []
             let id=6
             for (const vm of VMX.getConnectedViewModels()) {
                const decorator = vm.decorator
-               rows += "<tr><td style='cursor:initial' id='"+(++id)+"'><label>"+vm.LID.toString(vm)+"</label></td>"
-               rows += "<td id='"+(++id)+"'>"+(decorator?decorator.constructor.name:'&mdash;')+"</td>"
+               rows += "<tr><td style='cursor:initial' id='"+(++id)+"'><label>"+vm.title+"</label></td>"
                rows += "<td id='"+(++id)+"'>"+vm.constructor.name+"</td>"
-               rows += "<td id='"+(++id)+"'>"+(vm.vTitle
-                                 ? vm.vTitle.substring(0,15)
-                                 : "") + "</td></tr>"
+               rows += "<td id='"+(++id)+"'>"+vm.getLogID().name(vm)+"</td></tr>"
                this.viewsList.viewmodels.push(vm)
             }
             const bStyle = getComputedStyle(document.body)
-            return DOM.newElement(`
-               <div id="${tableID}" style="position:fixed; height:50%; width:50%; top:20px; left:${parseFloat(bStyle.width)/4}px;">
+            return ViewElem.newHTMLElement(
+               `<div id="${tableID}" style="position:fixed; height:50%; width:50%; top:20px; left:${parseFloat(bStyle.width)/4}px;">
                   <div class="card overflow-hidden" style="height:100%">
                      <div class="card-header" data-slot="move">
                         <span data-slot="title">Decorated Elements <tt><small><small>(try pressing / dbl-clicking row)</small></small></tt></span>
@@ -705,7 +737,7 @@
                      <div class="card-body overflow-y-scroll" data-slot="content" >
                         <table class="table table-striped table-hover align-middle">
                            <thead>
-                              <tr><th><i class='bi bi-pencil-square'></i> Name</th><th>Decorator</th><th>VModel</th><th>Info</th></tr>
+                              <tr><th><i class='bi bi-pencil-square'></i> Title</th><th>VModel</th><th>LogID</th></tr>
                            </thead>
                            <tbody>
                               ${rows}
@@ -719,9 +751,8 @@
 
       }
 
-      const ccCenter = new ControlCenter()
+      ccCenter = new ControlCenter()
       ccCenter.openViewsList()
-      const viewsList=ccCenter.viewsList.winVM.htmlElem
 
       ////////////
       // TODOs: //
@@ -737,12 +768,12 @@
       //          => handler must call preventmultiple(handlerfunction) to ensure single exec
       // X. overlapping Escape key handling
 
-      new ChangeController(document.getElementById("radios"), (e) => {
+      new ChangeController(document.getElementById("radios"), null, (e) => {
          console.log("change form",e.checked,e)
       })
-      new ChangeController(document.getElementById("radios"), (e) => {
+      new ChangeController(document.getElementById("radios"), { group: document.getElementById("radios").querySelectorAll("[type=radio]") }, (e) => {
          console.log("change group (radio buttons in form radios)",e.checked,e)
-      }, { group: document.getElementById("radios").querySelectorAll("[type=radio]") })
+      })
 
       function logEvent(e) {
          console.log("event",new Date().valueOf(),ViewListener.eventToString(e),e)
@@ -789,112 +820,39 @@
          })
          await END_TEST()
       }
-      const win2FrameContainer = win2VM.htmlElem.parentElement
-      let xvm, xvv
-      function xxx() {
-         let win2Frame = win2VM.htmlElem
-         while (win2Frame.parentElement !== win2FrameContainer) win2Frame = win2Frame.parentElement;
-         const content=new ViewElem(win2Frame)
-         const vm=new WindowVM2()
-         const vv=new WindowView(ViewElem.query("#vmx-window-template").clone(), vm)
-         if (false) {
-            if (false) {
-               vv.viewElem.setPos({width:300, height:120, top:10, left:0})
-               vv.viewElem.connect()
-               vv.init({content:ViewElem.fromHtml("<div>Hello</div>")})
-            }
-            else {
-               vv.init({content, reframe:true})
-            }
-            return
-         }
-         const connection = {
-            locks: {
-               click: { path:[["click"]], shared:true },
-               resize: { path:[["resize"]], notlocked:"click" },
-               resizeTop: { path:[["resize"],["top"]], notlocked:"click" },
-               resizeTopRight: { path:[["resize"],["top","right"]], notlocked:"click" },
-               resizeRight: { path:[["resize"],["right"]], notlocked:"click" },
-               resizeRightBottom: { path:[["resize"],["right","bottom"]], notlocked:"click" },
-               resizeBottom: { path:[["resize"],["bottom"]], notlocked:"click" },
-               resizeBottomLeft: { path:[["resize"],["bottom","left"]], notlocked:"click" },
-               resizeLeft: { path:[["resize"],["left"]], notlocked:"click" },
-               resizeLeftTop: { path:[["resize"],["left","top"]], notlocked:"click" },
-            },
-            // view-controller event (e) --> view-model method (mapArgs(e))
-            actions: {
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               move: { method:"move", lock:"resize", mapArgs:(e) => ({ dx:e.dx, dy:e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(TouchResizeControllerEvent)=>any)}} */
-               resize: { method:"resize", lock:"resize", mapArgs:(e) => ({ dtop:e.dy, dright:e.dx, dbottom:e.dy, dleft:e.dx }) },
-               /** @type {{method:string, lock:string, mapArgs:(TouchResizeControllerEvent)=>any)}} */
-               resizeNotMoveable: { method:"resize", lock:"resize", mapArgs:(e) => ({ dright:2*e.dx, dbottom:2*e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeTop: { method:"resize", lock:"resizeTop", mapArgs:(e) => ({ dtop:-e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeTopRight: { method:"resize", lock:"resizeTopRight", mapArgs:(e) => ({ dtop:-e.dy, dright:e.dx }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeRight: { method:"resize", lock:"resizeRight", mapArgs:(e) => ({ dright:e.dx }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeRightBottom: { method:"resize", lock:"resizeRightBottom", mapArgs:(e) => ({ dright:e.dx, dbottom:e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeBottom: { method:"resize", lock:"resizeBottom", mapArgs:(e) => ({ dbottom:e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeBottomLeft: { method:"resize", lock:"resizeBottomLeft", mapArgs:(e) => ({ dbottom:e.dy, dleft:-e.dx }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeLeft: { method:"resize", lock:"resizeLeft", mapArgs:(e) => ({ dleft:-e.dx }) },
-               /** @type {{method:string, lock:string, mapArgs:(MoveControllerEvent)=>any)}} */
-               resizeLeftTop: { method:"resize", lock:"resizeLeftTop", mapArgs:(e) => ({ dleft:-e.dx, dtop:-e.dy }) },
-               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
-               close: { method:"close", lock:"click", mapArgs:(e) => (undefined) },
-               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
-               minimize: { method:"minimize", lock:"click", mapArgs:(e) => (undefined) },
-               /** @type {{method:string, lock:string, mapArgs:(ClickControllerEvent)=>any)}} */
-               toggleMaximize: { method:"toggleMaximize", lock:"click", mapArgs:(e) => (undefined) },
-            },
-            properties: [
-               { init:"vm", view:"hidden", vm:"windowState", mapToVM:(isHidden)=>isHidden?"hidden":"visible" },
-               { update:"both", init:"vm", view:"pos", vm:"pos", mapToVM:null, mapToView:null },
-               { update:"view", view:"windowState", vm:"windowState", mapToView:null },
-            ],
-            // restrictions are transfered from view to view-model during init once to adapt vm to view imposed restrictions
-            restrictions: [
-               { view:"moveable", vm:"moveable", mapToVM:null },
-               { view:"resizeable", vm:"resizeable", mapToVM:null }
-            ],
-         }
-         vv.init({content, controls:true, reframe:true, resizeable:true, moveable:true, connection, viewModel:vm})
 
-         setTimeout( () => {
-            vv.viewElem.startTransition(true, () => vv.pos = {top:0,left:0})
-         }, 10)
-         setTimeout( () => {
-            vv.viewElem.startTransition(false, () => {
-               vv.pos = {top:200,left:0}
+      ///////////////////
+      // WindowManager //
+      ///////////////////
+
+      const winmanModel = new WindowManagerVM()
+      const winmanView = new WindowManagerView(ViewElem.query(".vmx-window-stack"), winmanModel)
+      winmanView.init({ minimizedTemplate:ViewElem.query("#vmx-minimized-template") })
+
+      function to() {
+         const ve = window5.viewElem
+         ve.stylesManager.startTransition(ve, true, true, () => {
+            ve.htmlElem.style.left="0px"
+         })
+         setTimeout(() => {
+            ve.stylesManager.startTransition(ve, true, {"transition-duration":"0s"}, () => {
+               ve.htmlElem.style.left="500px"
             })
-         }, 1000)
-         xvm = vm, xvv = vv
-         return { vm, vv }
+         }, 100)
       }
 
-      function xx() {
-         const type = "keydown"
-         document.addEventListener(type,(e) => {
-            console.log("document click",e)
-         })
-         window.addEventListener(type,(e) => {
-            console.log("window click",e)
-         })
-         win3VM.htmlElem.addEventListener(type,(e) => {
-            console.log("win3 click",e)
-            queueMicrotask(()=>console.log("win3 microtask"))
-         })
-         document.body.addEventListener(type,(e) => {
-            console.log("body click",e)
-         })
-      }
+      var clickidiclick = true
+      new ClickController(document,null,(e) => {
+         console.log("CLICK CONTROLLER",e)
+         if (clickidiclick) {
+            clickidiclick=false
+            throw Error("CLICKI_DI_CLICK")
+         }
+      })
 
-      setTimeout(xxx,1000)
+      function eee() { return Error("eee") }
+
 </script>
+
 </body>
 </html>

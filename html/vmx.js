@@ -15,13 +15,13 @@
  * * ViewListeners
  * * ViewModelActionLocking
  * * ViewController
- * * ViewUpdateListener
+ * * ViewDrawListener
  * === Wrapping HTML
  * (not fully, htmlElem is accessed within ViewModel,Controller,and Decorator.)
- * * DOM
+ * * ViewElem
  * * View
  * === Binding of View, ViewModel, and Controllers
-  * * ViewDecorator
+ * * ViewDecorator
  * * ResizeDecorator
  * * WindowDecorator
  * === Wrapping state and displayed data of a view
@@ -32,20 +32,147 @@
  * * ClientLogModel
  */
 
-/**
- * @typedef HasTypeClass
- * @property {TypeClass} typeClass
- */
-/**
- * @typedef ImplementsCategory
- * @property {{category:ObjectCategory}} typeClass
- */
 
-/**
- * Types which implement TypeClass uses marker {@link HasTypeClass}.
- */
-class TypeClass {
-   /** @typedef {"c"|"l"|"v"|"vm"} ObjectCategory */
+class BasicTypeChecker {
+   /**
+    * @typedef {(this:BasicTypeChecker,value:any,typeCheckerContext:object)=>false|((name:string)=>string)} BasicTypeCheckerValidateType Returns *false* if validation was correct else error string.
+    * @typedef {(value:any,typeCheckerContext:object)=>boolean} BasicTypeCheckerTypePredicate Returns *true* if type is valid else false.
+    */
+   /**
+    * Return *false*, if type is valid, else error description.
+    * @type {BasicTypeCheckerValidateType}
+    */
+   validateType
+   /**
+    * Description of subtype contained in parent container type.
+    * @type {undefined|BasicTypeChecker}
+    */
+   subtype
+   /**
+    * Set value to *true*, if a value must exist.
+    * @type {undefined|boolean}
+    */
+   required
+   /**
+    * @param {BasicTypeCheckerValidateType} validateType
+    * @param {null|BasicTypeChecker} [subtype]
+    */
+   constructor(validateType, subtype) {
+      this.validateType = validateType
+      if (subtype) this.subtype = subtype
+   }
+   /**
+    * @param {BasicTypeCheckerTypePredicate} typePredicate
+    * @param {string} type Name of expected type.
+    * @returns
+    */
+   static default(typePredicate, type) {
+      return new BasicTypeChecker((value,typeCheckerContext) => !typePredicate(value,typeCheckerContext) && BasicTypeChecker.expectValueOfType(value,type))
+   }
+   /**
+    * @return BasicTypeChecker
+    */
+   makeRequired() { return this.required = true, this }
+   /**
+    * @param {any} value
+    * @param {object} typeCheckerContext
+    * @return {false|((name:string)=>string)}
+    */
+   validate(value, typeCheckerContext) { return this.validateType(value,typeCheckerContext) }
+   /**
+    * @param {string} ofSmething Description of validation expectation.
+    * @return {(name:string)=>string} Error description generator.
+    */
+   static expectSomething(ofSmething) { return (name)=>`Expect ${name} ${ofSmething}.` }
+   /**
+    * @param {any} value Value of validated argument.
+    * @param {string} type Name of expected type.
+    * @return {(name:string)=>string} Error description generator.
+    */
+   static expectValueOfType(value, type) { return (name)=>`Expect ${name} of type ${type} instead of ${VMX.typeof(value)}.` }
+   /**
+    * @param {string} name Name of argument.
+    * @param {any} value Value of validated argument.
+    * @param {string} type Name of expected type.
+    * @return {string} Error description.
+    */
+   static expectNameValueOfType(name, value, type) { return this.expectValueOfType(value,type)(name) }
+   /**
+    * @return {(name:string)=>string} Error description generator.
+    */
+   static requiredValue() { return (name) => `Required ${name} is missing.` }
+   /**
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static validateBoolean(value) { return typeof value !== "boolean" && BasicTypeChecker.expectValueOfType(value,"boolean") }
+   static booleanType = new BasicTypeChecker(BasicTypeChecker.validateBoolean)
+   /**
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static validateNumber(value) { return typeof value !== "number" && BasicTypeChecker.expectValueOfType(value,"number") }
+   static numberType = new BasicTypeChecker(BasicTypeChecker.validateNumber)
+   /**
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static validateString(value) { return typeof value !== "string" && BasicTypeChecker.expectValueOfType(value,"string") }
+   static stringType = new BasicTypeChecker(BasicTypeChecker.validateString)
+   /**
+    * @this {BasicTypeChecker}
+    * @param {any} value
+    * @param {object} typeCheckerContext
+    * @return {false|((name:string)=>string)}
+    */
+   static validateIterable(value, typeCheckerContext) {
+      return !(value != null && typeof value === "object" && Symbol.iterator in value) && BasicTypeChecker.expectValueOfType(value,"iterable")
+            || BasicTypeChecker.validateIterableSubtype(value, this.subtype, typeCheckerContext)
+   }
+   /**
+    * Validate types contained in iterable type.
+    * @param {any} value
+    * @param {undefined|BasicTypeChecker} subtype
+    * @param {object} typeCheckerContext
+    * @return {false|((name:string)=>string)}
+    */
+   static validateIterableSubtype(value, subtype, typeCheckerContext) {
+      if (subtype) {
+         let i=0
+         for (const subvalue of value) {
+            const error = subtype.validate(subvalue,typeCheckerContext)
+            if (error) return (name) => error(name+"["+i+"]")
+            ++i
+         }
+      }
+      return false
+   }
+   /**
+    * @param {{constructor:Function}} caller
+    * @param {{[option:string]:any}} options
+    * @param {{[allowed:string]:BasicTypeChecker}} allowedOptions
+    */
+   static validateOptions(caller, options, allowedOptions) {
+      if (options == null || typeof options !== "object")
+         return VMX.throwError(caller, `Expect options of type object instead of ${VMX.typeof(options)}.`)
+      for (const name in options) {
+         const value = options[name]
+         if (!(name in allowedOptions))
+            VMX.logError(caller, `Unknown option »${name}« of type ${VMX.typeof(value)}.`)
+      }
+      for (const name in allowedOptions) {
+         const value = options[name]
+         if (name in options || allowedOptions[name].required) {
+            const error = allowedOptions[name].validate(value,options)
+            if (error) return VMX.throwError(caller, error(`option »${name}«`))
+         }
+      }
+   }
+}
+
+/** @typedef {"c"|"l"|"v"|"vm"} VMXCategoryType */
+
+class VMXConfig {
    /** @type {"c"} */
    static CONTROLLER = "c"
    /** @type {"l"} */
@@ -54,25 +181,6 @@ class TypeClass {
    static VIEW = "v"
    /** @type {"vm"} */
    static VIEWMODEL = "vm"
-   /** @type {ObjectCategory} */
-   category
-   /** @type {Function&{typeClass:TypeClass}} */
-   typeconstructor
-   /** @type {string} */
-   typename
-
-   // Additional implemented interfaces
-   // Interface<name1>, ...
-
-   /**
-    * @param {Function&{typeClass:TypeClass}} typeconstructor
-    * @param {ObjectCategory} category
-    */
-   constructor(typeconstructor, category) {
-      this.typeconstructor = typeconstructor
-      this.typename = typeconstructor.name
-      this.category = category
-   }
 }
 
 /**
@@ -99,26 +207,26 @@ class OptionsParser {
       this.#options = OptionsParser.parse(inputStr)
    }
    /**
-    * @returns {[string,any][]} An array of all top level option names and their value.
+    * @return {[string,any][]} An array of all top level option names and their value.
     */
    entries() { return Object.entries(this.#options) }
    /**
     * @param {string} name
-    * @returns {boolean} True in case option is defined.
+    * @return {boolean} True in case option is defined.
     */
    has(name) { return name in this.#options }
    /**
     * @param {string} name
-    * @returns {any} Value of option.
+    * @return {any} Value of option.
     */
    value(name) { return this.#options[name] }
    /**
-    * @returns {string[]} An array of all top level option names.
+    * @return {string[]} An array of all top level option names.
     */
    names() { return Object.keys(this.#options) }
    /**
     * @param {string} inputStr
-    * @returns {object} An object which contains all options with their values.
+    * @return {object} An object which contains all options with their values.
     */
    static parse(inputStr) {
       /** Contains string of unparsed character without leading white space. @type {string} */
@@ -213,153 +321,138 @@ class OptionsParser {
    }
 }
 
+class LogIDOwner {
+   /** @return {LogID} */
+   getLogID() { return VMX.throwError(this,"getLogID not implemented.") }
+   /** @return {undefined|LogIDOwner} */
+   getLogIDParent() { return VMX.throwError(this,"getLogIDParent not implemented.") }
+}
+
 /**
  * Manages relationship between LogIDs and their owners and their attached HTML elements.
  * Allows to search for elements which are bound to viewmodels, controllers, or listeners.
  * And also retrieves the objects which are bound to a certain element.
  */
 class LogIDBinding {
-   /** @typedef {HasTypeClass&ImplementsCategory&ImplementsInterfaceLogID} LogIDOwner */
-   /** @type {Map<number,LogIDOwner>} ! This mapping prevents garbage collection ! */
-   index2Owner = new Map()
-   /** @type {WeakMap<Document|Element,LogIDOwner[]>} */
-   elem2LIDOwner = new WeakMap()
-   /** @type {WeakMap<LogIDOwner,(Document|Element)[]>} */
-   LIDOwner2Elem = new WeakMap()
+   /** @typedef OwnerAndElements
+    * @property {LogIDOwner} owner
+    * @property {(EventTarget)[]} elements
+    */
+   /** This mapping prevents garbage collection. @type {Map<number,OwnerAndElements>} */
+   id2OwnerElems = new Map()
+   /** @type {WeakMap<EventTarget,LogIDOwner[]>} */
+   elem2Owner = new WeakMap()
 
    /**
     * @param {LogID} logid
-    * @param {null|undefined|LogIDOwner} logidOwner
+    * @param {LogIDOwner} owner
+    * @param {undefined|EventTarget|(EventTarget)[]} [elems]
     */
-   bindOwner(logid, logidOwner) {
-      if (logidOwner) {
-         this.index2Owner.set(logid.index,logidOwner)
+   setBinding(logid, owner, elems) {
+      this.deleteBinding(logid)
+      const elements = Array.isArray(elems) ? elems : (elems instanceof EventTarget) ? [elems] : []
+      const ownerElems = {owner, elements}
+      this.id2OwnerElems.set(logid.id, ownerElems)
+      for (const elem of ownerElems.elements) {
+         const owners = this.elem2Owner.get(elem)
+         if (owners)
+            owners.push(owner)
+         else
+            this.elem2Owner.set(elem, [owner])
       }
    }
    /**
     * @param {LogID} logid
-    * @param {undefined|LogIDOwner} logidOwner
     */
-   unbind(logid, logidOwner) {
-      if (!logidOwner) return
-      this.unbindOwner(logid)
-      this.unbindAllViewElem(logidOwner)
-   }
-   /**
-    * @param {LogID} logid
-    */
-   unbindOwner(logid) {
-      this.index2Owner.delete(logid.index)
-   }
-   /**
-    * @param {LogIDOwner} logidOwner
-    * @param {undefined|Document|Element} htmlElem
-    */
-   bindViewElem(logidOwner, htmlElem) {
-      if (!htmlElem) return
-      const elems = this.LIDOwner2Elem.get(logidOwner)
-      if (elems) {
-         if (elems.some((el) => el === htmlElem))
-            VMX.throwErrorObject(this, `Object ${VMX.log.objectName(logidOwner)} bound twice to elem ${htmlElem.nodeName}.`, {logidOwner, htmlElem})
-         elems.push(htmlElem)
-      }
-      else {
-         this.LIDOwner2Elem.set(logidOwner, [htmlElem])
-      }
-      const owners = this.elem2LIDOwner.get(htmlElem)
-      if (owners) {
-         owners.push(logidOwner)
-      }
-      else {
-         this.elem2LIDOwner.set(htmlElem, [logidOwner])
-      }
-   }
-   /**
-    * @param {LogIDOwner} logidOwner
-    */
-   unbindAllViewElem(logidOwner) {
-      const elems = this.LIDOwner2Elem.get(logidOwner)
-      if (elems) {
-         this.LIDOwner2Elem.delete(logidOwner)
-         for (const elem of elems) {
-            const owners = this.elem2LIDOwner.get(elem)
-            if (owners) {
-               const i = owners.indexOf(logidOwner)
-               i >= 0 && (owners.length > 1 ? owners.splice(i,1) : this.elem2LIDOwner.delete(elem))
-            }
+   deleteBinding(logid) {
+      const ownerElems = this.id2OwnerElems.get(logid.id)
+      if (!ownerElems) return
+      this.id2OwnerElems.delete(logid.id)
+      for (const elem of ownerElems.elements) {
+         const owners = this.elem2Owner.get(elem)
+         if (owners) {
+            const owners2 = owners.filter(o => o !== ownerElems.owner)
+            if (owners2.length === 0)
+               this.elem2Owner.delete(elem)
+            else
+               this.elem2Owner.set(elem, owners2)
          }
       }
    }
    /**
     * @param {{index?:number,logID?:LogID,owner?:LogIDOwner,rootElem?:Element|Document}} searchOptions
-    * @returns {undefined|Element|Document}
+    * @return {undefined|Element|Document}
     */
    getElementBy({index,logID,owner,rootElem}) {
-      const byIndex = typeof index === "number" ? index : logID instanceof LogID ? logID.index : undefined
-      if (byIndex) {
-         const byOwner = this.index2Owner.get(byIndex)
-         if (byOwner) return this.getElementBy({owner:byOwner,rootElem})
+      if (owner) logID = owner.getLogID()
+      if (logID instanceof LogID) index = logID.id
+      if (typeof index === "number") {
+         const ownerElems = this.id2OwnerElems.get(index)
+         if (ownerElems && ownerElems.elements.length > 0) {
+            const elem = ownerElems.elements.find((el) => (el instanceof Document || el instanceof Element) && (!rootElem || rootElem.contains(el)))
+            return (elem instanceof Document || elem instanceof Element) ? elem : undefined
+         }
       }
-      const elemsByOwner = owner ? this.LIDOwner2Elem.get(owner) : undefined
-      if (elemsByOwner) {
-         return rootElem ? elemsByOwner.find((el) => rootElem.contains(el)) : elemsByOwner[0]
+      else if (rootElem) {
+         return this.traverseNodes([rootElem], (node) => this.elem2Owner.get(node) !== undefined )
       }
-      const result = []
-      if (rootElem)
-         this.traverseNodes([rootElem], (node) => this.elem2LIDOwner.get(node) && result.push(node) > 0 )
-      return result[0]
    }
    /**
     * @param {{index?:number,logID?:LogID,owner?:LogIDOwner,rootElem?:Element|Document}} searchOptions
-    * @returns {(Element|Document)[]}
+    * @return {(Element|Document)[]}
     */
    getElementsBy({index, logID, owner, rootElem}) {
-      const byIndex = typeof index === "number" ? index : logID instanceof LogID ? logID.index : undefined
-      if (byIndex) {
-         const byOwner = this.index2Owner.get(byIndex)
-         if (byOwner) return this.getElementsBy({owner:byOwner,rootElem})
-      }
-      const elemsByOwner = owner ? this.LIDOwner2Elem.get(owner) : undefined
-      if (elemsByOwner) {
-         return rootElem ? elemsByOwner.filter((el) => rootElem.contains(el)) : elemsByOwner
+      if (owner) logID = owner.getLogID()
+      if (logID instanceof LogID) index = logID.id
+      if (typeof index === "number") {
+         const ownerElems = this.id2OwnerElems.get(index)
+         if (ownerElems && ownerElems.elements.length > 0) {
+            const elements = ownerElems.elements.filter((el) => (el instanceof Document || el instanceof Element))
+            return rootElem ? elements.filter(el => rootElem.contains(el)) : elements
+         }
       }
       const result = []
       if (rootElem)
-         this.traverseNodes([rootElem], (node) => { this.elem2LIDOwner.get(node) && result.push(node) })
+         this.traverseNodes([rootElem], (node) => { this.elem2Owner.get(node) && result.push(node) })
       return result
    }
    /**
-    * @param {{index?:number}} searchOptions
-    * @returns {undefined|LogIDOwner}
+    * @param {number} index
+    * @return {undefined|LogIDOwner}
     */
-   getOwnerBy({index}) {
-      const ownerByIndex = index ? this.index2Owner.get(index) : undefined
-      return ownerByIndex
+   getOwnerByIndex(index) {
+      const ownerElems = this.id2OwnerElems.get(index)
+      return ownerElems?.owner
    }
    /**
     * @template {LogIDOwner} T
-    * @param {{elem?:Element|Document,type:new(...args:any[])=>T}} searchOptions
-    * @returns {T[]}
+    * @param {new(...args:any[])=>T} type
+    * @param {Element|Document} elem
+    * @return {T[]}
     */
-   getTypedOwnersBy({elem, type}) {
-      const ownersByElem = elem ? this.elem2LIDOwner.get(elem) : undefined
-      const typedResult = []
-      for (const owner of (ownersByElem ? ownersByElem : this.index2Owner.values()))
-         if (owner instanceof type)
-            typedResult.push(owner)
-      return typedResult
+   getOwnersByTypeAndElem(type, elem) {
+      const owners = this.elem2Owner.get(elem)
+      /** @type {T[]} */
+      const typedOwners = []
+      if (owners) {
+         for (const owner of owners)
+            if (owner instanceof type)
+               typedOwners.push(owner)
+      }
+      return typedOwners
    }
    /**
     * Breadth first search over a given set of nodes.
     * @param {(Node)[]} nodes
     * @param {(node:Element|Document)=>void|boolean} visitNode Computes result of given node and adds it to result. Returns *true* if no more nodes should be processed (processinng is done,result complete).
+    * @return {undefined|Element|Document}
     */
    traverseNodes(nodes, visitNode) {
       for(var i=0; i<nodes.length; ++i) {
          const node = nodes[i]
          if (node instanceof Element || node instanceof Document) {
             if (visitNode(node))
-               break
+               return node
             node.hasChildNodes() && nodes.push(...node.childNodes)
          }
       }
@@ -367,110 +460,55 @@ class LogIDBinding {
    /**
     * If this function returns a non empty set then disconnected html elements
     * exist with undetached (not freed) ViewModels.
-    * @returns {Set<LogIDOwner>} All owners which contain a LogID but are not bound to connected HTML elements.
+    * @return {Set<LogIDOwner>} All owners which contain a LogID but are not bound to connected HTML elements.
     */
    disconnectedOwners() {
       const disconnected = new Set()
-      for (const owner of this.index2Owner.values()) {
-         if (!this.getElementsBy({owner}).some((el) => el.isConnected))
+      for (const {owner,elements} of this.id2OwnerElems.values()) {
+         if (elements.every(el => !(el instanceof Node) || !el.isConnected))
             disconnected.add(owner)
       }
       return disconnected
    }
    freeDisconnectedOwners() {
       for (const owner of this.disconnectedOwners()) {
-         // TODO: add support for other views ... (does viewmodel2 free all views ???)
+         // TODO: add support for other views ... (does ViewModel free all views ???)
          if (owner instanceof ViewModel && owner.free)
             owner.free()
       }
       if (this.disconnectedOwners().size)
-         return VMX.throwErrorObject(this,`Not all disconnected owners could be freed.`)
+         return VMX.throwError(this,`Not all disconnected owners could be freed.`)
    }
 }
 
 class Logger {
-   /** @type {undefined|Logger} */
-   static defaultLog
-   /** @typedef {0} LogLevel_OFF */
+   /** @typedef {0} LogLevel_NOLOG */
    /** @typedef {1} LogLevel_FATAL */
    /** @typedef {2} LogLevel_ERROR */
-   /** @typedef {3} LogLevel_DEBUG */
-   /** @typedef {4} LogLevel_WARNING */
+   /** @typedef {3} LogLevel_WARNING */
+   /** @typedef {4} LogLevel_DEBUG */
    /** @typedef {5} LogLevel_INFO */
-   /** @typedef {LogLevel_FATAL|LogLevel_ERROR|LogLevel_DEBUG|LogLevel_WARNING|LogLevel_INFO} LogLevel */
-   /** @type {LogLevel_OFF}  */
+   /** @typedef {LogLevel_NOLOG|LogLevel_FATAL|LogLevel_ERROR|LogLevel_WARNING|LogLevel_DEBUG|LogLevel_INFO} LogLevel */
+   /** @type {LogLevel_NOLOG}  */
    static OFF=0
    /** @type {LogLevel_FATAL} */
    static FATAL=1
    /** @type {LogLevel_ERROR} */
    static ERROR=2
-   /** @type {LogLevel_DEBUG} */
-   static DEBUG=3
    /** @type {LogLevel_WARNING} */
-   static WARNING=4
+   static WARNING=3
+   /** @type {LogLevel_DEBUG} */
+   static DEBUG=4
    /** @type {LogLevel_INFO} */
    static INFO=5
-   /** @type {[string,string,string,string,string,string]} Names off all known log levels. */
-   static LEVELNAME=[ "off", "fatal", "error", "debug", "warning", "info" ]
-
-   /**
-    * @returns {Logger}
-    */
-   static getDefault() {
-      this.defaultLog ??= new Logger()
-      return this.defaultLog
-   }
-
-   /** @type {LogLevel_OFF|LogLevel} */
-   level
-   /**
-    * @param {LogLevel_OFF|LogLevel} [level]
-    */
-   constructor(level) {
-      this.level = level ?? Logger.WARNING
-   }
-   /**
-    * @param {LogLevel_OFF|LogLevel} level
-    * @returns {string}
-    */
-   levelName(level) {
-      return (Logger.LEVELNAME[level] ?? String(level))
-   }
-   /**
-    * @param {{name:string}} classConstructor
-    */
-   className(classConstructor) {
-      return classConstructor?.name ? String(classConstructor.name) : "<missing type name>"
-   }
-   /**
-    * @param {any} value
-    * @returns {string}
-    */
-   typeof(value) {
-      const type = typeof value
-      if (type === "object") {
-         if (value === null) return "null"
-         const className = value.constructor?.name
-         if (className && className !== "Object") return className
-      }
-      return type
-   }
-   /**
-    * @param {{constructor:{name:string}}|ImplementsInterfaceLogID} obj
-    * @returns {string}
-    */
-   objectName(obj) {
-      if (obj && "typeClass" in obj) { // TODO: typeClass does not ensure of type InterfaceLogID
-         const ilogid = InterfaceLogID.assertInterface(obj)
-         const logid = ilogid.getLogID(obj)
-         return logid.toString(ilogid.assertOwner(obj))
-      }
-      return this.typeof(obj)
-   }
+   /** @type {{NOLOG:LogLevel_NOLOG,FATAL:LogLevel_FATAL,ERROR:LogLevel_ERROR,WARNING:LogLevel_WARNING,DEBUG:LogLevel_DEBUG,INFO:LogLevel_INFO}} References all log levels. */
+   static LEVELS={ NOLOG:0, FATAL:1, ERROR:2, WARNING:3, DEBUG:4, INFO:5 }
+   /** @type {["NoLog","Fatal","Error","Warning","Debug","Info"]} Names off all known log levels. */
+   static LEVELNAMES=[ "NoLog", "Fatal", "Error", "Warning", "Debug", "Info" ]
    /**
     * Converts provided value to a string.
     * @param {any} v Value which is converted to a string.
-    * @returns {string} The string representation of *v*.
+    * @return {string} The string representation of *v*.
     */
    static stringOf(v) {
       if (v != null && typeof v === "object") {
@@ -481,146 +519,212 @@ class Logger {
       return String(v)
    }
    /**
-    * Converts provided value to a string.
-    * @param {any} v Value which is converted to a string.
-    * @returns {string} The string representation of *v*.
+    * @param {{name:string}|{constructor:{name:string}}|LogIDOwner} component Class, object, or object which has a LogID.
+    * @return {string}
     */
-   stringOf(v) { return Logger.stringOf(v) }
-   /**
-    * Sets log level. The value {@link LogLevel_OFF} turns off logging.
-    * @param {LogLevel_OFF|LogLevel} level
-    */
-   setLevel(level) { this.level = level }
-   /**
-    * @param {LogLevel} level
-    * @param {string} context
-    * @param {string|Error} msgOrException
-    */
-   writeFormattedLog(level, context, msgOrException) {
-      const message = msgOrException instanceof Error
-               ? new Error(`Catched exception ${String(msgOrException)}.`,{cause:msgOrException})
-               : level <= Logger.ERROR ? new Error(msgOrException) : msgOrException
-      this.writeLog(level, context, message)
+   static componentName(component) {
+      if ("name" in component) return String(component.name)
+      const logid = ("getLogID" in component) && component.getLogID()
+      return logid ? logid.name(component) : this.typeof(component)
    }
    /**
-    * @param {LogLevel} level
-    * @param {string} context
-    * @param {string|Error} msgOrException
+    * @param {any} value
+    * @return {string}
     */
-   formattedError(level, context, msgOrException) {
-      if (msgOrException instanceof Error)
-         return Error(`${context} ${Logger.LEVELNAME[level] ?? level}: Catched exception ${msgOrException}.`,{cause:msgOrException})
-      return Error(`${context} ${Logger.LEVELNAME[level] ?? level}: ${msgOrException}`)
+   static typeof(value) {
+      const type = typeof value
+      if (type === "object") {
+         if (value === null) return "null"
+         const className = value.constructor?.name
+         if (className && className !== "Object") return className
+      }
+      return type
    }
-   /**
-    * @param {LogLevel} level
-    * @param {{name:string}} classConstructor
-    * @param {string|Error} message
-    */
-   logStatic(level, classConstructor, message) {
-      if (level > this.level) return
-      this.writeFormattedLog(level, this.className(classConstructor), message)
-   }
-   /**
-    * @param {LogLevel} level
-    * @param {{constructor:{name:string}}} obj
-    * @param {string|Error} message
-    */
-   log(level, obj, message) {
-      if (level > this.level) return
-      this.writeFormattedLog(level, this.objectName(obj), message)
-   }
-   /**
-    * @callback LogWithObjectContext
-    * @param {{constructor:{name:string}}} obj
-    * @param {string|Error} message
-    * @returns {void}
-    */
-   /** @type {LogWithObjectContext} */
-   debug(obj, message) { this.log(Logger.DEBUG, obj, message) }
-   /** @type {LogWithObjectContext} */
-   error(obj, message) { this.log(Logger.ERROR, obj, message) }
-   /** @type {LogWithObjectContext} */
-   info(obj, message) { this.log(Logger.INFO, obj, message) }
-   /** @type {LogWithObjectContext} */
-   warning(obj, message) { this.log(Logger.WARNING, obj, message) }
-   /**
-    * @param {{constructor:{name:string}}} obj
-    * @param {string|Error} message
-    * @param {object} [args] Additional log arguments written to console.
-    * @returns {never}
-    */
-   throwError(obj, message, args) {
-      this.error(obj, message)
-      args && this.writeArgs(message,args)
-      throw this.formattedError(Logger.ERROR,this.objectName(obj),message)
-   }
-   /**
-    * @callback LogWithStaticContext
-    * @param {{name:string}} classConstructor
-    * @param {string|Error} message
-    * @returns {void}
-    */
-   /** @type {LogWithStaticContext} */
-   debugStatic(classConstructor, message) { this.logStatic(Logger.DEBUG, classConstructor, message) }
-   /** @type {LogWithStaticContext} */
-   errorStatic(classConstructor, message) { this.logStatic(Logger.ERROR, classConstructor, message) }
-   /** @type {LogWithStaticContext} */
-   infoStatic(classConstructor, message) { this.logStatic(Logger.INFO, classConstructor, message) }
-   /** @type {LogWithStaticContext} */
-   warningStatic(classConstructor, message) { this.logStatic(Logger.WARNING, classConstructor, message) }
-   /**
-    * @param {{name:string}} classConstructor
-    * @param {string|Error} message
-    * @param {object} [args] Additional log arguments written to console.
-    * @returns {never}
-    */
-   throwErrorStatic(classConstructor, message, args) {
-      this.errorStatic(classConstructor, message)
-      args && this.writeArgs(message,args)
-      throw this.formattedError(Logger.ERROR,this.className(classConstructor),message)
-   }
+
+   /** @type {LogLevel} */
+   #level
 
    ////////////////////////////
    // Overwritten in Subtype //
    ////////////////////////////
    /**
-    * @param {LogLevel} level
-    * @param {string} context
-    * @param {string|Error} message
+    * @param {LogLevel} [level]
     */
-   writeLog(level, context, message) {
-      console.log(context, this.levelName(level)+":", message)
+   constructor(level) {
+      this.#level = level ?? Logger.WARNING
+   }
+   /** @typedef {undefined|object|Error} LogArgs An object with named arguments written to the console or a catched exception which is the reason for the log. */
+   /**
+    * @param {LogLevel} level
+    * @param {string} levelName
+    * @param {string} component
+    * @param {string|Error} message
+    * @param {LogArgs} args Catched Error or additional arguments.
+    */
+   writeLog(level, levelName, component, message, args) {
+      console.log(component, levelName+":", message)
+      if (args) console.log(args instanceof Error ? "Caused by:" : "Log Args:", args)
+   }
+   ////////////////
+   // Properties //
+   ////////////////
+   /** Names of all logging levels. Index into corresponds to level. @return {typeof Logger.LEVELNAMES} */
+   get levelNames() { return [...Logger.LEVELNAMES] }
+   /** @return {typeof Logger.LEVELS} */
+   get levels() { return {...Logger.LEVELS} }
+   /**
+    * @param {LogLevel} level
+    * @return {string}
+    */
+   levelName(level) { return (Logger.LEVELNAMES[level] ?? String(level)) }
+   /** @return {LogLevel} */
+   get level() { return this.#level }
+   /** Sets log level with {@link LogLevel_OFF} turning logging off. @param {LogLevel} level */
+   set level(level) { this.#level = level }
+   ////////////////////////
+   // String Conversions //
+   ////////////////////////
+   /** @typedef {{name:string}|{constructor:{name:string}}|LogIDOwner} Logger_Component Class, object, or object which has a LogID. */
+   /**
+    * @param {Logger_Component} component Class, object, or object which has a LogID.
+    * @return {string}
+    */
+   componentName(component) { return Logger.componentName(component) }
+   /**
+    * @param {any} value
+    * @return {string}
+    */
+   typeof(value) { return Logger.typeof(value) }
+   /**
+    * Converts provided value to a string.
+    * @param {any} v Value which is converted to a string.
+    * @return {string} The string representation of *v*.
+    */
+   stringOf(v) { return Logger.stringOf(v) }
+   ////////////////
+   // Format Log //
+   ////////////////
+   /**
+    * @param {LogLevel} level
+    * @param {Logger_Component} component Class, object, or object which has a LogID.
+    * @param {string} message
+    * @param {LogArgs} args Catched Error or additional arguments.
+    */
+   log(level, component, message, args) {
+      if (level > this.#level) return
+      const isSevere = level <= Logger.ERROR
+      const message2 = isSevere ? new Error(message,args==null?undefined:{cause:args}) : message
+      for (let componentName;;) {
+         try {
+            componentName ??= this.componentName(component)
+            this.writeLog(level, this.levelName(level), componentName, message2, isSevere ? undefined : args)
+            return
+         }
+         catch(except) {
+            // ignore failure to write log
+            if (componentName !== undefined) {
+               console.log(this.formatError(Logger.ERROR,this,"writeLog failed",except))
+               return
+            }
+            componentName = "-" + String(component) + "-"
+         }
+      }
    }
    /**
-    * @param {string|Error} message
-    * @param {object} args Additional log arguments written to console.
+    * @param {LogLevel} level
+    * @param {Logger_Component} component Class, object, or object which has a LogID.
+    * @param {string} message
+    * @param {LogArgs} args Catched Error or additional arguments.
     */
-   writeArgs(message, args) {
-      console.log(`Console output for »${message}«:`,args)
+   formatError(level, component, message, args) {
+      return Error(`${this.componentName(component)} ${this.levelName(level)}: ${message}`,args==null?undefined:{cause:args})
    }
+   ////////////////////////////////
+   // Do Logging from Components //
+   ////////////////////////////////
+   /**
+    * @callback LogWithObjectContext
+    * @param {Logger_Component} obj Class, object, or object which has a LogID.
+    * @param {string} message
+    * @param {LogArgs} [args] Catched Error or additional arguments.
+    * @return {void}
+    */
+   /** @type {LogWithObjectContext} */
+   debug(obj, message, args) { this.log(Logger.DEBUG, obj, message, args) }
+   /** @type {LogWithObjectContext} */
+   error(obj, message, args) { this.log(Logger.ERROR, obj, message, args) }
+   /** @type {LogWithObjectContext} */
+   info(obj, message, args) { this.log(Logger.INFO, obj, message, args) }
+   /** @type {LogWithObjectContext} */
+   warning(obj, message, args) { this.log(Logger.WARNING, obj, message, args) }
+   /**
+    * @param {Logger_Component} obj Class, object, or object which has a LogID.
+    * @param {string} message
+    * @param {LogArgs} [args] Catched Error or additional arguments.
+    * @return {never}
+    */
+   throwError(obj, message, args) {
+      this.error(obj, message, args)
+      throw this.formatError(Logger.ERROR,obj,message,args)
+   }
+}
+
+class VMXExtensionPoint {
+   /** @type {undefined|((arg:WindowView)=>void)|((arg:WindowView)=>void)[]} */
+   #closeWindowView
+
+   /**
+    * @template ARG
+    * @param {undefined|((arg:ARG)=>void)|((arg:ARG)=>void)[]} oldstate
+    * @param {(arg:ARG)=>void} callback
+    * @return {((arg:ARG)=>void)|((arg:ARG)=>void)[]}
+    */
+   #register(oldstate, callback) {
+      if (typeof callback !== "function") return VMX.throwError(this,`Expect argument »callback« of type function stead of ${VMX.typeof(callback)}.`)
+      const newstate = !oldstate ? callback : Array.isArray(oldstate) ? [...oldstate, callback] : [oldstate, callback]
+      return newstate
+   }
+   /**
+    * @template ARG
+    * @param {undefined|((arg:ARG)=>void)|((arg:ARG)=>void)[]} state
+    * @param {ARG} arg
+    * @return {void}
+    */
+   #runExtension(state, arg) { for (const cb of Array.isArray(state) ? state : state ? [state] : []) cb(arg) }
+
+   /** @param {(arg:WindowView)=>void} callback  */
+   registerCloseWindowView(callback) { this.#closeWindowView = this.#register(this.#closeWindowView, callback) }
+   /** @param {WindowView} windowView @return {void} */
+   closeWindowView(windowView) { this.#runExtension(this.#closeWindowView,windowView) }
 }
 
 /**
  * Allocated at bottom of source and assigned to global variable »VMX«.
  */
 class ViewModelContext {
-   /** Stores references from logIDs to their owners and attached HTML elements. */
-   logidBinding = new LogIDBinding()
-   /** All ViewListener are managed by this single instance. */
-   listeners = new ViewListeners()
-   /** Manages callbacks which are called before the View is rendered to the screen the next time. */
-   viewUpdateListener = new ViewUpdateListener()
-   /** Supports logging. */
-   log = Logger.getDefault()
-   /** @type {ViewModelActionLocking} */
-   vmActionLocking
-   /** @type {DocumentVM} The view model for the whole document.documentElement. */
+   /** The view model for the whole document.documentElement. @type {DocumentVM} */
    documentVM
+   /** The view model for the whole document.documentElement. @type {VMXExtensionPoint} */
+   extpoint
+   /** All ViewListener are managed by this single instance. @type {ViewListeners} */
+   listeners
+   /** Supports logging with default logger. @type {Logger} */
+   log
+   /** Stores references from logIDs to their owners and attached HTML elements. @type {LogIDBinding} */
+   logidBinding
+   /** Manages callbacks which are called before the View is rendered to the screen the next time. @type {ViewDrawListener} */
+   viewDrawListener
+   /** @type {ViewModelObserverHub} */
+   vmObserver
 
    init() {
+      this.extpoint = new VMXExtensionPoint()
+      this.log = new Logger()
+      this.logidBinding = new LogIDBinding()
+      this.listeners = new ViewListeners()
+      this.viewDrawListener = new ViewDrawListener()
+      this.vmObserver = new ViewModelObserverHub()
       this.documentVM = new DocumentVM()
-      this.vmActionLocking = new ViewModelActionLocking()
    }
 
    ////////////
@@ -628,18 +732,18 @@ class ViewModelContext {
    ////////////
 
    /**
-    * @returns {ViewModel[]} All {@link ViewModel} having HTML elements connected to the document.
+    * @return {ViewModel[]} All {@link ViewModel} having HTML elements connected to the document.
     */
    getConnectedViewModels() {
       const elements = this.logidBinding.getElementsBy({rootElem:document})
       return elements.flatMap( el =>
-         this.logidBinding.getTypedOwnersBy({elem:el, type:ViewModel})
+         this.logidBinding.getOwnersByTypeAndElem(ViewModel,el)
       )
    }
    /**
     * @param {Document|HTMLElement} rootElem The root and all its childs are queried for listeners.
     * @param {string} [eventType] Optional event type a listener is listening on.
-    * @returns {(Document|HTMLElement)[]} An array of HTML elements who has attached listeners.
+    * @return {(Document|HTMLElement)[]} An array of HTML elements who has attached listeners.
     */
    getListenedElements(rootElem, eventType) {
       return VMX.listeners.getListenedElements(rootElem,eventType)
@@ -649,34 +753,33 @@ class ViewModelContext {
    // JavaScript Low Level Helpers //
    //////////////////////////////////
 
-   isConstructor(value) {
-      try {
-         return (Reflect.construct(String,[],value), true)
-      }
-      catch(e) {
-         return false
-      }
+   /**
+    * @param {Function} constructor
+    * @returns {boolean} *true* if constructor as a function serving as a constructor.
+    */
+   isConstructor(constructor) {
+      try { return (Reflect.construct(String,[],constructor), true) } catch(except) { return false }
    }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
-    * @returns {string}
+    * @return {string}
     */
-   objectName(obj) { return this.log.objectName(obj) }
+   componentName(obj) { return this.log.componentName(obj) }
    /**
     * @param {any} value
-    * @returns {string} Either name of constructor or name of primitive type.
+    * @return {string} Either name of constructor or name of primitive type.
     */
    typeof(value) { return this.log.typeof(value) }
    /**
     * Converts provided value to a string.
     * @param {any} value Value which is converted to a string.
-    * @returns {string} The string representation of *v*.
+    * @return {string} The string representation of *v*.
     */
    stringOf(value) { return this.log.stringOf(value) }
    /**
     * @param {object} obj
     * @param {string} name
-    * @returns {undefined|PropertyDescriptor}
+    * @return {undefined|PropertyDescriptor}
     */
    getPropertyDescriptor(obj, name) {
       for (var proto = obj; proto; proto = Object.getPrototypeOf(proto)) {
@@ -690,213 +793,104 @@ class ViewModelContext {
    /////////////////////////
 
    /**
-    * @param {function} classConstructor
-    * @param {string} msg
-    * @returns {never}
-    */
-   throwErrorStatic(classConstructor, msg) { return this.log.throwErrorStatic(classConstructor,msg) }
-   /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
     * @param {string} msg
-    * @param {object} [args]
-    * @returns {never}
+    * @param {object|Error} [args]
+    * @return {never}
     */
-   throwErrorObject(obj, msg, args) { return this.log.throwError(obj,msg,args) }
+   throwError(obj, msg, args) { return this.log.throwError(obj,msg,args) }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
     * @param {string} msg
     */
-   logErrorObject(obj, msg) { this.log.error(obj, msg) }
+   logError(obj, msg) { this.log.error(obj, msg) }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
+    * @param {string} msg
     * @param {any} exception
     */
-   logExceptionObject(obj, exception) { this.log.error(obj, exception) }
+   logException(obj, msg, exception) { this.log.error(obj, msg, Object(exception)) }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
     * @param {string} msg
     */
-   logInfoObject(obj, msg) { this.log.info(obj, msg) }
+   logInfo(obj, msg) { this.log.info(obj, msg) }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
     * @param {string} msg
     */
-   logDebugObject(obj, msg) { this.log.debug(obj, msg) }
-}
-
-/**
- * @typedef ImplementsInterfaceLogID
- * @property {{InterfaceLogID:InterfaceLogID}} typeClass
- */
-
-/**
- * Allows to access LogID of object and a parent to produce a chain of log IDs.
- * Use {@link ImplementsInterfaceLogID} to mark a type implementing this interface.
- */
-class InterfaceLogID {
-   /** @type {(owner:ImplementsInterfaceLogID)=>LogID} */
-   getLogID
-   /** @type {(owner:ImplementsInterfaceLogID)=>undefined|object} */
-   getParent
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {LogID}
-    */
-   static getLogID(owner) { return this.assertInterface(owner).getLogID(owner) }
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {undefined|object}
-    */
-   static getParent(owner) { return this.assertInterface(owner).getParent(owner) }
-   /**
-    * @param {{getLogID?:(owner:ImplementsInterfaceLogID)=>LogID,getParent?:(owner:ImplementsInterfaceLogID)=>undefined|object}} adapter
-    */
-   constructor({getLogID, getParent}) {
-      this.getLogID=getLogID ?? this.defaultGetLogID
-      this.getParent=getParent ?? this.defaultGetParent
-   }
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {undefined|InterfaceLogID}
-    */
-   static getInterface(owner) {
-      const ilogid = owner?.typeClass?.InterfaceLogID
-      return ilogid instanceof InterfaceLogID ? ilogid : undefined
-   }
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {InterfaceLogID}
-    */
-   static assertInterface(owner) {
-      return this.getInterface(owner) ?? VMX.throwErrorObject(this, `owner »${VMX.typeof(owner)}« does not implement InterfaceLogID.`)
-   }
-   /**
-    * @param {any} owner
-    * @returns {ImplementsInterfaceLogID}
-    */
-   assertOwner(owner) {
-      const ilogid = owner?.typeClass?.InterfaceLogID
-      if (this === ilogid)
-         return owner
-      return VMX.throwErrorObject(this, `owner »${VMX.typeof(owner)}« does not implement InterfaceLogID.`)
-   }
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {LogID}
-    */
-   defaultGetLogID(owner) {
-      if ("LID" in owner && owner.LID instanceof LogID)
-         return owner.LID
-      return VMX.throwErrorObject(this, `owner »${VMX.typeof(owner)}« does not have property LID:LogID.`)
-   }
-   /**
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {undefined}
-    */
-   defaultGetParent(owner) { return undefined }
+   logDebug(obj, msg) { this.log.debug(obj, msg) }
 }
 
 /**
  * Assigns a log-ID to a component which produces log entries.
  */
 class LogID {
-   /**  @type {number} */
-   #index
+   /** @type {number} */
+   #id = 0
    //
    // Generate unique index
    //
-   static INDEX = 1
-   static nextIndex() {
-      const index = this.INDEX ++
-      return index
+   static ID = 0
+   /** @type {number[]} */
+   static FREE_IDs = []
+   /** @return {number} */
+   static nextID() {
+      if (this.FREE_IDs[0] === this.ID) {
+         this.FREE_IDs.shift()
+         -- this.ID
+      }
+      return this.FREE_IDs.shift() ?? ++ this.ID
    }
+   /** @param {number} id */
+   static freeID(id) { (id > 0) && (id === this.ID ? --this.ID : this.FREE_IDs.push(id)) }
    /**
+    * Binds LogID index to owner and possible HTML elements.
     * @param {LogIDOwner} owner
-    * @param {Document|HTMLElement|EventTarget} [htmlElem]
+    * @param {EventTarget|(EventTarget)[]} [elems]
     */
-   constructor(owner, htmlElem) {
-      this.#index = LogID.nextIndex()
-      VMX.logidBinding.bindOwner(this, owner)
-      if (VMX.logidBinding.getOwnerBy({index:this.#index}) !== owner)
+   constructor(owner, elems) { this.init(owner,elems) }
+   /**
+    * Frees binding
+    */
+   free() { this.isFree() || (VMX.logidBinding.deleteBinding(this), LogID.freeID(this.#id), this.#id=0) }
+   /**
+    * @return {boolean} *true*, if binding was already freed.
+    */
+   isFree() { return this.#id === 0 }
+   /**
+    * Binds LogID index to owner and possible HTML elements.
+    * @param {LogIDOwner} owner
+    * @param {EventTarget|(EventTarget)[]} [elems]
+    */
+   init(owner, elems) {
+      this.free()
+      this.#id = LogID.nextID()
+      if (VMX.logidBinding.getOwnerByIndex(this.#id)) return VMX.throwError(owner,`LogID.id not unique id=${this.#id}.`)
+      VMX.logidBinding.setBinding(this, owner, elems)
+      if (VMX.logidBinding.getOwnerByIndex(this.#id) !== owner)
          throw Error("... owner differs ... (TODO: remove)")
-      this.bindElem(owner, htmlElem)
    }
+   /** @return {number} The log ID which is a unique number. */
+   get id() { return this.#id }
+   /** @return {undefined|LogIDOwner} */
+   get owner() { return VMX.logidBinding.getOwnerByIndex(this.#id) }
+   /** @return {string} Name of owner which is '[ppid/pid/id typename]'. */
+   toString() { return this.name(this.owner) }
    /**
-    * @param {LogIDOwner} owner
+    * Name of owner and parents if depth > 0.
+    * @param {undefined|LogIDOwner} owner
+    * @param {number} depth Default is 3. The number of parents chained into this path.
+    * @return {string} Returns path name like 'ppid/pid/id-typename'
     */
-   unbind(owner) { VMX.logidBinding.unbind(this, owner) }
-   /**
-    * @param {LogIDOwner} owner
-    * @param {Document|HTMLElement|EventTarget|undefined} htmlElem
-    */
-   bindElem(owner, htmlElem) {
-      // TODO: rename into bindViewElem (htmlElem -> viewElem) !!!
-      if (htmlElem && htmlElem instanceof Document || htmlElem instanceof HTMLElement)
-         VMX.logidBinding.bindViewElem(owner, htmlElem)
-   }
-   /**
-    * @param {LogIDOwner} owner
-    * @param {Document|Element|(Document|Element)[]} elems
-    */
-   bindElems(owner, elems) {
-      // TODO: rename bindViewElems ; replace type elems -> ViewElem|ViewElem[]
-      VMX.logidBinding.unbindAllViewElem(owner)
-      for (const elem of Array.isArray(elems)?elems:[elems]) {
-         if (elem instanceof Document || elem instanceof HTMLElement)
-            VMX.logidBinding.bindViewElem(owner, elem)
-      }
-   }
-
-   get index() {
-      return this.#index
-   }
-   /**
-    * @type {undefined|LogIDOwner}
-    */
-   get owner() { return VMX.logidBinding.getOwnerBy({index:this.#index}) }
-   /**
-    * Returns chain of parent LogIDs.
-    * @param {ImplementsInterfaceLogID} owner
-    * @param {number} depth The number of maximum parent.LID in the chained path of LogIDs.
-    * @returns {string} Returns parent IDs like '['+parent.parent.LID+']/['+parent.LID+']'
-    */
-   parentChain(owner, depth=2) {
-      if (depth > 0) {
-         const parent = this.parent(owner)
-         if (parent) {
-            const parentLID = InterfaceLogID.getLogID(parent)
-            return parentLID.parentChain(parent, depth-1)+"["+parentLID.index+"]/"
+   name(owner, depth=3) {
+      !owner || (owner.getLogID() === this) || VMX.throwError(this, `Argument »owner« returns wrong LogID.`)
+      let path = `${this.#id}-${VMX.typeof(owner)}`, parent = owner
+      if (parent)
+         while (depth-- > 0 && (parent = parent.getLogIDParent())) {
+            path = parent.getLogID().id + "/" + path
          }
-      }
-      return ""
-   }
-   /**
-    * Returns name if LogID owner.
-    * @param {ImplementsInterfaceLogID} owner
-    * @returns {string} Name of owner which is '['+parent.LID+']/'+className(owner)+'-['+owner.LID+']'
-    */
-   toString(owner) {
-      if (InterfaceLogID.assertInterface(owner).getLogID(owner) !== this)
-         VMX.throwErrorObject(this, "... owner missing ... (TODO: remove)")
-      return `${this.parentChain(owner)}${this.name(owner)}-[${this.#index}]`
-   }
-   /**
-    * Returns name of object.
-    * @param {any} owner
-    * @returns {string} Return type name of owner. See {@link className}.
-    */
-   name(owner) { return VMX.typeof(owner) }
-   /**
-    * Returns parent of owner only if parent has also a LogID.
-    * @param {any|{LID: LogID}} owner
-    * @returns {undefined|ImplementsInterfaceLogID} The parent of the owner which has also an assigned LogID else undefined for no parent.
-    */
-   parent(owner) {
-      const ilogid = InterfaceLogID.assertInterface(owner)
-      const parent = ilogid.getParent(owner)
-      const pilogid = parent?.typeClass?.InterfaceLogID
-      if (pilogid instanceof InterfaceLogID)
-         return parent
+      return path
    }
 }
 
@@ -905,19 +899,19 @@ class LogID {
  * View is rendered to the screen.
  * Implemented with help of requestAnimationFrame.
  */
-class ViewUpdateListener {
+class ViewDrawListener {
    /** @type {((timestamp:number)=>void)[]} */
    #callbacks = []
    /** The number of the next requested animation frame
     * @type {null|number} */
    #frameID = null
    constructor(delayCount, callback) {
-      callback && this.onceOnViewUpdate(delayCount, callback)
+      callback && this.onceOnDrawFrame(delayCount, callback)
    }
    /**
     * @param {number} timestamp
     */
-   #onUpdate(timestamp) {
+   #onDraw(timestamp) {
       const callbacks = this.#callbacks
       this.#callbacks = []
       this.#frameID = null
@@ -928,21 +922,21 @@ class ViewUpdateListener {
     * @param {number} delayCount A value of 0 means to execute callback before next view update. A value > 0 delays the skips the execution for the next delayCount updates.
     * @param {(timestamp?:number)=>void} [callback]
     */
-   onceOnViewUpdate(delayCount, callback) {
+   onceOnDrawFrame(delayCount, callback) {
       if (typeof callback !== "function") return
       this.#callbacks.push( 0 < delayCount && delayCount < 300
-         ? () => this.onceOnViewUpdate(delayCount-1,callback)
+         ? () => this.onceOnDrawFrame(delayCount-1,callback)
          : callback
       )
       if (this.#frameID == null)
-         this.#frameID = requestAnimationFrame(this.#onUpdate.bind(this))
+         this.#frameID = requestAnimationFrame(this.#onDraw.bind(this))
    }
 }
 
 class ControllerEvent {
    /** @type {string} */
    type
-   /** @type {{currentTarget:Document|HTMLElement, target:null|EventTarget, timeStamp:number, type:string}} */
+   /** @type {{controllerTarget:Document|HTMLElement, listenerTarget:EventTarget, target:EventTarget, timeStamp:number }} */
    event
    /** @type {Event} The original event received by an (HTML)-EventTarget. */
    oevent
@@ -953,27 +947,37 @@ class ControllerEvent {
     */
    constructor(type, controller, e) {
       this.type = type
-      this.event = { currentTarget:controller.htmlElem, target:e.target, timeStamp:e.timeStamp, type }
+      this.event = { controllerTarget:controller.htmlElem, listenerTarget:e.currentTarget??controller.htmlElem, target:e.target??controller.htmlElem, timeStamp:e.timeStamp }
       this.oevent = e
    }
    get eventPhaseCapture() { return this.oevent.eventPhase === 1 }
    get eventPhaseTarget() { return this.oevent.eventPhase === 2 }
    get eventPhaseBubbling() { return this.oevent.eventPhase === 3 }
    get eventTarget() { return this.event.target }
-   get eventCurrentTarget() { return this.event.currentTarget }
+   get eventListenerTarget() { return this.event.listenerTarget }
+   get eventControllerTarget() { return this.event.controllerTarget }
+   // TODO: ! add view (if possible) !
 }
 
-class ViewListenerTypeClass extends TypeClass {
-   InterfaceLogID=new InterfaceLogID({ getParent: (owner) => owner instanceof ViewListener ? owner.owner : undefined })
+class ViewListenerConfig {
+   static Category = VMXConfig.LISTENER
 }
 
 /**
  * Stores state of event listener added to HTML view.
  */
 class ViewListener {
-   static #typeClass = new ViewListenerTypeClass(ViewListener,TypeClass.LISTENER)
-   static get typeClass() { return ViewListener.#typeClass }
-   get typeClass() { return ViewListener.#typeClass }
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** @return {typeof ViewListenerConfig} */
+   get ClassConfig() { return ViewListenerConfig }
+   //////////////////////////
+   // implement LogIDOwner //
+   //////////////////////////
+   getLogID() { return this.logid }
+   getLogIDParent() { return this.owner }
+
    /////////////
    // Options //
    /////////////
@@ -993,8 +997,6 @@ class ViewListener {
    static BUBBLE_PHASE = 2
    /** @type {2} If no PHASE is set default is BUBBLE_PHASE. */
    static DEFAULT_PHASE = 2
-   /** @type {3} Mask with all phase values bits set. */
-   static ALL_PHASES = 3
    static KEYS={
       COMPOSE:"Compose",
       CONTROL:"Control", CONTROL_LEFT_CODE:"ControlLeft", CONTROL_RIGHT_CODE:"ControlRight",
@@ -1024,7 +1026,7 @@ class ViewListener {
    static ANIMATION={ CANCEL:"cancel", FINISH:"finish", REMOVE:"remove" }
    /**
     * @param {Event|KeyboardEvent} e
-    * @returns
+    * @return {string}
     */
    static eventToString(e) {
       if (!e || typeof e !== "object") return String(e)
@@ -1048,25 +1050,25 @@ class ViewListener {
    }
    /**
     * @param {undefined|null|Event} e
-    * @returns {boolean} *true* if either touch event or mouse event with main button
+    * @return {boolean} *true* if either touch event or mouse event with main button
     */
    static isMainButton(e) { return this.isButton(e, 0) }
    /**
     * @param {undefined|null|Event} e
     * @param {number} button The number of the button (0==main(left),1==wheel(middle),2==second(right))
-    * @returns {boolean} *true* if button is pressed or released
+    * @return {boolean} *true* if button is pressed or released
     */
    static isButton(e, button) {
       return Boolean(e) && button === (e instanceof MouseEvent ? e.button : 0)
    }
    /**
     * @param {undefined|null|Event} e
-    * @returns {e is MouseEvent}
+    * @return {e is MouseEvent}
     */
    static isMouseEvent(e) { return e instanceof MouseEvent }
    /**
     * @param {undefined|null|Event} e
-    * @returns {e is TouchEvent}
+    * @return {e is TouchEvent}
     */
    static isTouchEvent(e) { return "TouchEvent" in window && e instanceof TouchEvent }
 
@@ -1074,39 +1076,43 @@ class ViewListener {
     * Contains added listener state.
     * Use {@link ViewListeners.addListener} of object VMX.listeners to create a new listener and add it to an html element.
     *
-    * @param {EventTarget} htmlElem - The HTML element event handler is added to.
+    * @param {EventTarget|ViewElem} elem - The HTML element event handler is added to.
     * @param {string} eventType - The event type ("click","touchstart",...).
     * @param {(e:Event)=>void} eventHandler - Callback which is called to handle events of the given type. The first argument is the HTML event.
-    * @param {{owner:LogIDOwner|null, phase?:number, once?:boolean}} options - Owner of the listener should be set.
+    * @param {{owner?:LogIDOwner, phase?:number, once?:boolean}} options - Owner of the listener should be set.
     */
-   constructor(htmlElem, eventType, eventHandler, {owner,phase,once}) {
-      this.htmlElem = htmlElem
+   constructor(elem, eventType, eventHandler, {owner,phase,once}) {
+      this.htmlElem = ViewElem.toEventTarget(elem)
       this.eventType = eventType
-      this.eventHandler = eventHandler
+      this.once = Boolean(once)
+      this.eventHandler = this.once // auto-free in case of once
+         ? (...args) => { try { eventHandler.apply(this.htmlElem,args) } finally { this.free() } }
+         : eventHandler
       this.owner = owner
       this.phase = phase || ViewListener.DEFAULT_PHASE
-      this.once = Boolean(once)
-      this.LID = new LogID(this, this.htmlElem)
+      this.logid = new LogID(this, this.htmlElem)
       this.#add()
    }
    free() {
-      this.#remove()
-      this.LID.unbind(this)
+      if (!this.logid.isFree()) {
+         this.#remove()
+         this.logid.free()
+      }
    }
-   isBubblePhase() { return Boolean(this.phase & ViewListener.BUBBLE_PHASE) }
-   isCapturePhase() { return Boolean(this.phase & ViewListener.CAPTURE_PHASE) }
+   isBubblePhase() { return this.phase === ViewListener.BUBBLE_PHASE }
+   isCapturePhase() { return this.phase === ViewListener.CAPTURE_PHASE }
    #add() {
       VMX.listeners.addListener(this)
       if (this.isBubblePhase())
-         this.htmlElem.addEventListener(this.eventType,this.eventHandler,{capture:false,passive:false})
-      if (this.isCapturePhase())
-         this.htmlElem.addEventListener(this.eventType,this.eventHandler,{capture:true,passive:false})
+         this.htmlElem.addEventListener(this.eventType,this.eventHandler,{capture:false,once:this.once,passive:false})
+      else if (this.isCapturePhase())
+         this.htmlElem.addEventListener(this.eventType,this.eventHandler,{capture:true,once:this.once,passive:false})
    }
    #remove() {
       VMX.listeners.removeListener(this)
       if (this.isBubblePhase())
          this.htmlElem.removeEventListener(this.eventType,this.eventHandler,{capture:false})
-      if (this.isCapturePhase())
+      else if (this.isCapturePhase())
          this.htmlElem.removeEventListener(this.eventType,this.eventHandler,{capture:true})
    }
 }
@@ -1126,8 +1132,8 @@ class ViewListeners {
    windowListeners = new Map()
    /** @type {(e:Event)=>void} */
    boundOnEndEventLoop
-   /** @type {WeakMap<Event,{callbacks:((e:Event)=>void)[], holder:PromiseHolder}>} */
-   endEventLoop = new WeakMap()
+   /** @type {null|{lastEvent:Event, callbacks:((e:Event)=>void)[], holder:PromiseHolder}} */
+   registeredEndEventLoop = null
    /**
     * Initializes a new ViewListener. There should be only a single one per window.
     */
@@ -1137,12 +1143,17 @@ class ViewListeners {
    /**
     * @param {ControllerEvent|Event} ce
     * @param {undefined|((e:Event) => void)} callback
-    * @returns {Promise<Event>}
+    * @return {Promise<Event>}
     */
    onceEndEventLoop(ce, callback) {
       const e = ce instanceof ControllerEvent ? ce.oevent : ce
-      const registered = this.endEventLoop.get(e) ?? { callbacks:[], holder:new PromiseHolder() }
-      registered.callbacks.length || this.endEventLoop.set(e, registered)
+      if (!e.isTrusted) return VMX.throwError(this,`Can process only trusted events.`)
+      if (this.registeredEndEventLoop && this.registeredEndEventLoop.lastEvent !== e) {
+         const e2 = this.registeredEndEventLoop.lastEvent
+         VMX.logError(this, `onEndEventLoop not called for last event {type:${e2.type}, target:${VMX.typeof(e2.target)}.`)
+         this.onEndEventLoop(e2)
+      }
+      const registered = (this.registeredEndEventLoop ??= { lastEvent:e, callbacks:[], holder:new PromiseHolder() })
       if (typeof callback === "function")
          registered.callbacks.push(callback)
       return registered.holder.promise
@@ -1151,12 +1162,12 @@ class ViewListeners {
     * @param {Event} e
     */
    onEndEventLoop(e) {
-      const registered = this.endEventLoop.get(e)
-      if (registered) {
-         this.endEventLoop.delete(e)
-         registered.callbacks.forEach( callback => callback(e))
-         registered.holder.resolve(e)
-      }
+      if (!this.registeredEndEventLoop) return
+      const { lastEvent:e2, callbacks, holder } = this.registeredEndEventLoop
+      if (e !== e2) VMX.logError(this, `onEndEventLoop called with wrong event {type:${e.type}, target:${VMX.typeof(e.target)} instead of {type:${e2.type}, target:${VMX.typeof(e2.target)}.`)
+      this.registeredEndEventLoop = null
+      callbacks.forEach( callback => callback(e))
+      holder.resolve(e)
    }
    /**
     * A new created {@link ViewListener} is added.
@@ -1169,7 +1180,7 @@ class ViewListeners {
       const eventType = listener.eventType
       const evListeners = eventTypes[eventType] || new Map()
       if (evListeners.has(listener.eventHandler))
-         return VMX.throwErrorObject(this,`Can not add same event handler twice for type ${listener.eventType}.`)
+         return VMX.throwError(this,`Can not add same event handler twice for type ${listener.eventType}.`)
       evListeners.set(listener.eventHandler,listener)
       if (evListeners.size === 1) {
          eventTypes[eventType] = evListeners
@@ -1188,8 +1199,8 @@ class ViewListeners {
     */
    removeListener(listener) {
       const eventTypes = this.listenedElements.get(listener.htmlElem)
-      const eventType = listener.eventType
       if (eventTypes) {
+         const eventType = listener.eventType
          const evListeners = eventTypes[eventType]
          if (evListeners) {
             evListeners.delete(listener.eventHandler)
@@ -1210,7 +1221,7 @@ class ViewListeners {
     * Returns iterator for iterating over all matching listeners.
     * @param {null|EventTarget} htmlElem The HTML element whose listeners are queried.
     * @param {string} [eventType] Optional type of the event the listener must match else listeners with any event type are matched.
-    * @returns {Iterator<ViewListener>&Iterable<ViewListener>}
+    * @return {Iterator<ViewListener>&Iterable<ViewListener>}
     */
    get(htmlElem, eventType) {
       const eventTypes = htmlElem ? this.listenedElements.get(htmlElem) : undefined
@@ -1230,7 +1241,7 @@ class ViewListeners {
    /**
     * @param {Document|HTMLElement} htmlElem The HTML element whose listeners are queried.
     * @param {string} [eventType] Optional type of the event the listener must match else listeners with any event type are matched.
-    * @returns {boolean}
+    * @return {boolean}
     */
    isListener(htmlElem, eventType) {
       return !this.get(htmlElem,eventType).next().done
@@ -1238,7 +1249,7 @@ class ViewListeners {
    /**
     * @param {Document|HTMLElement} rootElem The root HTML and all its child elements are queried for listeners.
     * @param {string} [eventType] Optional type of the event the listener must match else listeners with any event type are matched.
-    * @returns {(Document|HTMLElement)[]}
+    * @return {(Document|HTMLElement)[]}
     */
    getListenedElements(rootElem, eventType) {
       const result = []
@@ -1252,8 +1263,60 @@ class ViewListeners {
    }
 }
 
-class ViewControllerTypeClass extends TypeClass {
-   InterfaceLogID = new InterfaceLogID({ getParent: (owner) => { return (owner instanceof ViewController ? owner.view ?? owner.viewModel : undefined) } })
+class ViewControllerConfig {
+   /**
+    * @this {BasicTypeChecker}
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isGroupMember(value) { return !(value instanceof EventTarget) && BasicTypeChecker.expectValueOfType(value,"EventTarget") }
+   /**
+    * @this {BasicTypeChecker}
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isPhaseType(value) { return !(value === ViewListener.CAPTURE_PHASE || value === ViewListener.BUBBLE_PHASE) && BasicTypeChecker.expectValueOfType(value,ViewListener.CAPTURE_PHASE+"|"+ViewListener.BUBBLE_PHASE) }
+   /**
+    * @this {BasicTypeChecker}
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isViewType(value) { return !(value instanceof View) && BasicTypeChecker.expectValueOfType(value,"View") }
+   /**
+    * @this {BasicTypeChecker}
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isViewModelType(value) { return !(value instanceof ViewModel) && BasicTypeChecker.expectValueOfType(value,"ViewModel") }
+   /**
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isElementType(value) { return !(value instanceof Document || value instanceof HTMLElement) && BasicTypeChecker.expectValueOfType(value,"Document|HTMLElement") }
+
+   static Category = VMXConfig.CONTROLLER
+
+   /**
+    * @typedef ViewControllerConfigInitOptions
+    * @property {BasicTypeChecker} phase Optional value which determines phase when event listener is triggered. Allowed values are ViewListener.BUBBLE_PHASE or ViewListener.CAPTURE_PHASE. Default value is ViewListener.BUBBLE_PHASE.
+    * @property {BasicTypeChecker} view Optional view this controller is attached to. View is parent of controller.
+    * @property {BasicTypeChecker} viewModel Optional ViewModel this controller is attached to. ViewModel is parent of controller.
+    * @property {BasicTypeChecker} group Group of elements to be listened for change events instead of a single htmlElem.
+    * @property {BasicTypeChecker} enableClick Enables CLICK action. Default is false.
+    * @property {BasicTypeChecker} enableDoubleClick Enables DOUBLECLICK action. Default is false.
+    * @property {BasicTypeChecker} nomouse *true*, if mouse should be disabled. Default is false.
+    */
+
+   /** @type {ViewControllerConfigInitOptions} */
+   static InitOptions = {
+      phase: new BasicTypeChecker(ViewControllerConfig.isPhaseType),
+      view: new BasicTypeChecker(ViewControllerConfig.isViewType),
+      viewModel: new BasicTypeChecker(ViewControllerConfig.isViewModelType),
+      group: new BasicTypeChecker(BasicTypeChecker.validateIterable, new BasicTypeChecker(ViewControllerConfig.isGroupMember)),
+      enableClick: BasicTypeChecker.booleanType,
+      enableDoubleClick: BasicTypeChecker.booleanType,
+      nomouse: BasicTypeChecker.booleanType,
+   }
 }
 
 /**
@@ -1269,44 +1332,33 @@ class ViewControllerTypeClass extends TypeClass {
  * On activation the controller tries to get a lock on the action
  * by calling startAction and holds it until it is deactivated.
  * Calling an action (see {@link callAction} or {@link callActionOnce})
- * only works if the lock is hold.
- * - To change the state of the lock use {@link trySwitchLock}.
- * - To prevent acquiring the lock during {@link activate} set option tryLock to false.
- * - The lock is always removed during {@link deactivate}.
+ * auto-starts the action if it was not started before (tries acquire action lock).
+ * An action is only done if it was started succesfully.
+ * - To change state of action {@link tryStartAction} or {@link endAction}.
+ * - To prevent starting during {@link activate} set option noStartAction to true.
+ * - To acquire lock at end of event processing set option actionEvent to the current Event.
+ * - The action is ended during {@link deactivate}.
  */
 class ViewController {
-   static #typeClass = new ViewControllerTypeClass(ViewController,TypeClass.CONTROLLER)
-   static get typeClass() { return ViewController.#typeClass }
-   get typeClass() { return ViewController.#typeClass }
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** @return {typeof ViewControllerConfig} */
+   get ClassConfig() { return ViewControllerConfig }
+   //////////////////////////
+   // implement LogIDOwner //
+   //////////////////////////
+   getLogID() { return this.#logid }
+   getLogIDParent() { return this.#view ?? this.#viewModel }
+
    static preventDefault = (e) => e.preventDefault()
-   static Options(options) {
-      if (typeof options === "object") {
-         options = { ...options }
-         if ("group" in options) {
-            if (!(Symbol.iterator in Object(options.group)))
-               return VMX.throwErrorStatic(this, "options.group is not iterable")
-            options.group = [...options.group].filter( elem => typeof elem?.addEventListener == "function")
-         }
-         if ("phase" in options && !(typeof options.phase === "number" && (options.phase&ViewListener.ALL_PHASES)))
-            return VMX.throwErrorStatic(this, "options.phase is not of type number")
-         if ("enableClick" in options)
-            options.enableClick = Boolean(options.enableClick)
-         if ("view" in options && !(options.view instanceof View2))
-            return VMX.throwErrorStatic(this, "options.view is not of type View2")
-         if ("viewModel" in options && !(options.viewModel instanceof ViewModel))
-            return VMX.throwErrorStatic(this, "options.viewModel is not of type ViewModel")
-         if ("viewModel2" in options && !(options.viewModel2 instanceof ViewModel2))
-            return VMX.throwErrorStatic(this, "options.viewModel2 is not of type ViewModel2")
-      }
-      else
-         options = {}
-      return options
-   }
 
    /** @type {boolean} */
    #isActive = false
    /** @type {boolean} */
    #muted = false
+   /** @type {undefined|1|2} */
+   #phase
    /** @type {ViewListener[]} */
    #listeners = []
    /** @type {ViewListener[]} */
@@ -1316,100 +1368,105 @@ class ViewController {
    /** @type {undefined|ViewModelActionInterface} */
    #action
    /** @type {undefined|ViewModel} */
-   #viewModel // TODO: remove
-   /** @type {View2} */
+   #viewModel
+   /** @type {View} */
    #view
    /** @type {undefined|number} */
    #activationDelay
    /** @type {undefined|number} */
    #autoDeactivation
-   /** @type {object} */
-   options
    /** @type {LogID} */
-   LID
+   #logid
 
-   /** @typedef {undefined|null|ViewModelActionInterface|((e:ControllerEvent)=>void)} ViewControllerAction */
-
+   ////////////////////////////
+   // Overwritten in Subtype //
+   ////////////////////////////
    /**
+    * @typedef {undefined|null|ViewModelActionInterface|((e:ControllerEvent)=>void)} ViewControllerAction
+    *
     * @typedef ViewControllerOptions
-    * @property {View2} [view]
+    * @property {1|2} [phase] Optional value which determines phase when event listener is triggered. Allowed values are ViewListener.BUBBLE_PHASE or ViewListener.CAPTURE_PHASE. Default value is ViewListener.BUBBLE_PHASE.
+    * @property {View} [view] Optional view this controller is attached to. View is parent of controller.
     * @property {ViewModel} [viewModel] TODO: remove
+    *
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|ViewControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-
-   /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} [options]
-    */
-   constructor(htmlElem, action, options) {
-      this.LID = new LogID(this, htmlElem)
-      this.options = ViewController.Options(options)
-      this.#htmlElem = htmlElem
-      action && this.connectToAction(action)
-      if (this.options.view)
-         this.#view = this.options.view
-      if (this.options.viewModel)
-         this.#viewModel = this.options.viewModel
-   }
-   /**
-    * @param {ViewModelActionInterface|((e:ControllerEvent)=>void)} [action]
-    */
-   connectToAction(action) {
-      if (action) {
-         if (!(typeof action === "function" || action instanceof ViewModelActionInterface))
-            return VMX.throwErrorObject(this, `Argument action is not of type ViewModelActionInterface.`)
-         this.#action = action instanceof ViewModelActionInterface ? action : new ViewModelActionInterface(action)
+   constructor(elem, options, action) {
+      const htmlElem = this.#htmlElem = ViewElem.toHTMLElement(elem)
+      this.#logid = new LogID(this, htmlElem)
+      const elemError = ViewControllerConfig.isElementType(htmlElem)
+      if (elemError) return VMX.throwError(this, elemError("argument elem«"))
+      if (options) {
+         this.validateInitOptions(options)
+         if (options.view)
+            this.#view = options.view
+         if (options.viewModel)
+            this.#viewModel = options.viewModel
+         if (options.phase)
+            this.#phase = options.phase
       }
-      else
-         this.#action = undefined
+      this.setAction(action)
    }
    free() {
       this.deactivate()
       this.removeListeners(this.#listeners)
       this.removeListeners(this.#activeListeners)
-      this.LID.unbind(this)
-      this.#htmlElem = null
+      this.#logid.free()
       this.#action?.endAction()
-      return this
    }
    /**
-    * @type {undefined|View2}
+    * Called if delay option timed out (if activate called with delay set to a value > 0).
+    * Does nothing. Should be overwritten in a subtype if any action should be taken.
+    */
+   onActivationDelay() { }
+   /**
+    * Called if autoDeactivation option timed out (if activate called with autoDeactivation set to a value > 0).
+    * Deactivates the controller. Should be overwritten in a subtype if additional action should be taken.
+    */
+   onAutoDeactivation() { this.deactivate() }
+   /////////////////
+   // Init Helper //
+   /////////////////
+   /**
+    * @param {null|ViewModelActionInterface|((e:ControllerEvent)=>void)} [action]
+    */
+   setAction(action) {
+      this.#action = typeof action === "function" ? new ViewModelActionWrapper(action)
+                     : ViewModelActionInterface.isType(action) ? action
+                     : action == null ? undefined
+                     : VMX.throwError(this, `Expect argument »action« of type function or ViewModelActionInterface instead of ${VMX.typeof(action)}.`)
+   }
+   /**
+    * @param {{[option:string]:any}} options
+    */
+   validateInitOptions(options) {
+      const allowedOptions = this.ClassConfig.InitOptions
+      BasicTypeChecker.validateOptions(this, options, allowedOptions)
+   }
+   ////////////////
+   // Properties //
+   ////////////////
+   /**
+    * @type {undefined|View}
     */
    get view() { return this.#view }
-   /**
-    * @type {undefined|ViewModel}
-    */
-   get viewModel() { return this.#viewModel }
-   get htmlElem() {
-      return this.#htmlElem
-   }
-   get isActive() {
-      return this.#isActive
-   }
-   get isLocked() {
-      return this.#action ? this.#action.isLocked() : true
-   }
-   get isActivationDelay() {
-      return this.#activationDelay !== undefined
-   }
-   get isAutoDeactivation() {
-      return this.#autoDeactivation !== undefined
-   }
-   /**
-    * @returns {number} Number of calls to {@link addActiveListener}. Calling {@link removeActiveListenerForElement} resets this value to 0.
-    */
-   get nrActiveListeners() {
-      return this.#activeListeners.length
-   }
+   get htmlElem() { return this.#htmlElem }
+   get isActive() { return this.#isActive }
+   get actionStarted() { return Boolean(this.#action && this.#action.isStarted()) }
+   get isActivationDelay() { return this.#activationDelay !== undefined }
+   get isAutoDeactivation() { return this.#autoDeactivation !== undefined }
+   /** @return {number} Number of calls to {@link addActiveListener}. Calling {@link removeActiveListenerForElement} resets this value to 0. */
+   get nrActiveListeners() { return this.#activeListeners.length }
+   /** @return {boolean} *true* if controller is muted(+deactived) and does not generate any events. */
    get muted() { return this.#muted }
-   /**
-    * @param {boolean} muted Set value to *true* in case you want to prevent action callbacks.
-    */
-   set muted(muted) { this.#muted = muted }
+   /** @param {boolean} muted Set value to *true* in case you want to prevent action callbacks. */
+   set muted(muted) { (this.#muted = muted) && this.deactivate() }
    /**
     * @param {EventTarget} htmlElem
     * @param {string} eventType
-    * @returns {boolean} *true* if an listener is listening on htmlElem for event of type eventType.
+    * @return {boolean} *true* if an listener is listening on htmlElem for event of type eventType.
     */
    hasListenerFor(htmlElem, eventType) {
       return this.#matchListener(htmlElem, eventType, this.#listeners)
@@ -1417,7 +1474,7 @@ class ViewController {
    /**
     * @param {EventTarget} htmlElem
     * @param {string} eventType
-    * @returns {boolean} *true* if an listener in active state is listening on htmlElem for event of type eventType.
+    * @return {boolean} *true* if an listener in active state is listening on htmlElem for event of type eventType.
     */
    hasActiveListenerFor(htmlElem, eventType) {
       return this.#matchListener(htmlElem, eventType, this.#activeListeners)
@@ -1434,12 +1491,16 @@ class ViewController {
    hasActiveListenerForElement(htmlElem) {
       return htmlElem ? this.#activeListeners.some( listener => listener.htmlElem === htmlElem) : false
    }
+   ////////////////////
+   // Action Support //
+   ////////////////////
    /**
     * @param {ControllerEvent} ce
     */
    callAction(ce) {
-      if (!this.#muted && this.#action) {
-         try { this.#action.doAction(ce) } catch(x) { VMX.logExceptionObject(this, x) }
+      const action = this.#action
+      if (!this.#muted && action && action.isStarted()) {
+         try { action.doAction(ce) } catch(except) { VMX.logException(this, "callAction failed.", except) }
       }
    }
    /**
@@ -1450,38 +1511,46 @@ class ViewController {
       this.#action = undefined
    }
    /**
-    * @param {ViewListener[]} listenerArray
+    * @param {undefined|Event} e
     */
-   removeListeners(listenerArray) {
-      listenerArray.forEach(listener => listener && listener.free())
-      listenerArray.length = 0
+   tryStartAction(e) {
+      const action = this.#action
+      if (!action || action.isStarted()) return
+      e && VMX.listeners.onceEndEventLoop(e, () => action.startAction()) || action.startAction()
    }
    /**
-    * @param {boolean} isLock
+    * Removes lock from action so that other controllers could start their action.
     */
-   trySwitchLock(isLock) {
+   endAction() {
       const action = this.#action
-      if (action && action.isLocked() !== isLock) {
-         if (isLock)
-            action.startAction()
-         else
-            action.endAction()
-      }
+      action?.isStarted() && action.endAction()
    }
-   /**
-    * Tries to acquire lock and calls callback if locking succeeded. After return the lock state is the same as before the call.
-    * @param {()=>void} onLocked Callback is called if action could be locked.
-    */
-   withLock(onLocked) {
+   /** @param {()=>void} onStarted Called if action could be successfully started. @return {undefined|true} *true* if callback called with action started. */
+   withStartedAction(onStarted) {
       const action = this.#action
-      if (action) {
-         const isLocked = action.isLocked()
-         if (isLocked || action.startAction())
-            onLocked()
-         isLocked || action.endAction()
+      if (!action) return
+      const alreadyStarted = action.isStarted()
+      if (alreadyStarted || action.startAction()) {
+         onStarted()
+         alreadyStarted || action.endAction()
+         return true
       }
-      else {
-         onLocked()
+  }
+   /**
+    * @param {{actionEvent:undefined|Event, autoDeactivation?:number, delay?:number, noStartAction?:boolean}} options
+    * @param {()=>void} [onActivateCallback]
+    */
+   activate({actionEvent, autoDeactivation, delay, noStartAction}, onActivateCallback) {
+      if (!this.#isActive && !this.#muted) {
+         this.#isActive = true
+         noStartAction || this.tryStartAction(actionEvent)
+         onActivateCallback?.()
+         this.clearActivationDelay()
+         if (delay)
+            this.#activationDelay = setTimeout(() => { this.#activationDelay = undefined; this.onActivationDelay() }, delay)
+         this.clearAutoDeactivation()
+         if (autoDeactivation)
+            this.#autoDeactivation = setTimeout(() => { this.#autoDeactivation = undefined; this.onAutoDeactivation() }, autoDeactivation)
       }
    }
    /**
@@ -1493,25 +1562,8 @@ class ViewController {
          this.removeListeners(this.#activeListeners)
          this.clearActivationDelay()
          this.clearAutoDeactivation()
-         this.trySwitchLock(false)
+         this.endAction()
          onDeactivateCallback?.()
-      }
-   }
-   /**
-    * @param {{autoDeactivation?:number, delay?:number, noLock?:boolean}} options
-    * @param {()=>void} [onActivateCallback]
-    */
-   activate({autoDeactivation, delay, noLock}, onActivateCallback) {
-      if (!this.#isActive) {
-         this.#isActive = true
-         noLock || this.trySwitchLock(true)
-         onActivateCallback?.()
-         this.clearActivationDelay()
-         if (delay)
-            this.#activationDelay = setTimeout(() => { this.#activationDelay = undefined; this.onActivationDelay() }, delay)
-         this.clearAutoDeactivation()
-         if (autoDeactivation)
-            this.#autoDeactivation = setTimeout(() => { this.#autoDeactivation = undefined; this.onAutoDeactivation() }, autoDeactivation)
       }
    }
    /**
@@ -1536,49 +1588,83 @@ class ViewController {
          this.#autoDeactivation = undefined
       }
    }
+   //////////////////////
+   // Listener Support //
+   //////////////////////
    /**
-    * @param {EventTarget} htmlElem
+    * @param {EventTarget|ViewElem} elem
     * @param {string} eventType
     * @param {(e:Event)=>void} eventHandler
-    * @returns {ViewListener}
+    * @return {undefined|ViewListener} A value of undefined means a listener for the given element and event type already exists.
     */
-   #addListener(htmlElem, eventType, eventHandler) {
-      return new ViewListener(htmlElem, eventType, eventHandler, { owner:this, phase:this.options.phase })
-   }
-   /**
-    * @param {EventTarget} htmlElem
-    * @param {string} eventType
-    * @param {ViewListener[]} listeners
-    * @returns {boolean} *true* if in listeners exists a listener which is listening on htmlElem for event of type eventType.
-    */
-   #matchListener(htmlElem, eventType, listeners) {
-      return listeners.some( listener => listener.htmlElem == htmlElem && listener.eventType == eventType)
-   }
-   /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {string} eventType
-    * @param {(e:Event)=>void} eventHandler
-    * @returns {undefined|ViewListener} A value of undefined means a listener for the given element and event type already exists.
-    */
-   addListener(htmlElem, eventType, eventHandler) {
+   addListener(elem, eventType, eventHandler) {
+      const htmlElem = ViewElem.toEventTarget(elem)
       if (!this.#matchListener(htmlElem, eventType, this.#listeners)) {
-         const listener = this.#addListener(htmlElem, eventType, eventHandler)
+         const listener = this.#newListener(htmlElem, eventType, eventHandler)
          this.#listeners.push(listener)
          return listener
       }
    }
    /**
-    * @param {EventTarget} htmlElem
+    * @param {EventTarget|ViewElem} elem
     * @param {string} eventType
     * @param {(e:Event)=>void} eventHandler
-    * @returns {undefined|ViewListener} A value of undefined means a listener for the given element and event type already exists.
+    * @return {undefined|ViewListener} A value of undefined means a listener for the given element and event type already exists.
     */
-   addActiveListener(htmlElem, eventType, eventHandler) {
+   addActiveListener(elem, eventType, eventHandler) {
+      const htmlElem = ViewElem.toEventTarget(elem)
       if (!this.#matchListener(htmlElem, eventType, this.#activeListeners)) {
-         const listener = this.#addListener(htmlElem, eventType, eventHandler)
+         const listener = this.#newListener(htmlElem, eventType, eventHandler)
          this.#activeListeners.push(listener)
          return listener
       }
+   }
+   /**
+    * @param {ViewListener[]} listenerArray
+    */
+   removeListeners(listenerArray) {
+      listenerArray.forEach(listener => listener && listener.free())
+      listenerArray.length = 0
+   }
+   /**
+    * @param {EventTarget} htmlElem
+    * @param {string} eventType
+    * @param {(e:Event)=>void} eventHandler
+    * @return {ViewListener}
+    */
+   #newListener(htmlElem, eventType, eventHandler) {
+      return new ViewListener(htmlElem, eventType, eventHandler, { owner:this, phase:this.#phase })
+   }
+   /**
+    * @param {EventTarget} htmlElem
+    * @param {string} eventType
+    * @param {ViewListener[]} listeners
+    * @return {boolean} *true* if in listeners exists a listener which is listening on htmlElem for event of type eventType.
+    */
+   #matchListener(htmlElem, eventType, listeners) {
+      return listeners.some( listener => listener.htmlElem == htmlElem && listener.eventType == eventType)
+   }
+   /**
+    * @param {EventTarget} htmlElem
+    * @param {string[]} eventTypes
+    * @param {(e:Event)=>void} eventHandler
+    */
+   addListeners(htmlElem, eventTypes, eventHandler) {
+      eventTypes.forEach(eventType=>{
+         if (!this.#matchListener(htmlElem, eventType, this.#listeners))
+            this.#listeners.push(this.#newListener(htmlElem, eventType, eventHandler))
+      })
+   }
+   /**
+    * @param {EventTarget} htmlElem
+    * @param {string[]} eventTypes
+    * @param {(e:Event)=>void} eventHandler
+    */
+   addActiveListeners(htmlElem, eventTypes, eventHandler) {
+      eventTypes.forEach(eventType=>{
+         if (!this.#matchListener(htmlElem, eventType, this.#activeListeners))
+            this.#activeListeners.push(this.#newListener(htmlElem, eventType, eventHandler))
+      })
    }
    /**
     * @param {null|EventTarget} htmlElem
@@ -1593,118 +1679,68 @@ class ViewController {
       )
       this.removeListeners(matchingListeners)
    }
+   ///////////////////
+   // Touch Support //
+   ///////////////////
    /**
-    * Called if delay option timed out (if activate called with option set to a value > 0).
-    * Does nothing. Should be overwritten in a subtype if any action should be taken.
+    * @param {Event} e
+    * @return {string} Contains listing of touch IDs. All IDs, target IDs and changed IDs.
     */
-   onActivationDelay() { }
+   touchIDs(e) {
+      let all="", target="", changed=""
+      if (ViewListener.isTouchEvent(e)) {
+         for (const t of e.touches)
+            all += ","+t.identifier
+         for (const t of e.targetTouches)
+            target += ","+t.identifier
+         for (const t of e.changedTouches)
+            changed += ","+t.identifier
+      }
+      return "touchids all:["+all.slice(1)+"] tg:["+target.slice(1)+"] ch:["+changed.slice(1)+"]"
+   }
    /**
-    * Called if autoDeactivation option timed out (if activate called with option set to a value > 0).
-    * Deactivates the controller. Should be overwritten in a subtype if additional action should be taken.
+    * @param {MouseEvent|TouchEvent} e
+    * @return {number}
     */
-   onAutoDeactivation() { this.deactivate() }
+   nrTargetTouches(e) { return this.computeTargetTouches(e).length }
+   /**
+    * @param {MouseEvent|TouchEvent} e
+    * @return {Touch[]}
+    */
+   computeTargetTouches(e) {
+      const targetTouches = []
+      const eventListenerTarget = e.currentTarget
+      if (ViewListener.isTouchEvent(e) && eventListenerTarget instanceof HTMLElement) {
+         for (const t of e.touches) {
+            if (t.target instanceof Node
+               && (  eventListenerTarget.isSameNode(t.target)
+                  || eventListenerTarget.contains(t.target)))
+               targetTouches.push(t)
+         }
+      }
+      return targetTouches
+   }
+   /**
+    * @param {MouseEvent|TouchEvent} e
+    * @return {undefined|Touch}
+    */
+   getChangedTouch(e) { return ViewListener.isTouchEvent(e) ? e.changedTouches[0] : undefined }
+   /**
+    * @param {MouseEvent|TouchEvent} e
+    * @param {undefined|Touch} pos
+    * @return {{x:number, y:number}}
+    */
+   extractPos(e,pos) {
+      const p = pos ?? (e instanceof MouseEvent && e)
+      if (p && typeof p.clientX === "number" && typeof p.clientY === "number")
+         return { x:p.clientX, y:p.clientY }
+      return VMX.throwError(this, BasicTypeChecker.expectNameValueOfType("argument »pos«",pos,"{clientX:number,clientY:number}"), pos)
+   }
 }
 
 class TouchSupportController extends ViewController {
-   /**
-    * Identifiers of touches which originated within htmlElem or one of its childs.
-    */
-   #targetIDs=new Set()
-   ///////////////
-   // overwrite //
-   ///////////////
-   /**
-    * @param {()=>void} [onDeactivateCallback]
-    */
-   deactivate(onDeactivateCallback) {
-      super.deactivate( () => {
-         this.#targetIDs.clear()
-         onDeactivateCallback?.()
-      })
-   }
-   ///////////////////////
-   // add touch support //
-   ///////////////////////
-   /**
-    * @param {Event} e
-    * @returns {string}
-    */
-   touchIDs(e) {
-      let all="", target="", changed="", active=""
-      for (const id of this.#targetIDs ?? [])
-         active += (active.length?",":"") + id
-      if (ViewListener.isTouchEvent(e)) {
-         for (const t of e.touches)
-            all += (all.length?",":"") + t.identifier
-         for (const t of e.targetTouches)
-            target += (target.length?",":"") + t.identifier
-         for (const t of e.changedTouches)
-            changed += (changed.length?",":"") + t.identifier
-      }
-      return "touchids:["+all+"] tg:["+target+"] ch:["+changed+"] act:["+active+"]"
-   }
-   /**
-    * @returns {number} The number of currently started touches but not ended or canceled.
-    */
-   nrActiveTouches() { return this.#targetIDs.size }
-   /**
-    * @param {MouseEvent|TouchEvent} e
-    * @param {number} [index] Index of active touch. Indices could change
-    * @returns {undefined|Touch}
-    */
-   getActiveTouch(e, index=0) {
-      if (ViewListener.isTouchEvent(e))
-         for (const touch of e.touches)
-            if (this.#targetIDs.has(touch.identifier) && 0 === index--)
-               return touch
-   }
-   /**
-    * @param {MouseEvent|TouchEvent} e
-    * @returns {undefined|Touch}
-    */
-   getChangedTouch(e) {
-      return ViewListener.isTouchEvent(e) ? e.changedTouches[0] : undefined
-   }
-   /**
-    * @param {MouseEvent|TouchEvent} e
-    * @returns {{x:number, y:number}}
-    */
-   extractActivePos(e) {
-      const pos = this.getActiveTouch(e) ?? e
-      if (pos && "clientX" in pos && "clientY" in pos)
-         return { x:pos.clientX, y:pos.clientY }
-      return VMX.throwErrorObject(this, "extractActivePos with wrong parameter")
-   }
-   /**
-    * @param {MouseEvent|TouchEvent} e
-    * @returns {{x:number, y:number}}
-    */
-   extractChangedPos(e) {
-      const pos = this.getChangedTouch(e) ?? e
-      if (pos && "clientX" in pos && "clientY" in pos)
-         return { x:pos.clientX, y:pos.clientY }
-      return VMX.throwErrorObject(this, "extractChangedPos with wrong parameter")
-   }
-   /**
-    * Adds changed touches to the list of active touches.
-    * @param {Event} e
-    */
-   addActiveTouch(e) {
-      if (ViewListener.isTouchEvent(e))
-         for (const touch of e.changedTouches)
-            this.#targetIDs.add(touch.identifier)
-   }
-   /**
-    * Removes changed touches from the list of active touches.
-    * @param {Event} e
-    */
-   removeActiveTouch(e) {
-      if (ViewListener.isTouchEvent(e))
-         for (const touch of e.changedTouches)
-            this.#targetIDs.delete(touch.identifier)
-   }
    //////////////////////
-   // listener support //
+   // Listener Support //
    //////////////////////
    /**
     * @param {(e:MouseEvent|TouchEvent)=>void} onStart
@@ -1782,29 +1818,29 @@ class TouchController extends TouchSupportController {
    #lastEvent
 
    /**
-    * @typedef TouchController_Options
-    * @property {boolean} [enableClick]
-    * @property {boolean} [enableDoubleClick]
-    * @property {boolean} [nomouse]
+    * @typedef {ViewControllerOptions&_TouchControllerOptions} TouchControllerOptions
+    * @typedef _TouchControllerOptions
+    * @property {boolean} [enableClick] Enables CLICK action. Default is false.
+    * @property {boolean} [enableDoubleClick] Enables DOUBLECLICK action. Default is false.
+    * @property {boolean} [nomouse] *true*, if mouse should be disabled. Default is false.
+    *
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|TouchControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   /** @typedef {ViewControllerOptions&TouchController_Options} TouchControllerOptions */
-
-   /**
-    * @param {HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {TouchControllerOptions} [options] Optional object which contains additional options. Set *enableClick* to true if click events should be enabled. Set *enableDoubleClick* to true if doubleclick should be enabled. Set *nomouse* to true if you want to support only touch devices.
-    */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
-      this.addStartListener(this.onStart, this.options.nomouse)
+   constructor(elem, options, action) {
+      super(elem, options, action)
+      this.addStartListener(this.onStart, options?.nomouse)
       const onClick = this.onClick.bind(this)
-      if (this.options.enableClick) this.addListener(this.htmlElem,ViewListener.CLICK,onClick)
-      if (this.options.enableDoubleClick) this.addListener(this.htmlElem,ViewListener.DBLCLICK,onClick)
+      if (options) {
+         if (options.enableClick) this.addListener(this.htmlElem,ViewListener.CLICK,onClick)
+         if (options.enableDoubleClick) this.addListener(this.htmlElem,ViewListener.DBLCLICK,onClick)
+      }
    }
    /**
     * @param {Event} e
     * @param {undefined|{timeStamp:number, type:string}} lastEvent
-    * @returns {undefined|boolean} *true* in case last event was a touch event and e is a mouse event at same time
+    * @return {undefined|boolean} *true* in case last event was a touch event and e is a mouse event at same time
     */
    isSimulatedMouse(e, lastEvent) {
       return lastEvent?.type.startsWith("t") && e.type.startsWith("m")
@@ -1814,10 +1850,9 @@ class TouchController extends TouchSupportController {
     * @param {MouseEvent|TouchEvent} e
     */
    onStart(e) {
-      VMX.logInfoObject(this, `onStart ${e.type} ${e.eventPhase} ${this.touchIDs(e)}`)
-      this.addActiveTouch(e)
+      VMX.logInfo(this, `onStart ${e.type} ${e.eventPhase} ${this.touchIDs(e)}`)
       if (ViewListener.isMainButton(e)) {
-         this.activate({}, () => {
+         this.activate({actionEvent:e}, () => {
             this.addActiveEndListener(e, this.onEnd)
             if (!this.isSimulatedMouse(e, this.#lastEvent))
                this.callAction(new TouchControllerEvent(TouchController.TOUCHSTART, this, e, true, false))
@@ -1828,28 +1863,29 @@ class TouchController extends TouchSupportController {
     * @param {MouseEvent} e
     */
    onClick(e) {
-      VMX.logInfoObject(this, `onClick ${e.type} ${e?.detail}`)
-      // e.detail === 0|undefined (custom event); e.detail === 1 (single click)
-      // before DBLCLICK: CLICK is sent twice with e.detail === 2 (e.detail === 3 in case of TRIPPLE click)
-      if (e.type === ViewListener.CLICK && !(e.detail >= 2))
-         this.callAction(new TouchControllerEvent(TouchController.CLICK, this, e, true, false))
-      else if (e.type === ViewListener.DBLCLICK)
-         this.callAction(new TouchControllerEvent(TouchController.DOUBLECLICK, this, e, true, false))
+      VMX.logInfo(this, `onClick ${e.type} ${e?.detail}`)
+      this.withStartedAction( () => {
+         // e.detail === 0|undefined (custom event); e.detail === 1 (single click)
+         // before DBLCLICK: CLICK is sent twice with e.detail === 2 (e.detail === 3 in case of TRIPPLE click)
+         if (e.type === ViewListener.CLICK && !(e.detail >= 2))
+            this.callAction(new TouchControllerEvent(TouchController.CLICK, this, e, true, false))
+         else if (e.type === ViewListener.DBLCLICK)
+            this.callAction(new TouchControllerEvent(TouchController.DOUBLECLICK, this, e, true, false))
+      })
    }
    /**
     * @param {MouseEvent|TouchEvent} e
     */
    onEnd(e) {
-      VMX.logInfoObject(this, `${this.LID.toString(this)} onEnd ${e.type} ${this.touchIDs(e)}`)
-      this.removeActiveTouch(e)
-      if (this.nrActiveTouches() === 0 && ViewListener.isMainButton(e)) {
+      VMX.logInfo(this, `${this.getLogID().name(this)} onEnd ${e.type} ${this.touchIDs(e)}`)
+      if (this.nrTargetTouches(e) === 0 && ViewListener.isMainButton(e)) {
          const isSimulatedMouse = this.isSimulatedMouse(e, this.#lastEvent)
          this.#lastEvent = { type:e.type, timeStamp:e.timeStamp }
          if (!isSimulatedMouse) {
-            const pos = this.extractChangedPos(e)
+            const pos = this.extractPos(e,this.getChangedTouch(e))
             const contained = isFinite(pos.x) && isFinite(pos.y) && this.htmlElem.contains(document.elementFromPoint(pos.x,pos.y))
             const cancel = e.type.endsWith("l") // true => 'touchcancel' (false => 'mouseup'|'touchend')
-            VMX.logInfoObject(this, `TOUCHEND call action contained=${contained} lock=${this.isLocked}`)
+            VMX.logInfo(this, `TOUCHEND call action contained=${contained} lock=${this.actionStarted}`)
             this.callAction(new TouchControllerEvent(TouchController.TOUCHEND, this, e, contained, cancel))
          }
          this.deactivate()
@@ -1859,12 +1895,12 @@ class TouchController extends TouchSupportController {
 
 class ClickController extends TouchController {
    /**
-    * @param {HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {TouchControllerOptions} [options] Optional object which contains additional options. Set *enableDoubleClick* to true if you want to receive doubleclick events. Set *enableClick* to false if you do not want to receive click events.
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|TouchControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, { enableClick:true, ...options })
+   constructor(elem, options, action) {
+      super(elem, { enableClick:true, ...options }, action)
    }
    /**
     * Filter all actions except CLICK actions (also DOUBLECLICK if enableDoubleClick set to true).
@@ -1872,7 +1908,7 @@ class ClickController extends TouchController {
     */
    callAction(ce) {
       if (ce.type.endsWith(ClickController.CLICK)) {
-         VMX.logInfoObject(this, "click action")
+         VMX.logInfo(this, "click action")
          super.callAction(ce)
       }
    }
@@ -1908,38 +1944,36 @@ class MoveController extends TouchSupportController {
    #totalxy
 
    /**
-    *
-    * @param {HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} options
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|TouchControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
+   constructor(elem, options, action) {
+      super(elem, options, action)
       this.addStartListener(this.onStart)
    }
    /**
-    * @param {Event} e
-    * @returns {boolean} *true* in case target where event originated should not be considered as start of touch/moudesdown operation
+    * @param {undefined|Touch|Event} e
+    * @return {boolean} *true* in case target where event originated should not be considered as start of touch/moudesdown operation
     */
-   blockTarget(e) {
-      return DOM.isInputOrFocusedElement(e.target)
+   blockedTarget(e) {
+      return ViewElem.isInteractiveElement(e?.target)
    }
    /**
     * @param {MouseEvent|TouchEvent} e
     */
    onStart(e) {
-      VMX.logDebugObject(this, `onStart ${e.type} ${this.touchIDs(e)}`)
-      if (this.blockTarget(e)) return
-      this.addActiveTouch(e)
-      this.activate({delay:30, autoDeactivation:400}, () => {
-         this.#pos = this.extractChangedPos(e)
-         this.#totalxy = { x:0, y:0 }
-         this.addActiveEndListener(e, this.onEnd)
-      })
-      if (this.nrActiveTouches() > 1) {
-         this.trySwitchLock(false)
-         this.removeActiveMoveListener()
+      const nrActiveTouches = this.nrTargetTouches(e)
+      VMX.logDebug(this, `onStart ${e.type} blocked:${this.blockedTarget(e)} ${this.touchIDs(e)}`)
+      if (nrActiveTouches <= 1 && !this.blockedTarget(e)) {
+         this.activate({actionEvent:e, delay:30, autoDeactivation:400}, () => {
+            this.#pos = this.extractPos(e,this.getChangedTouch(e))
+            this.#totalxy = { x:0, y:0 }
+            this.addActiveEndListener(e, this.onEnd)
+         })
       }
+      else
+         this.deactivate()
    }
    onActivationDelay() {
       this.addActiveMoveListener(this.onMove)
@@ -1948,11 +1982,12 @@ class MoveController extends TouchSupportController {
     * @param {MouseEvent|TouchEvent} e
     */
    onMove(e) {
-      // VMX.logDebugObject(this, `onMove ${e.type} ${this.touchIDs(e)}`)
-      if (this.nrActiveTouches() <= 1) {
+      const targetTouches = this.computeTargetTouches(e)
+      VMX.logInfo(this, `onMove ${e.type} ${this.touchIDs(e)}`)
+      if (targetTouches.length <= 1) {
          e.preventDefault()
          this.clearAutoDeactivation()
-         const pos = this.extractActivePos(e)
+         const pos = this.extractPos(e,targetTouches[0])
          const delta = { dx:Math.trunc(pos.x-this.#pos.x), dy:Math.trunc(pos.y-this.#pos.y) }
          if (delta.dx || delta.dy) {
             this.#pos = { x:delta.dx+this.#pos.x, y:delta.dy+this.#pos.y }
@@ -1965,15 +2000,16 @@ class MoveController extends TouchSupportController {
     * @param {MouseEvent|TouchEvent} e
     */
    onEnd(e) {
-      VMX.logInfoObject(this, `onEnd ${e.type} ${this.touchIDs(e)}`)
-      this.removeActiveTouch(e)
-      if (this.nrActiveTouches() === 0)
-         this.deactivate()
-      else if (this.nrActiveTouches() === 1) {
-         this.#pos = this.extractActivePos(e)
-         this.trySwitchLock(true)
+      const targetTouches = this.computeTargetTouches(e)
+      const nrActiveTouches = targetTouches.length
+      VMX.logDebug(this, `onEnd ${e.type} ${this.touchIDs(e)}`)
+      if (nrActiveTouches === 1 && !this.blockedTarget(targetTouches[0])) {
+         this.#pos = this.extractPos(e,targetTouches[0])
+         this.tryStartAction(e)
          this.addActiveMoveListener(this.onMove)
       }
+      else if (nrActiveTouches === 0)
+         this.deactivate()
    }
 }
 
@@ -2005,54 +2041,58 @@ class TouchResizeController extends TouchSupportController {
    /** @type {{x:number, y:number}} */
    #totalxy
    /**
-    * @param {HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} options
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|TouchControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
+   constructor(elem, options, action) {
+      super(elem, options, action)
       this.addStartListener(this.onStart, /*nomouse*/true)
    }
-
-   blockTarget(e) {
-      return DOM.isInputOrFocusedElement(e.target)
+   /**
+    * @param {Touch} p1
+    * @param {Touch} p2
+    */
+   extractPos2(p1, p2) {
+      if (p1 && p2)
+         return { x:Math.abs(p1.clientX - p2.clientX), y:Math.abs(p1.clientY - p2.clientY) }
+      return VMX.throwError(this, "Called with less than 2 target touches.")
    }
    /**
-    * @param {MouseEvent|TouchEvent} e
+    * @param {Touch} t
+    * @returns {boolean} *true*, in case touch should not be considered.
     */
-   extractActivePos2(e) {
-      const pos1 = this.getActiveTouch(e, 0)
-      const pos2 = this.getActiveTouch(e, 1)
-      if (pos1 && pos2)
-         return { x:Math.abs(pos1.clientX - pos2.clientX), y:Math.abs(pos1.clientY - pos2.clientY) }
-      return VMX.throwErrorObject(this, "extractActivePos2 with wrong parameter")
-   }
+   static blockedTouch(t) { return ViewElem.isInteractiveElement(t.target) }
    /**
     * @param {MouseEvent|TouchEvent} e
     */
    onStart(e) {
-      VMX.logInfoObject(this, `onStart ${e.type} ${this.touchIDs(e)}`)
-      if (this.blockTarget(e)) return
-      this.addActiveTouch(e)
-      this.activate({noLock:true}, () => this.addActiveEndListener(e, this.onEnd))
-      const isNrActiveTouchesEQ2 = this.nrActiveTouches() === 2
-      this.trySwitchLock(isNrActiveTouchesEQ2)
-      if (isNrActiveTouchesEQ2) {
-         this.#pos = this.extractActivePos2(e)
-         this.#totalxy = { x:0, y:0 }
-         e.preventDefault()
-         this.addActiveMoveListener(this.onMove)
+      const targetTouches = this.computeTargetTouches(e)
+      const nrActiveTouches = targetTouches.length
+      VMX.logInfo(this, `onStart ${e.type} ${this.touchIDs(e)}`)
+      if (nrActiveTouches === 2 && !targetTouches.some(t => TouchResizeController.blockedTouch(t))) {
+         this.activate({actionEvent:e}, () => {
+            this.addActiveEndListener(e, this.onEnd)
+            this.#pos = this.extractPos2(targetTouches[0],targetTouches[1])
+            this.#totalxy = { x:0, y:0 }
+            e.preventDefault()
+            this.addActiveMoveListener(this.onMove)
+         })
       }
       else
-         this.removeActiveMoveListener()
+         this.deactivate()
    }
    /**
     * @param {MouseEvent|TouchEvent} e
     */
    onMove(e) {
-      if (this.nrActiveTouches() === 2) {
+      if (!this.actionStarted) return
+      const targetTouches = this.computeTargetTouches(e)
+      const nrActiveTouches = targetTouches.length
+      if (nrActiveTouches === 2) {
+         VMX.logDebug(this, `Resize.onMove ${this.touchIDs(e)}`)
          e.preventDefault()
-         const pos = this.extractActivePos2(e)
+         const pos = this.extractPos2(targetTouches[0],targetTouches[1])
          const delta = { dx:Math.trunc(pos.x-this.#pos.x), dy:Math.trunc(pos.y-this.#pos.y) }
          if (delta.dx || delta.dy) {
             this.#pos = { x:delta.dx+this.#pos.x, y:delta.dy+this.#pos.y }
@@ -2065,19 +2105,20 @@ class TouchResizeController extends TouchSupportController {
     * @param {MouseEvent|TouchEvent} e
     */
    onEnd(e) {
-      VMX.logInfoObject(this, `onEnd ${e.type} ${this.touchIDs(e)}`)
-      this.removeActiveTouch(e)
-      if (this.nrActiveTouches() === 2) {
-         this.trySwitchLock(true)
-         this.#pos = this.extractActivePos2(e)
+      const targetTouches = this.computeTargetTouches(e)
+      const nrActiveTouches = targetTouches.length
+      VMX.logDebug(this, `onEnd ${e.type} ${this.touchIDs(e)}`)
+      if (nrActiveTouches === 2 && !targetTouches.some(t => TouchResizeController.blockedTouch(t))) {
+         this.#pos = this.extractPos2(targetTouches[0],targetTouches[1])
+         this.tryStartAction(e)
          this.addActiveMoveListener(this.onMove)
       }
-      else if (this.nrActiveTouches() === 0)
-         this.deactivate()
-      else {
-         this.trySwitchLock(false)
+      else if (nrActiveTouches) {
+         this.endAction()
          this.removeActiveMoveListener()
       }
+      else
+         this.deactivate()
    }
 }
 
@@ -2101,12 +2142,12 @@ class TransitionController extends ViewController {
    /** Sent at end of transition (only once). Afterwards controller is removed from target. */
    static TRANSITIONEND="transitionend"
    /**
-    * @param {HTMLElement} htmlElem
-    * @param {ViewControllerAction&((e:TransitionControllerEvent)=>void)} action
-    * @param {ViewControllerOptions} [options]
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {undefined|null|TouchControllerOptions} options
+    * @param {ViewControllerAction&((e:TransitionControllerEvent)=>void)} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
+   constructor(elem, options, action) {
+      super(elem, options, action)
       this.addListener(this.htmlElem,ViewListener.TRANSITIONRUN,this.onStart.bind(this))
       this.onStart()
    }
@@ -2124,7 +2165,7 @@ class TransitionController extends ViewController {
     */
    onStart(e) {
       if (!this.isActive && TransitionController.isTransition(this.htmlElem)) {
-         this.activate({}, () => {
+         this.activate({actionEvent:undefined}, () => {
             const onEnd = this.onEnd.bind(this)
             this.addActiveListener(this.htmlElem, ViewListener.TRANSITIONCANCEL, onEnd)
             this.addActiveListener(this.htmlElem, ViewListener.TRANSITIONEND, onEnd)
@@ -2142,14 +2183,14 @@ class TransitionController extends ViewController {
    }
    /**
     * @param {Document|HTMLElement} htmlElem
-    * @returns {Animation[]}
+    * @return {Animation[]}
     */
    static getTransitions(htmlElem) {
       return htmlElem.getAnimations(/*includes no childs*/).filter(animation => animation instanceof CSSTransition)
    }
    /**
     * @param {Document|HTMLElement} htmlElem
-    * @returns {boolean} True in case transition animations are running.
+    * @return {boolean} True in case transition animations are running.
     */
    static isTransition(htmlElem) {
       return htmlElem.getAnimations(/*includes no childs*/).some(animation => animation instanceof CSSTransition)
@@ -2204,15 +2245,15 @@ class DropController extends ViewController {
     */
    #enterCount = 0
    /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} [options]
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|ViewControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
-      this.addListener(htmlElem,"dragenter",this.onStart.bind(this))
+   constructor(elem, options, action) {
+      super(elem, options, action)
+      this.addListener(this.htmlElem,"dragenter",this.onStart.bind(this))
       // enable executing drop handler
-      this.addListener(htmlElem,"dragover",DropController.preventDefault)
+      this.addListener(this.htmlElem,"dragover",DropController.preventDefault)
       // prevent opening of images if dropped not into target zone
       this.addListener(document,"drop",DropController.preventDefault)
    }
@@ -2220,21 +2261,19 @@ class DropController extends ViewController {
     * @param {DragEvent} e
     */
    onStart(e) {
-      VMX.logInfoObject(this, `onStart ${e.type}`)
+      VMX.logInfo(this, `onStart ${e.type}`)
       ++ this.#enterCount // dragenter for a child is sent before dragleave of parent
-      if (! this.isActive) {
-         this.activate({}, () => {
-            this.callAction(new DropControllerEvent("dropstart",this,e))
-            this.addActiveListener(this.htmlElem,"drop",this.onDrop.bind(this)),
-            this.addActiveListener(this.htmlElem,"dragleave",this.onEnd.bind(this))
-         })
-      }
+      this.activate({actionEvent:e}, () => {
+         this.callAction(new DropControllerEvent("dropstart",this,e))
+         this.addActiveListener(this.htmlElem,"drop",this.onDrop.bind(this)),
+         this.addActiveListener(this.htmlElem,"dragleave",this.onEnd.bind(this))
+      })
    }
    /**
     * @param {DragEvent} e
     */
    onDrop(e) {
-      VMX.logInfoObject(this, `onDrop ${e.type}`)
+      VMX.logInfo(this, `onDrop ${e.type}`)
       e.preventDefault()
       this.callAction(new DropControllerEvent("drop",this,e))
       this.onEnd(e)
@@ -2243,7 +2282,7 @@ class DropController extends ViewController {
     * @param {DragEvent} e
     */
    onEnd(e) {
-      VMX.logInfoObject(this, `onEnd ${e.type}`)
+      VMX.logInfo(this, `onEnd ${e.type}`)
       if (0 === (--this.#enterCount)) {
          this.callAction(new DropControllerEvent("dropend",this,e))
          this.deactivate()
@@ -2268,14 +2307,18 @@ class ChangeControllerEvent extends ControllerEvent {
 
 class ChangeController extends ViewController {
    /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} [options]
+    * @typedef {ViewControllerOptions&_ChangeControllerOptions} ChangeControllerOptions
+    * @typedef _ChangeControllerOptions
+    * @property {EventTarget[]} [group] Group of elements to be listened for change events instead of a single htmlElem.
+    *
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|ChangeControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
+   constructor(elem, options, action) {
+      super(elem, options, action)
       const onChange = this.onChange.bind(this)
-      for (const elem of this.options.group ?? [htmlElem])
+      for (const elem of options?.group ?? [this.htmlElem])
          this.addListener(elem,"change",onChange)
    }
    /**
@@ -2301,16 +2344,14 @@ class FocusControllerEvent extends ControllerEvent {
 
 class FocusController extends ViewController {
    /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} [options]
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|ViewControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
-      const onFocus = this.onFocus.bind(this)
-      const onBlur = this.onFocus.bind(this)
-      this.addListener(htmlElem,"focusin",onFocus)
-      this.addListener(htmlElem,"focusout",onBlur)
+   constructor(elem, options, action) {
+      super(elem, options, action)
+      this.addListener(this.htmlElem,"focusin",this.onFocus.bind(this))
+      this.addListener(this.htmlElem,"focusout",this.onFocus.bind(this))
    }
    /**
     * @param {FocusEvent} e
@@ -2363,22 +2404,22 @@ class KeyController extends ViewController {
 
    /**
     * @param {KeyControllerEvent} e
-    * @returns {boolean} *true* in case a lock could be acquired for the pressed key
+    * @return {boolean} *true* in case a lock could be acquired for the pressed key
     */
    static lockKeyFromEvent(e) {
-      const keyAction = VMX.documentVM.bindAction(e.type, [[e.acmsKey()]])
-      VMX.listeners.onceEndEventLoop(e, () => keyAction.endAction())
-      return keyAction.startAction()
+      const lock = VMX.documentVM.getVMActionLock("key-"+e.acmsKey())
+      VMX.listeners.onceEndEventLoop(e, () => lock.unlock())
+      return lock.lock()
    }
    /**
-    * @param {Document|HTMLElement} htmlElem
-    * @param {ViewControllerAction} action
-    * @param {ViewControllerOptions} [options]
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @param {null|undefined|ViewControllerOptions} options
+    * @param {ViewControllerAction} [action]
     */
-   constructor(htmlElem, action, options) {
-      super(htmlElem, action, options)
-      this.addListener(htmlElem,ViewListener.KEYDOWN,this.onKeyDown.bind(this))
-      this.addListener(htmlElem,ViewListener.KEYUP,this.onKeyUp.bind(this))
+   constructor(elem, options, action) {
+      super(elem, options, action)
+      this.addListener(this.htmlElem,ViewListener.KEYDOWN,this.onKeyDown.bind(this))
+      this.addListener(this.htmlElem,ViewListener.KEYUP,this.onKeyUp.bind(this))
    }
    /**
     * @param {KeyboardEvent} e
@@ -2390,111 +2431,185 @@ class KeyController extends ViewController {
    onKeyUp(e) { this.callAction(new KeyControllerEvent(KeyController.KEYUP,this,e)) }
 }
 
-class ViewElemText {
+class ViewNode {
    /**
-    * @type {Text}
+    * @param {any} child
+    * @return {HTMLElement|Text|Comment}
     */
-   #textNode
-   /**
-    * @param {Text} textNode
-    */
-   constructor(textNode) {
-      this.#textNode = ViewElemText.assertTextNode(textNode)
-   }
-   get textNode() {
-      return this.#textNode
-   }
-   /**
-    * @param {string} textString The text content of a newly created HTML Text node.
-    * @returns {ViewElemText} Encapsulates HTML Text node containing specified text.
-    */
-   static fromText(textString) {
-      return new ViewElemText(document.createTextNode(textString))
+   static assertChild(child) {
+      if (child instanceof ViewElem)
+         return child.htmlElem
+      else if (child instanceof ViewComment)
+         return child.htmlNode
+      else if (child instanceof ViewText)
+         return child.htmlNode
+      else if (typeof child === "string")
+         return document.createTextNode(child)
+      return VMX.throwError(this, `Expect child of type ViewElem,ViewComment,ViewText or string and not »${String(VMX.typeof(child))}«.`)
    }
    ////////////
    // Helper //
    ////////////
-   assertConnected() {
-      this.connected() || VMX.throwErrorObject(this, `Expect this text node to be connected.\ntext=${this.text()}`)
+   assertConnected() { this.connected() || VMX.throwError(this, `Expect this text node to be connected.\ntext=${this.text()}`) }
+   /////////////
+   // Content //
+   /////////////
+   /** @return {Node} */
+   get htmlNode() { return VMX.throwError(this, `Overwrite htmlNode in subtype.`) }
+   /** @return {string} */
+   text() { return this.htmlNode.textContent ?? "" }
+   ////////////////////////////////////////////////
+   // Inserting, Removing, Replacing in Document //
+   ////////////////////////////////////////////////
+   connected() { return this.htmlNode.isConnected }
+   connect() { if (!this.connected()) document.body.append(this.htmlNode) }
+   disconnect() { this.remove() }
+   remove() { this.htmlNode.parentNode?.removeChild(this.htmlNode) }
+   /**
+    * Replaces this ViewElem with another one.
+    * @param {ViewElem|ViewNode|string} elem The new element with which this ViewElem is replaced.
+    */
+   replaceWith(elem) {
+      this.assertConnected()
+      this.htmlNode.parentNode?.replaceChild(ViewNode.assertChild(elem),this.htmlNode)
+   }
+}
+
+class ViewComment extends ViewNode { // implements ViewNode
+   /** @type {Comment} */
+   #commentNode
+
+   /** @param {Comment} commentNode */
+   constructor(commentNode) {
+      super()
+      this.#commentNode = ViewComment.assertCommentNode(commentNode)
    }
    /**
+    * @param {string} textString The text content of a newly created HTML Comment node.
+    * @return {ViewComment} Encapsulates Comment node containing specified text.
+    */
+   static fromText(textString) { return new ViewComment(document.createComment(textString)) }
+   ////////////
+   // Helper //
+   ////////////
+   /**
+    * @param {Node|null|undefined} commentNode
+    * @return {Comment} The given commentNode in case it is of type Comment.
+    */
+   static assertCommentNode(commentNode) {
+      if (commentNode instanceof Comment)
+         return commentNode
+      return VMX.throwError(this, `Expect type Comment and not »${String(VMX.typeof(commentNode))}«.`)
+   }
+   ////////////////////////
+   // Overwrite ViewNode //
+   ////////////////////////
+   /** @return {Comment} */
+   get htmlNode() { return this.#commentNode }
+   remove() { this.#commentNode.remove() }
+}
+
+class ViewText extends ViewNode { // implements ViewNode
+   /** @type {Text} */
+   #textNode
+
+   /** @param {Text} textNode */
+   constructor(textNode) {
+      super()
+      this.#textNode = ViewText.assertTextNode(textNode)
+   }
+   /**
+    * @param {string} textString The text content of a newly created HTML Text node.
+    * @return {ViewText} Encapsulates HTML Text node containing specified text.
+    */
+   static fromText(textString) {
+      return new ViewText(document.createTextNode(textString))
+   }
+   ////////////
+   // Helper //
+   ////////////
+   /**
     * @param {Node|null|undefined} textNode
-    * @returns {Text} The given textNode in case it is of type Text.
+    * @return {Text} The given textNode in case it is of type Text.
     */
    static assertTextNode(textNode) {
       if (textNode instanceof Text)
          return textNode
-      return VMX.throwErrorStatic(this, `Expect type Text and not »${String(VMX.typeof(textNode))}«.`)
+      return VMX.throwError(this, `Expect type Text and not »${String(VMX.typeof(textNode))}«.`)
    }
-   /////////////
-   // Content //
-   /////////////
-   /**
-    * @returns {null|string}
-    */
-   text() {
-      return this.#textNode.textContent
-   }
-   ////////////////////////////////////////////////
-   // Inserting, Removing, Replacing in Document //
-   ////////////////////////////////////////////////
-   connected() {
-      return this.#textNode.isConnected
-   }
-   connect() {
-      if (!this.connected())
-         document.body.append(this.#textNode)
-   }
-   disconnect() {
-      this.remove()
-   }
-   remove() {
-      this.#textNode.remove()
-   }
+   ////////////////////////
+   // Overwrite ViewNode //
+   ////////////////////////
+   /** @return {Text} */
+   get htmlNode() { return this.#textNode }
+   remove() { this.#textNode.remove() }
 }
 
-class ViewElem {
+class ViewElem extends ViewNode { // implements ViewNode
+   /** Call to {@link nextID} increases number (possibly more than once). */
+   static NEXT_ID = 1
+
    /**
-    * Data attribute of HTML node to export view element as slot container.
-    * @type {"data-slot"}
+    * @param {EventTarget|ViewElem} elem
+    * @return {EventTarget}
     */
-   static SlotAttr="data-slot"
+   static toEventTarget(elem) { return elem instanceof ViewElem ? elem.#htmlElem : elem }
    /**
-    * @type {HTMLElement}
+    * @param {Document|HTMLElement|ViewElem} elem
+    * @return {Document|HTMLElement}
     */
+   static toHTMLElement(elem) { return elem instanceof ViewElem ? elem.#htmlElem : elem }
+
+   /**
+    * @typedef {{[style:string]:undefined|number|string}} ViewStyles
+    */
+
+   /** @type {HTMLElement} */
    #htmlElem
-   /**
-    * @type {undefined|ViewElemStylesManager}
-    */
+   /** @type {undefined|ViewElemStylesManager} */
    #stylesManager
+
    /**
     * @param {HTMLElement} htmlElem
     */
    constructor(htmlElem) {
+      super()
       this.#htmlElem = ViewElem.assertHTMLElement(htmlElem)
    }
+   ////////////////////////
+   // Overwrite ViewNode //
+   ////////////////////////
+   /** @return {HTMLElement} */
+   get htmlNode() { return this.#htmlElem }
+   ////////////////
+   // Properties //
+   ////////////////
+   get htmlElem() { return this.#htmlElem }
+   /**
+    * Name of data attribute of HTML node to mark it as a slot (container). The value of the attribute is the name of the slot.
+    * @return {"data-slot"}
+    */
+   get slotattr() { return "data-slot" }
+   get isStylesManager() { return this.#stylesManager !== undefined }
    get stylesManager() { return (this.#stylesManager ??= new ViewElemStylesManager(this.deleteStylesManager.bind(this))) }
    deleteStylesManager() { if (this.#stylesManager?.isFree) this.#stylesManager = undefined }
-   get htmlElem() {
-      return this.#htmlElem
-   }
-   get slotattr() {
-      return ViewElem.SlotAttr
-   }
+   ////////////
+   // Create //
+   ////////////
    /**
     * Clones this ViewElem. The cloned node is not connected to the Document.
-    * @returns {ViewElem} A new ViewElem cloned from this one.
+    * @return {ViewElem} A new ViewElem cloned from this one.
     */
    clone() {
       const cloned = this.#htmlElem.cloneNode(true)
       if (cloned instanceof HTMLElement) {
          return new ViewElem(cloned)
       }
-      return VMX.throwErrorObject(this, `Can only clone HTMLElement nodes.`)
+      return VMX.throwError(this, `Can only clone HTMLElement nodes.`)
    }
    /**
     * @param {{[style:string]:string|number}} styles
-    * @returns {ViewElem}
+    * @return {ViewElem}
     */
    static fromDiv(styles) {
       const viewElem = new ViewElem(document.createElement("div"))
@@ -2503,24 +2618,26 @@ class ViewElem {
    }
    /**
     * @param {string} htmlString The HTML string which describes a single HTML element with any number of childs.
-    * @returns {ViewElem} The encapsulated HTML element specified by a string.
+    * @return {ViewElem} The encapsulated HTML element specified by a string.
     */
    static fromHtml(htmlString) {
-      return new ViewElem(this.createElemFromHtml(htmlString))
+      return new ViewElem(this.newHTMLElement(htmlString))
    }
    /**
     * @param {string} htmlString
-    * @returns {HTMLElement}
+    * @return {HTMLElement}
     */
-   static createElemFromHtml(htmlString) {
-      const div = document.createElement("div")
+   static newHTMLElement(htmlString) {
+      htmlString = String(htmlString??"").trim()
+      const needsTable = (htmlString.startsWith("<td") || htmlString.startsWith("<tr"))
+      const div = document.createElement(needsTable ? "table" : "div")
       div.innerHTML = htmlString
       if (div.childNodes.length !== 1)
-         return VMX.throwErrorStatic(this, `HTML string describes not a single child node.\nhtml=${htmlString}`)
-      const htmlElem = div.childNodes[0]
+         return VMX.throwError(this, `HTML string describes not a single child node.\nhtml=${htmlString}`)
+      const htmlElem = needsTable ? div.querySelector(htmlString.substring(1,3)) : div.childNodes[0]
       return htmlElem instanceof HTMLElement
                ? (htmlElem.remove(), htmlElem)
-               : VMX.throwErrorStatic(this, `HTML string describes no HTMLElement but »${VMX.typeof(htmlElem)}«.\nhtml=${htmlString}`)
+               : VMX.throwError(this, `HTML string describes no HTMLElement but »${VMX.typeof(htmlElem)}«.\nhtml=${htmlString}`)
    }
    // TODO:
    // static createNodeListfromHtml(htmlString) {
@@ -2533,64 +2650,45 @@ class ViewElem {
    ////////////
    // Helper //
    ////////////
-   assertConnected() {
-      this.connected() || VMX.throwErrorObject(this, `Expect this element to be connected.\nhtml=${this.outerHTML()}`)
-   }
    /**
     * @param {Node|null|undefined} htmlElem
-    * @returns {HTMLElement} The given htmlElem in case it is of type HTMLElement or Document.
+    * @return {HTMLElement} The given htmlElem in case it is of type HTMLElement or Document.
     */
    static assertHTMLElement(htmlElem) {
       if (htmlElem instanceof HTMLElement)
          return htmlElem
-      return VMX.throwErrorStatic(this, `Expect type HTMLElement and not »${String(VMX.typeof(htmlElem))}«.`)
+      return VMX.throwError(this, `Expect type HTMLElement and not »${String(VMX.typeof(htmlElem))}«.`)
    }
    /**
     * @param {any} viewElem
-    * @returns {ViewElem}
+    * @return {ViewElem}
     */
    static assertType(viewElem) {
       if (viewElem instanceof ViewElem)
          return viewElem
-      return VMX.throwErrorStatic(this, `Expect type ViewElem and not »${String(VMX.typeof(viewElem))}«.`)
-   }
-   /**
-    * @param {any} child
-    * @returns {HTMLElement|string}
-    */
-   static assertChild(child) {
-      if (child instanceof ViewElem)
-         return child.#htmlElem
-      else if (child instanceof ViewElemText)
-         return child.text() ?? ""
-      else if (typeof child === "string")
-         return child
-      return VMX.throwErrorStatic(this, `Expect child of type ViewElem, ViewElemText or string and not »${String(VMX.typeof(child))}«.`)
+      return VMX.throwError(this, `Expect type ViewElem and not »${String(VMX.typeof(viewElem))}«.`)
    }
    ///////////////////
    // Query Content //
    ///////////////////
-   text() {
-      return this.#htmlElem.textContent
-   }
-   get html() {
-      return this.#htmlElem.innerHTML
-   }
-   outerHTML() {
-      return this.#htmlElem.outerHTML
-   }
+   /** @return {string} */
+   text() { return this.#htmlElem.textContent ?? "" }
+   /** @return {string} */
+   html() { return this.#htmlElem.innerHTML }
+   /** @return {string} */
+   outerHTML() { return this.#htmlElem.outerHTML }
    /**
     * @param {string} cssSelector
-    * @returns {ViewElem}
+    * @return {ViewElem}
     */
    static query(cssSelector) {
       const htmlElem = document.querySelector(cssSelector)
       if (!(htmlElem instanceof HTMLElement))
-         return VMX.throwErrorStatic(this, `Found no HTMLElement matching '${cssSelector}'.`)
+         return VMX.throwError(this, `Found no HTMLElement matching '${cssSelector}'.`)
       if (htmlElem instanceof HTMLTemplateElement) {
          const child = htmlElem.content.children[0]
          if (!(child instanceof HTMLElement))
-            return VMX.throwErrorStatic(this, `Found no child node inside matching template '${cssSelector}'.`)
+            return VMX.throwError(this, `Found no child node inside matching template '${cssSelector}'.`)
          return new ViewElem(child)
       }
       return new ViewElem(htmlElem)
@@ -2598,63 +2696,52 @@ class ViewElem {
    /**
     * Calls first {@link query} and returns a clone of the queried ViewElem.
     * @param {string} cssSelector
-    * @returns {ViewElem}
+    * @return {ViewElem}
     */
    static clone(cssSelector) {
-      return this.query(cssSelector).clone()
+      const viewElem = this.query(cssSelector)
+      return viewElem?.clone() ?? VMX.throwError(this, `Found no HTMLElement matching '${cssSelector}'.`)
    }
    /**
     * @param {string} cssSelector
-    * @returns {undefined|ViewElem}
+    * @return {undefined|ViewElem}
     */
    query(cssSelector) {
-      const node = this.#htmlElem.querySelector(cssSelector)
-      if (node instanceof HTMLElement)
-         return new ViewElem(node)
+      const node = this.#htmlElem.querySelector(cssSelector) ?? (this.#htmlElem.matches(cssSelector) && this.#htmlElem || null)
+      return node instanceof HTMLElement ? new ViewElem(node) : undefined
    }
-   /**
-    * @returns {undefined|ViewElem|ViewElemText}
-    */
-   child() {
-      const child = this.#htmlElem.childNodes[0]
-      if (child instanceof HTMLElement)
-         return new ViewElem(child)
-      else if (child instanceof Text)
-         return new ViewElemText(child)
+   /** @return {undefined|ViewElem|ViewText} */
+   child() { return this.childAt(0) }
+   /** @param {number} index @return {undefined|ViewElem|ViewText} */
+   childAt(index) {
+      const child = this.#htmlElem.childNodes[index]
+      return child instanceof HTMLElement ? new ViewElem(child)
+             : child instanceof Text ? new ViewText(child)
+             : undefined
    }
+   /** @param {number} index @return {undefined|ViewElem} */
+   childElemAt(index) {
+      const child = this.#htmlElem.childNodes[index]
+      return child instanceof HTMLElement ? new ViewElem(child)
+             : undefined
+   }
+   /** @return {number} */
+   nrChilds() { return this.#htmlElem.childNodes.length }
    ////////////////////////////////////////////////
    // Inserting, Removing, Replacing in Document //
    ////////////////////////////////////////////////
-   connected() {
-      return this.#htmlElem.isConnected
-   }
-   connect() {
-      if (!this.connected())
-         document.body.append(this.#htmlElem)
-   }
-   disconnect() {
-      this.remove()
-   }
-   remove() {
-      this.#htmlElem.remove()
-   }
+   remove() { this.#htmlElem.remove() }
    /**
     * Replaces this ViewElem with another one.
-    * @param {ViewElemText|ViewElem|string} elem The new element with which this ViewElem is replaced.
+    * @param {ViewNode|string} elem The new element with which this ViewElem is replaced.
     */
    replaceWith(elem) {
       this.assertConnected()
-      this.#htmlElem.replaceWith(ViewElem.assertChild(elem))
+      this.#htmlElem.replaceWith(ViewNode.assertChild(elem))
    }
    ////////////////////
    // Change Content //
    ////////////////////
-   /**
-    * Sets inner HTML of this element.
-    * @deprecated
-    * @type {string} html
-    */
-   set html(html) { this.#htmlElem.innerHTML = html }
    /**
     * Copy childs from element to this element
     * @param {ViewElem} fromElem
@@ -2664,105 +2751,144 @@ class ViewElem {
     * Appends given childs to end of list of children of this element.
     * If any argument is of type string it is converted to a text node before adding
     * it as a child.
-    * @param  {...ViewElemText|ViewElem|string} childs List of new childs appended to end of list of children.
+    * @param  {...ViewNode|string} childs List of new childs appended to end of list of children.
     */
    appendChildren(...childs) {
-      const htmlElems = childs.map(child => ViewElem.assertChild(child))
+      const htmlElems = childs.map(child => ViewNode.assertChild(child))
       this.#htmlElem.append(...htmlElems)
    }
-   /**
-    * @param {undefined|null|ViewElemText|ViewElem|string} child
-    */
+   /** @param {undefined|null|ViewNode|string} child */
    setChild(child) {
       if (child)
          this.replaceChildren(child)
       else
          this.removeChildren()
    }
-   /**
-    * @deprecated // TODO: remove
-    * @param {undefined|null|Node} child
-    */
-   setChildNode(child) {
-      if (child)
-         this.#htmlElem.replaceChildren(child)
-      else
-         this.removeChildren()
+   /** @param {ViewNode} child @param {number} index */
+   setChildAt(child, index) {
+      const oldNode = this.#htmlElem.childNodes[index]
+      oldNode ? this.#htmlElem.replaceChild(child.htmlNode,oldNode)
+              : this.#htmlElem.appendChild(child.htmlNode)
    }
    /**
     * Removes all childs of this element and adds all given childs as new childs in the same order.
     * If any argument is of type string it is converted to a text node before adding
     * it as a child.
-    * @param  {...ViewElemText|ViewElem|string} childs The new childs which replaces the old ones.
+    * @param  {...ViewNode|string} childs The new childs which replaces the old ones.
     */
    replaceChildren(...childs) {
-      const htmlElems = childs.map(child => ViewElem.assertChild(child))
+      const htmlElems = childs.map(child => ViewNode.assertChild(child))
       this.#htmlElem.replaceChildren(...htmlElems)
    }
-   /**
-    * Removes all childs of this element.
-    */
+   /** Removes all childs of this element.*/
    removeChildren() { this.#htmlElem.replaceChildren() }
+   /** @param {number} index */
+   removeChildAt(index) { this.#htmlElem.childNodes[index] && this.#htmlElem.removeChild(this.#htmlElem.childNodes[index]) }
    ////////////////////
    // Input Elements //
    ////////////////////
    /**
     * @param {undefined|null|Node|EventTarget} htmlElem
-    * @returns {undefined|boolean} Value of checked attribute, if htmlElem is either a radio button or a checkbox else undefined.
+    * @return {undefined|boolean} Value of checked attribute, if htmlElem is either a radio button or a checkbox else undefined.
     */
    static getChecked(htmlElem) {
       return htmlElem instanceof HTMLInputElement && (htmlElem.type === "radio" || htmlElem.type === "checkbox")
                ? htmlElem.checked : undefined
    }
    /**
-    * @returns {undefined|boolean} Value of checked attribute, if ViewElem is either a radio button or a checkbox else undefined.
+    * @return {undefined|boolean} Value of checked attribute, if ViewElem is either a radio button or a checkbox else undefined.
     */
    checked() { return ViewElem.getChecked(this.#htmlElem) }
+   /** Node names of interactive elements. */
+   static INTERACTIVE = new Set(["INPUT","LABEL","SUMMARY","SELECT","TEXTAREA"])
+   /**
+    * @param {undefined|null|EventTarget} target
+    * @return {boolean} *true*, if element has focus, is a node from {@link INTERACTIVE}.
+    */
+   static isInteractiveElement(target) {
+      const nodeName = target instanceof Node ? target.nodeName : ""
+      return target === document.activeElement || this.INTERACTIVE.has(nodeName)
+   }
    ///////////////////////
    // Position and Size //
    ///////////////////////
-   /**
-    * @typedef {{width:number, height:number, top:number, left:number, position:string}} ViewElem_InitialPos
-    * @returns {ViewElem_InitialPos}
-    */
-   initialPos() {
+   /** @param {()=>any} onConnected @return {any} */
+   ensureConnected(onConnected) {
       const isConnected = this.connected()
       isConnected || this.connect()
-      const cstyle = this.computedStyle()
-      const position = cstyle.position
-      const height = ViewElem.parseFloatDefault(cstyle.height, 100)
-      const width = ViewElem.parseFloatDefault(cstyle.width, 100)
-      const isStatic = position === "static"
-      const top = isStatic ? 0 : ViewElem.parseFloatDefault(cstyle.top, 0)
-      const left = isStatic ? 0 : ViewElem.parseFloatDefault(cstyle.left, 0)
+      const result = onConnected()
       isConnected || this.disconnect()
-      return { width, height, top, left, position }
+      return result
    }
    /**
-    * @returns {boolean} *true*, if element could be positioned with "left" and "top" styles.
+    * Position of element read from computed styles.
+    * @return {{width:number, height:number, top:number, left:number, position:string}}
+    */
+   computedPos() {
+      const pos = { width:100, height:100, top:0, left:0, position:"static" }
+      return this.ensureConnected( () => {
+         const cs = this.computedStyle()
+         pos.position = cs.position
+         pos.height = ViewElem.parseFloatDefault(cs.height, pos.height)
+         pos.width = ViewElem.parseFloatDefault(cs.width, pos.width)
+         const isStatic = cs.position === "static"
+         if (!isStatic) {
+            pos.top = ViewElem.parseFloatDefault(cs.top, pos.top)
+            pos.left = ViewElem.parseFloatDefault(cs.left, pos.left)
+         }
+         return pos
+      })
+   }
+   /**
+    * Position styles read from computed styles.
+    * @return {{width:string, height:string, top:string, left:string, bottom:string, right:string }}
+    */
+   computedPosStyles() {
+      return this.ensureConnected(() => {
+         const cs = this.computedStyle()
+         return { width:cs.width, height:cs.height, top:cs.top, left:cs.left, bottom:cs.bottom, right:cs.right }
+      })
+   }
+   viewportPosStyles() {
+      const vvp = visualViewport
+      const width = vvp ? vvp.width*vvp.scale : document.documentElement.clientWidth
+      const height = vvp ? vvp.height*vvp.scale : document.documentElement.clientHeight
+      const vp = this.viewportRect()
+      return { width:vp.width+"px", height:vp.height+"px", top:vp.top+"px", left:vp.left+"px", bottom:(height-vp.bottom).toFixed(3)+"px", right:(width-vp.right).toFixed(3)+"px" }
+   }
+   /**
+    * @return {boolean} *true*, if element could be positioned with "left" and "top" styles.
     */
    moveable() {
-      const isConnected = this.connected()
-      isConnected || this.connect()
-      const cstyle = this.computedStyle()
-      isConnected || this.disconnect()
-      return ["fixed","absolute","relative"].includes(cstyle["position"])
+      return this.ensureConnected(() => {
+         const isMoveable = ["fixed","absolute","relative"].includes(this.computedStyle().position)
+         return isMoveable
+      })
    }
    /**
     * The position relative to the viewport. A value of (0,0) means top/left starting point.
     * An increasing value (> 0) of x,left,right means more to the right of the viewport.
     * An increasing value (> 0) of y,top,bottom means more to the bottom of the viewport.
     * The width and height are the difference between right-left and bottom-top.
-    * @returns {{x:number,y:number,left:number,top:number,bottom:number,right:number,width:number,height:number}}
+    * @return {{x:number,y:number,left:number,top:number,bottom:number,right:number,width:number,height:number}}
     */
-   viewportRect() {
-      return this.#htmlElem.getBoundingClientRect()
+   viewportRect() { return this.#htmlElem.getBoundingClientRect() }
+   /**
+    * @param {{width?:number, height?:number, top?:number, left?:number, transition?:boolean }} pos
+    * @return {void}
+    */
+   setPos(pos) { this.stylesManager.setPos(this, pos, pos.transition) }
+   /** @return {{width:number, height:number, top:number, left:number }} */
+   pos() {
+      const elemStyle = this.#htmlElem.style
+      const pfd = ViewElem.parseFloatDefault
+      return { width:pfd(elemStyle.width,0), height:pfd(elemStyle.height,0), top:pfd(elemStyle.top,0), left:pfd(elemStyle.left,0) }
    }
    /**
     * @param {{width?:number|undefined, height?:number|undefined, top?:number|undefined, left?:number|undefined }} pos
     * @return {undefined|{width?:number, height?:number, top?:number, left?:number}}
     */
-   setPos(pos) {
+   diffPos(pos) {
       const elemStyle = this.#htmlElem.style
       const changed = {}
       for (const prop of ["width","height","top","left"]) {
@@ -2771,24 +2897,17 @@ class ViewElem {
             const styleValue = ViewElem.parseFloatDefault(elemStyle[prop],0)
             if (styleValue !== value) {
                changed[prop] = value
-               elemStyle[prop] = value + "px"
             }
          }
       }
       return Object.keys(changed).length > 0 ? changed : undefined
-   }
-   /** @returns {{width:number, height:number, top:number, left:number }} */
-   pos() {
-      const elemStyle = this.#htmlElem.style
-      const pfd = ViewElem.parseFloatDefault
-      return { width:pfd(elemStyle.width,0), height:pfd(elemStyle.height,0), top:pfd(elemStyle.top,0), left:pfd(elemStyle.left,0) }
    }
    //////////////////////////
    // CSS Style Management //
    //////////////////////////
    /**
     * @param {string} className The CSS class name.
-    * @returns {boolean} *true*, if element was assigned given CSS class name.
+    * @return {boolean} *true*, if element was assigned given CSS class name.
     */
    hasClass(className) {
       return this.#htmlElem.classList.contains(className)
@@ -2829,10 +2948,12 @@ class ViewElem {
     * @param {boolean} hidden *true*, if view should be hidden (same as {@link hide}), else *false* {same as {@link show}}.
     */
    set hidden(hidden) { this.#htmlElem.hidden = hidden }
+   /** Makes element (in-)visible without changing the layout. @param {boolean} visible */
+   set visibility(visible) { this.#htmlElem.style.visibility = visible ? "visible" : "hidden" }
    /**
     * @param {string} str
     * @param {number} defaultValue
-    * @returns {number}
+    * @return {number}
     */
    static parseFloatDefault(str, defaultValue) {
       const nr = parseFloat(str)
@@ -2840,13 +2961,13 @@ class ViewElem {
    }
    /**
     * @param {string|number} value
-    * @returns {string} String(value)+"px". Value is rounded to 3 places after decimal point.
+    * @return {string} String(value)+"px". Value is rounded to 3 places after decimal point.
     */
    static toPixel(value) {
       return Number(value).toFixed(3) + "px"
    }
    /**
-    * @returns {CSSStyleDeclaration} A live object, whose values change automatically whenever styles of the (HTML-) element changes.
+    * @return {CSSStyleDeclaration} A live object, whose values change automatically whenever styles of the (HTML-) element changes.
     */
    computedStyle() { return getComputedStyle(this.#htmlElem) }
    /**
@@ -2860,7 +2981,7 @@ class ViewElem {
    }
    /**
     * @param {ViewStyles} newStyles
-    * @returns {object} Old values of set style values.
+    * @return {object} Old values of set style values.
     */
    setStyles(newStyles) {
       const oldStyles = {}
@@ -2873,7 +2994,7 @@ class ViewElem {
    }
    /**
     * @param {string[]|({[style:string]:any})} [styles]
-    * @returns {object} Values of read styles. If style is undefined the values of all available styles are returned.
+    * @return {object} Values of read styles. If style is undefined the values of all available styles are returned.
     */
    styles(styles) {
       const readValues = {}
@@ -2892,13 +3013,13 @@ class ViewElem {
    // Transitions //
    /////////////////
    /**
-    * @returns {CSSTransition[]}
+    * @return {CSSTransition[]}
     */
    getTransitions() {
       return this.#htmlElem.getAnimations(/*includes no childs*/).filter(animation => animation instanceof CSSTransition)
    }
    /**
-    * @returns {boolean} True in case transition animations are running.
+    * @return {boolean} True in case transition animations are running.
     */
    isTransition() {
       return this.#htmlElem.getAnimations(/*includes no childs*/).some(animation => animation instanceof CSSTransition)
@@ -2908,10 +3029,7 @@ class ViewElem {
     * @param {()=>void} updateAttrCallback Callback to update view attributes. Updating is done with a transition if stylesManager is set else without one.
     */
    startTransition(transitionStyle, updateAttrCallback) {
-      if (transitionStyle)
-         this.stylesManager.startTransition(this, typeof transitionStyle === "object" ? transitionStyle : null, updateAttrCallback)
-      else
-         updateAttrCallback()
+      this.stylesManager.startTransition(this, false, transitionStyle, updateAttrCallback)
    }
    /**
     * Finishes any running transition.
@@ -2924,18 +3042,18 @@ class ViewElem {
     * Notification is done either by callback or by waiting for the returned promise.
     * If no transition is running callback is called immediately or promise is resolved immediately.
     * @param {()=>void} [onTransitionEnd] Callback to signal end of transition (all computed view attributes has reached their final value).
-    * @returns {undefined|Promise<null>} Promise if onTransitionEnd is undefined else undefined.
+    * @return {undefined|Promise<null>} Promise if onTransitionEnd is undefined else undefined.
     */
    onceOnTransitionEnd(onTransitionEnd) {
       if (onTransitionEnd) {
-         new TransitionController(this.#htmlElem, (e) => {
+         new TransitionController(this.#htmlElem, null, (e) => {
             if (!e.isTransition)
                onTransitionEnd()
          }).ensureInTransitionElseEnd()
       }
       else {
          const promiseHolder = new PromiseHolder()
-         new TransitionController(this.#htmlElem, (e) => {
+         new TransitionController(this.#htmlElem, null, (e) => {
             if (!e.isTransition)
                promiseHolder.resolve(null)
          }).ensureInTransitionElseEnd()
@@ -2947,35 +3065,43 @@ class ViewElem {
    ///////////
    /**
     * @param {string} slotName The name of a slot.
-    * @returns {boolean} *true*, if a slot of the given name exists.
+    * @return {boolean} *true*, if a slot of the given name exists.
     */
    hasSlot(slotName) {
       return this.trySlot(slotName) != null
    }
    /**
     * @param {string} slotName The name of an existing slot.
-    * @returns {ViewElem} Container of slot. Use setChild to assign content.
+    * @return {ViewElem} Container of slot. Use setChild to assign content.
     */
    slot(slotName) {
       const slot = this.trySlot(slotName)
       if (!slot)
-         return VMX.throwErrorObject(this, `Missing slot »${ViewElem.SlotAttr}=${slotName}«.\nhtml=${this.outerHTML()}`)
+         return VMX.throwError(this, `Missing slot »${this.slotattr}=${slotName}«.\nhtml=${this.outerHTML()}`)
       return slot
    }
    /**
     * @param {string} slotName The name of a slot.
-    * @returns {undefined|ViewElem} Container of slot or undefined, if slot does not exist. Use setChild to assign content.
+    * @return {undefined|ViewElem} Container of slot or undefined, if slot does not exist. Use setChild to assign content.
     */
    trySlot(slotName) {
-      return this.query("["+ViewElem.SlotAttr+"='"+slotName+"']")
+      return this.query("["+this.slotattr+"='"+slotName+"']")
    }
    /**
     * @param {string} slotName The name of an existing slot.
-    * @param {null|undefined|ViewElemText|ViewElem} child The new content set into the slot.
+    * @param {null|undefined|ViewText|ViewElem} child The new content set into the slot.
     */
    setSlot(slotName, child) {
       const slot = this.slot(slotName)
       slot.setChild(child)
+   }
+   ////////////////
+   // Attributes //
+   ////////////////
+   static nextID(prefix) {
+      let id=""
+      do { id = prefix+"_"+ViewElem.NEXT_ID++ } while (document.getElementById(id))
+      return id
    }
 }
 
@@ -2990,7 +3116,7 @@ class ViewElemDocument extends ViewElem {
    }
    /**
     * @param {string} cssSelector
-    * @returns {undefined|ViewElem}
+    * @return {undefined|ViewElem}
     */
    query(cssSelector) {
       const htmlElem = document.querySelector(cssSelector)
@@ -3021,12 +3147,7 @@ class ViewElemDocument extends ViewElem {
 class ViewElemStylesManager {
    /**
     * @typedef {{[style:string]:undefined|string, "transition-delay":string, "transition-duration":string, "transition-property":string, "transition-timing-function":string }} ViewTransitionStyle
-    */
-   /**
-    * @typedef {{[style:string]:undefined|string, position?:string, width:string, height:string, top:string, left:string }} ViewPositionStyle
-    */
-   /**
-    * @typedef {{[style:string]:undefined|number|string}} ViewStyles
+    * @typedef {{position?:string, width?:string, height?:string, top?:string, left?:string }} ViewPositionStyle
     */
    /**
     * Default transition style for resize and change position animation.
@@ -3034,83 +3155,171 @@ class ViewElemStylesManager {
     */
    static TransitionStyle={ "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"all", "transition-timing-function":"ease-out" }
    /**
-    * @type {{position?:ViewPositionStyle,transition?:ViewTransitionStyle}} The old styles of the HTMLElement before the transition styles were applied.
+    * @param {{width?:number, height?:number, top?:number, left?:number }} pos
+    * @return {ViewPositionStyle} The position encoded as styles values.
     */
-   #oldStyles
+   static convertPos(pos) {
+      const posStyles = {}
+      for (const prop of ["width","height","top","left"]) {
+         const value = pos[prop]
+         if (typeof value === "number" && isFinite(value)) {
+            posStyles[prop] = value + "px"
+         }
+      }
+      return posStyles
+   }
    /**
-    * @type {undefined|(()=>void)} Called whenever this manager is no more in use (isFree === true).
+    * Delay needed to make changes of style effective.
+    * @param {ViewElem} viewElem
     */
+   static delay(viewElem) { viewElem.computedStyle().display !== "none" }
+
+   /** The old styles of the HTMLElement before the transition styles were applied. @type {{position?:ViewPositionStyle,transition?:ViewTransitionStyle}} */
+   #oldStyles
+   /** The class which was set in last call to {@link setFixedPos}. @type {{position?:string}} */
+   #setClass
+   /** Called whenever this manager is no more in use (isFree === true). @type {undefined|(()=>void)} */
    #onFree
+   /** *True* in case position should be reset after transition ends. @type {boolean} */
+   #doResetPosition
+
    /**
     * @param {()=>void} [onFree] Called whenever this manager is no more in use (isFree === true).
     */
    constructor(onFree) {
       this.#oldStyles = {}
+      this.#setClass = {}
       this.#onFree = onFree
+      this.#doResetPosition = false
    }
-   /**
-    * @param {ViewElem} viewElem
-    */
+   /** @param {ViewElem} viewElem */
    free(viewElem) {
       for (const propName of Object.keys(this.#oldStyles))
          this.#resetStyle(viewElem, propName, this.#oldStyles[propName])
+      this.tryCallOnFree()
    }
+   tryCallOnFree() { this.#onFree && this.isFree && (this.#onFree(), this.#onFree=undefined) }
    get isFree() { return Object.keys(this.#oldStyles).length === 0 }
    get isPosition() { return this.#oldStyles.position !== undefined }
    get isTransition() { return this.#oldStyles.transition !== undefined }
    /**
     * @param {ViewElem} viewElem
-    * @param {null|undefined|ViewTransitionStyle} transitionStyle
+    * @param {boolean} doResetPosition
+    * @param {null|undefined|boolean|ViewTransitionStyle} transitionStyle If undefined,null,or false, updateAttrCallback is called without a transition. If *true*, the default transition styles are used.
     * @param {()=>void} onTransitionStart Callback to update view attributes. Updating is done with a transition.
     */
-   startTransition(viewElem, transitionStyle, onTransitionStart) {
-      this.#resetTransition(viewElem, null)
-      const preTransitionStyle = viewElem.setStyles(transitionStyle ?? ViewElemStylesManager.TransitionStyle)
-      this.#oldStyles.transition = preTransitionStyle
+   startTransition(viewElem, doResetPosition, transitionStyle, onTransitionStart) {
+      ViewElemStylesManager.delay(viewElem) // add delay so that transitions work after switching to hidden=false or position="fixed"
+      if (transitionStyle)
+         this.#oldStyles.transition = { ...viewElem.setStyles((typeof transitionStyle === "object" && transitionStyle || ViewElemStylesManager.TransitionStyle)), ...this.#oldStyles.transition }
+      else
+         this.#resetStyle(viewElem, "transition")
+      const unchanged = this.#oldStyles.transition
+      this.#doResetPosition = doResetPosition
       onTransitionStart()
-      VMX.viewUpdateListener.onceOnViewUpdate(1, () => this.#resetTransition(viewElem, preTransitionStyle))
+      const resetOnTransitionEnd = () => {
+         if (this.#oldStyles.transition !== unchanged) return
+         if (viewElem.isTransition()) {
+            new ViewListener(viewElem.htmlElem, ViewListener.TRANSITIONEND, resetOnTransitionEnd, { once:true })
+         }
+         else {
+            this.#resetStyle(viewElem, "transition")
+            if (this.#doResetPosition) {
+               this.#doResetPosition = false
+               this.#resetStyle(viewElem, "position")
+            }
+            this.tryCallOnFree()
+         }
+      }
+      resetOnTransitionEnd()
    }
    /**
     * @param {ViewElem} viewElem
-    * @param {ViewPositionStyle} newPos
     */
-   setPosition(viewElem, newPos) {
-      this.resetPosition(viewElem)
-      this.#oldStyles.position = viewElem.setStyles(newPos)
-   }
-   /**
-    * @param {ViewElem} viewElem
-    * @param {ViewPositionStyle} newPos
-    */
-   updatePosition(viewElem, newPos) {
-      if (this.#oldStyles.position) {
-         viewElem.updateStyles(newPos)
+   switchPositionToFixed(viewElem) {
+      if (!this.#oldStyles.position) {
+         const posStyles = viewElem.viewportPosStyles()
+         this.#oldStyles.position = viewElem.setStyles({...posStyles, position:"fixed"})
       }
    }
    /**
-    * Restores old styles previously changed with call to {@link setPosition}.
+    * Restores old styles previously changed with call to {@link switchPositionToFixed}.
     * @param {ViewElem} viewElem
+    * @param {null|undefined|boolean|ViewTransitionStyle} [transitionStyle]
     */
-   resetPosition(viewElem) {
-      this.#resetStyle(viewElem, "position", null)
+   resetPosition(viewElem, transitionStyle) {
+      if (this.#oldStyles.position) {
+         // get current pos and stop transition
+         viewElem.updateStyles(viewElem.computedPosStyles())
+         this.#setClass.position && viewElem.removeClass(this.#setClass.position)
+         delete this.#setClass.position
+         ViewElemStylesManager.delay(viewElem)
+         this.#oldStyles.transition && viewElem.updateStyles(this.#oldStyles.transition)
+         // get old pos in fixed position coordinates (could be changed => not cached)
+         const switchedStyles = viewElem.setStyles(this.#oldStyles.position)
+         const oldPos = viewElem.viewportPosStyles()
+         viewElem.updateStyles(switchedStyles)
+         // transition to old position and reset position after transition
+         this.startTransition(viewElem, true, transitionStyle, () => {
+            viewElem.updateStyles(oldPos)
+         })
+      }
+   }
+   /**
+    * Sets new position immediately (if not in {@link switchPositionToFixed} not called before).
+    * If in "fixed position mode" the new position merge into the old remembered position before switching.
+    * If a transition is active to restore the old position (switch ouf of fixed position mode)
+    * the transition coordinates are updated to reflect the updated old position.
+    * @param {ViewElem} viewElem
+    * @param {{width?:number, height?:number, top?:number, left?:number}} pos
+    * @param {null|undefined|boolean|ViewTransitionStyle} [transitionStyle]
+    */
+   setPos(viewElem, pos, transitionStyle) {
+      const posStyles = ViewElemStylesManager.convertPos(pos)
+      if (this.#oldStyles.position) {
+         // update pos of "previous position mode"
+         Object.assign(this.#oldStyles.position, posStyles)
+         if (this.#oldStyles.transition && this.#doResetPosition) {
+            // update running transition with new coordinates
+            const transitionStyles = transitionStyle ?? viewElem.styles(this.#oldStyles.transition)
+            this.resetPosition(viewElem, transitionStyles)
+         }
+      }
+      else {
+         this.startTransition(viewElem, false, transitionStyle, () => {
+            viewElem.updateStyles(posStyles)
+         })
+      }
    }
    /**
     * @param {ViewElem} viewElem
-    * @param {null|ViewTransitionStyle} preTransitionStyle
+    * @param {ViewPositionStyle} pos
+    * @param {undefined|null|string} setClass
+    * @param {null|undefined|boolean|ViewTransitionStyle} [transitionStyle]
     */
-   #resetTransition(viewElem, preTransitionStyle) {
-      this.#resetStyle(viewElem, "transition", preTransitionStyle)
+   setFixedPos(viewElem, pos, setClass, transitionStyle) {
+      if (!this.#oldStyles.position) return VMX.throwError(this,`call switchPositionToFixed before setFixedPos.`)
+      this.startTransition(viewElem, false, transitionStyle, () => {
+         this.#setClass.position && viewElem.removeClass(this.#setClass.position)
+         if (setClass) {
+            viewElem.addClass(setClass)
+            this.#setClass.position = setClass
+         }
+         else
+            delete this.#setClass.position
+         viewElem.updateStyles(pos)
+      })
    }
    /**
     * @param {ViewElem} viewElem
-    * @param {string} oldPropName
-    * @param {null|ViewStyles} oldStyles
+    * @param {string} stylesName
+    * @param {undefined|ViewStyles} [unchanged]
     */
-   #resetStyle(viewElem, oldPropName, oldStyles) {
-      if (this.#oldStyles[oldPropName] && (!oldStyles || this.#oldStyles[oldPropName] === oldStyles)) {
-         viewElem.updateStyles(this.#oldStyles[oldPropName])
-         delete this.#oldStyles[oldPropName]
-         this.isFree && this.#onFree?.()
+   #resetStyle(viewElem, stylesName, unchanged) {
+      if (this.#oldStyles[stylesName] && (!unchanged || this.#oldStyles[stylesName] === unchanged)) {
+         viewElem.updateStyles(this.#oldStyles[stylesName])
+         delete this.#oldStyles[stylesName]
+         delete this.#setClass[stylesName]
       }
    }
 }
@@ -3122,589 +3331,128 @@ class ViewElemPositionControl {
    transitionStyle
    /**
     * @param {ViewElem} viewElem
-    * @param {ViewTransitionStyle} [transitionStyle]
+    * @param {boolean|ViewTransitionStyle} transitionStyle
     */
    constructor(viewElem, transitionStyle) {
       this.viewElem = viewElem
-      this.transitionStyle = transitionStyle ?? true/*default transition style*/
-   }
-   free() { this.restore() }
-   /**
-    * @param {()=>void} onSwitched
-    */
-   switchFixedPosition(onSwitched) {
-      const viewElem = this.viewElem
-      if (viewElem.stylesManager.isPosition) {
-         return (onSwitched?.(), undefined)
-      }
-      const pos = viewElem.viewportRect()
-      viewElem.stylesManager.setPosition(viewElem, {position:"fixed",width:pos.width+"px",height:pos.height+"px",top:pos.top+"px",left:pos.left+"px"})
-      const oldTransStyle = this.transitionStyle
-      if (pos.width === 0 && pos.height === 0)
-         this.transitionStyle = false // hidden => turn off transition
-      onSwitched()
-      this.transitionStyle = oldTransStyle
+      this.transitionStyle = transitionStyle
    }
    restore() {
       const viewElem = this.viewElem
-      viewElem.startTransition(this.transitionStyle, () => {
-         viewElem.stylesManager.resetPosition(viewElem)
-      })
+      viewElem.stylesManager.resetPosition(viewElem, this.transitionStyle)
    }
-   maximize() {
+   /**
+   * @param {{[name:string]:string}} posStyle
+   * @param {string} posClass
+   * @param {()=>void} [onChanged] Called at end of position change transition.
+   */
+   changePos(posStyle, posClass, onChanged) {
       const viewElem = this.viewElem
-      this.switchFixedPosition(() =>
-         viewElem.startTransition(this.transitionStyle, () => {
-            viewElem.stylesManager.updatePosition(viewElem, { width:"100%", height:"100%", top:"0px", left:"0px" })
-         }))
-   }
-   minimize() {
-      const viewElem = this.viewElem
-      this.switchFixedPosition(() =>
-         viewElem.startTransition(this.transitionStyle, () => {
-            viewElem.stylesManager.updatePosition(viewElem, { width:"32px", height:"16px", top:"calc(100vh - 32px)", left:"5px" })
-         }))
-   }
-}
-
-class DOM {
-   /**
-    * Selects an HTML element from within the document or a given node.
-    * If a template node is selected its first child is returned instead.
-    * @param {string} cssSelector A CSS selector.
-    * @param {Document|Element} [node] The node which serves as root. If no value is provided document is used.
-    * @returns {HTMLElement} The queried HTML node or its first child in case of a template.
-    **/
-   static query(cssSelector, node=document) {
-      if (!(node === document || node instanceof Element))
-         return VMX.throwErrorStatic(this, `Can not query Node for '${cssSelector}'.`)
-      const htmlElem = node.querySelector(cssSelector)
-      if (!(htmlElem instanceof HTMLElement))
-         return VMX.throwErrorStatic(this, `Found no HTMLElement matching '${cssSelector}'.`)
-      if (htmlElem instanceof HTMLTemplateElement) {
-         const child = htmlElem.content.children[0]
-         if (!(child instanceof HTMLElement))
-            return VMX.throwErrorStatic(this, `Found no child node inside matching template '${cssSelector}'.`)
-         return child
-      }
-      return htmlElem
-   }
-   /**
-    * First queries a node from the document and then clones it.
-    * The cloned node is not connected to the Document.
-    * @param {string} cssSelector A CSS selector.
-    * @returns {HTMLElement} A deep clone of the node returned from calling {@link query}.
-    */
-   static clone(cssSelector) {
-      const htmlElem = this.query(cssSelector)
-      const cloneNode = htmlElem.cloneNode(true)
-      if (!(cloneNode instanceof HTMLElement))
-         return VMX.throwErrorStatic(this, `Found no HTMLElement matching '${cssSelector}'.`)
-      return cloneNode
-   }
-
-   static getStyles(htmlElem, styles) {
-      const elemStyle = htmlElem.style
-      const styleValues = {}
-      if (Array.isArray(styles)) {
-         for (const key of styles)
-            styleValues[key] = elemStyle.getPropertyValue(key)
-      }
-      else {
-         for (const key in styles)
-            styleValues[key] = elemStyle.getPropertyValue(key)
-      }
-      return styleValues
-   }
-   static setStyles(htmlElem, newStyles) {
-      const styles = htmlElem.style
-      const oldStyles = {}
-      for (const key in newStyles) {
-         oldStyles[key] = styles[key]
-         styles[key] = newStyles[key]
-      }
-      return oldStyles
-   }
-   static restoreStyles(htmlElem, oldStyles) {
-      const styles = htmlElem.style
-      for (const key in oldStyles)
-         styles[key] = oldStyles[key]
-   }
-   static newElement(htmlString) {
-      const div = document.createElement("div")
-      div.innerHTML = htmlString
-      const htmlElem = div.children[0]
-      htmlElem?.remove()
-      return htmlElem
-   }
-   static newElementList(htmlString) {
-      const div = document.createElement("div")
-      div.innerHTML = htmlString
-      const fragment = document.createDocumentFragment()
-      fragment.append(...div.childNodes)
-      return fragment
-   }
-   static newDiv(styles) {
-      const htmlElem = document.createElement("div")
-      this.setStyles(htmlElem, styles)
-      return htmlElem
-   }
-   static replaceWith(replacedHtmlElem, replacingHtmlElem) {
-      replacedHtmlElem.replaceWith(replacingHtmlElem)
-   }
-   static getSingleChild(parentHtmlElem) {
-      return parentHtmlElem.childNodes[0]
-   }
-   static setSingleChild(parentHtmlElem, childHtmlElem) {
-      if (childHtmlElem)
-         parentHtmlElem.replaceChildren(childHtmlElem)
-      else
-         parentHtmlElem.replaceChildren()
-   }
-   static nextUnusedID(prefix) {
-      let id=""
-      for (let i=1; (id=prefix+"-"+i, document.getElementById(id)); ++i) {
-      }
-      return id
-   }
-   static focus(htmlElem) {
-      return htmlElem.matches(":focus")
-   }
-   static focusWithin(htmlElem) {
-      return htmlElem.matches(":focus-within")
-   }
-   static hasCheckedAttr(htmlElem) {
-      const hasChecked = htmlElem.nodeName === "INPUT"
-                        && htmlElem.type == "radio" || htmlElem.type == "checkbox"
-      return hasChecked
-   }
-   static isInputOrFocusedElement(htmlElem) {
-      const nodeName = htmlElem.nodeName
-      return nodeName === "INPUT"
-            || nodeName === "SELECT"
-            || htmlElem === document.activeElement
-   }
-   static show(htmlElem) {
-      htmlElem.removeAttribute("hidden")
-   }
-   static hide(htmlElem) {
-      htmlElem.setAttribute("hidden","")
-   }
-   /**
-    * @param {Node} htmlElem
-    */
-   static connected(htmlElem) {
-      return htmlElem.isConnected
-   }
-   /**
-    * @param {Document|HTMLElement|Text} htmlElem
-    */
-   static connect(htmlElem) {
-      if (!htmlElem.isConnected)
-         document.body.append(htmlElem)
-   }
-   /**
-    * @param {HTMLElement|Text} htmlElem
-    */
-   static disconnect(htmlElem) {
-      if (htmlElem.isConnected)
-         htmlElem.remove()
-   }
-}
-
-class View {
-   #htmlElem
-   constructor(htmlElem) {
-      this.#htmlElem = htmlElem
-   }
-   get htmlElem() {
-      return this.#htmlElem
-   }
-   get html() {
-      return this.#htmlElem.innerHTML
-   }
-   set html(htmlString) {
-      this.#htmlElem.innerHTML = htmlString
-   }
-   append(node) {
-      this.#htmlElem.append(node)
-      return this
-   }
-   get node() {
-      return this.#htmlElem.childNodes[0]
-   }
-   set node(node) {
-      node
-      ? this.#htmlElem.replaceChildren(node)
-      : this.#htmlElem.replaceChildren()
-   }
-   /**
-    * @param {string} name
-    * @return {boolean}
-    */
-   hasSlot(name) {
-      return this.trySlot(name) != null
-   }
-   /**
-    * @param {string} name
-    * @return {undefined|ViewElem}
-    */
-   trySlot(name) {
-      return new ViewElem(this.#htmlElem).trySlot(name)
-   }
-   /**
-    * @param {string} name
-    * @return {ViewElem}
-    */
-   slot(name) {
-      return new ViewElem(this.#htmlElem).slot(name)
-   }
-   getComputedStyle() {
-      return getComputedStyle(this.#htmlElem)
-   }
-   getStyles(styles) {
-      return DOM.getStyles(this.#htmlElem, styles)
-   }
-   setStyles(styles) {
-      return DOM.setStyles(this.#htmlElem, styles)
-   }
-   hasClass(className) {
-      return this.#htmlElem.classList.contains(className)
-   }
-   addClass(className) {
-      this.#htmlElem.classList.add(className)
-   }
-   removeClass(className) {
-      this.#htmlElem.classList.remove(className)
-   }
-   switchClass(isAdd, className) {
-      new ViewElem(this.#htmlElem).switchClass(isAdd,className)
-   }
-   get initialPos() {
-      return new ViewElem(this.#htmlElem).initialPos()
-   }
-   get connected() {
-      return this.#htmlElem.isConnected
-   }
-   get displayed() {
-      return this.connected && this.getComputedStyle().display !== "none"
-   }
-   get focus() {
-      return DOM.focus(this.#htmlElem)
-   }
-   get focusWithin() {
-      return DOM.focusWithin(this.#htmlElem)
-   }
-   get hidden() {
-      return Boolean(this.#htmlElem.hidden)
-   }
-   set hidden(isHidden) {
-      this.#htmlElem.hidden = isHidden
-   }
-}
-
-/**
- * Stores state of an applied decorator.
- * Useful for debugging and/or undecorating HTML elements.
- */
-class ViewDecorator {
-   /** @type {ViewModel} */
-   viewModel
-   /** A subtype stores its controllers under this.controllers.subtypeName={}.
-    * The name of a subtype is its class name without suffix Decorator.
-    * Additional state is stored as this.subtypeNameState = {}.
-    * All stored controllers are removed (freed) during undecorate() operation. */
-   controllers = {}
-   /**
-    * Constructor which decorates an HTML element (creates ViewController and binds their action callbacks).
-    * @param {ViewModel} viewModel - The view-model which contains the root view.
-    * @param {object} options - Additional options.
-    */
-   constructor(viewModel, options={}) {
-      this.decorate(viewModel, options)
-   }
-   /**
-    * @param {ViewModel} viewModel
-    * @param {object} [options]
-    */
-   decorate(viewModel, options={}) {
-      if (! this.viewModel) {
-         !(viewModel instanceof ViewModel) && VMX.throwErrorObject(this, "Argument viewModel is not of type ViewModel.")
-         this.viewModel = viewModel
-         this.decorateOnce(viewModel, options)
-      }
-   }
-   undecorate() {
-      const viewModel = this.viewModel
-      if (viewModel) {
-         this.undecorateOnce(viewModel)
-         for (const controllers of Object.values(this.controllers)) {
-            for (const controller of Object.values(controllers)) {
-               if (controller instanceof ViewController)
-                  controller.free()
-            }
-         }
-         this.controllers = {}
-         this.viewModel = null
-      }
-   }
-   ////////////////////////////
-   // Overwritten in Subtype //
-   ////////////////////////////
-   /**
-    * @param {ViewModel} viewModel
-    * @param {object} [options]
-    */
-   decorateOnce(viewModel, options) { VMX.throwErrorObject(this, "decorateOnce(viewModel,options) not implemented in subtype.") }
-   /**
-    * @param {ViewModel} viewModel
-    */
-   undecorateOnce(viewModel) { VMX.throwErrorObject(this, "undecorateOnce(viewModel) not implemented in subtype.") }
-}
-
-class ResizeDecorator extends ViewDecorator {
-   /**
-    * @param {ViewModel} viewModel
-    * @param {object} options
-    */
-   decorateOnce(viewModel, { moveable }) {
-      const htmlElem = viewModel.htmlElem
-      const width = { outer:10, border:15, edge:20 }
-      const size = { border: width.border+"px", edge:width.edge+"px", outer:"-"+width.outer+"px" }
-      const borders = [
-         moveable && DOM.newDiv({top:size.outer, left:0, right:0, height:size.border, cursor:"n-resize", position:"absolute"}),
-         DOM.newDiv({right:size.outer, top:0, bottom:0, width:size.border, cursor:"e-resize", position:"absolute"}),
-         DOM.newDiv({bottom:size.outer, left:0, right:0, height:size.border, cursor:"s-resize", position:"absolute"}),
-         moveable && DOM.newDiv({left:size.outer, top:0, bottom:0, width:size.border, cursor:"w-resize", position:"absolute"}),
-         moveable && DOM.newDiv({top:size.outer, left:size.outer, width:size.edge, height:size.edge, cursor:"nw-resize", position:"absolute"}),
-         moveable && DOM.newDiv({top:size.outer, right:size.outer, width:size.edge, height:size.edge, cursor:"ne-resize", position:"absolute"}),
-         DOM.newDiv({bottom:size.outer, right:size.outer, width:size.edge, height:size.edge, cursor:"se-resize", position:"absolute"}),
-         moveable && DOM.newDiv({bottom:size.outer, left:size.outer, width:size.edge, height:size.edge, cursor:"sw-resize", position:"absolute"}),
-      ]
-      htmlElem.append(...borders.filter(border=>Boolean(border)))
-      const moveHtmlElem = viewModel.view.trySlot("move")?.htmlElem ?? htmlElem
-      /** @type {null|{borders:any[], moveHtmlElem:HTMLElement, oldStyles:object|null, isResizeable:boolean }} */
-      this.resizeState = { borders, moveHtmlElem, oldStyles:null, isResizeable:true }
-      const moveAction = viewModel.bindAction("move",null,(e) => ({ dx:e.dx, dy:e.dy }))
-      const resizeAction = viewModel.bindAction("resize",null,
-         moveable ? (e) => ({ dTop:e.dy, dRight:e.dx, dBottom:e.dy, dLeft:e.dx })
-                  : (e) => ({ dTop:0, dRight:2*e.dx, dBottom:2*e.dy, dLeft:0 }))
-      const topAction = viewModel.bindAction("resize",[["top"]],(e)=>({ dTop:-e.dy }))
-      const rightAction = viewModel.bindAction("resize",[["right"]],(e)=>({ dRight:e.dx }))
-      const bottomAction = viewModel.bindAction("resize",[["bottom"]],(e)=>({ dBottom:e.dy }))
-      const leftAction = viewModel.bindAction("resize",[["left"]],(e)=>({ dLeft:-e.dx }))
-      const topleftAction = viewModel.bindAction("resize",[["top","left"]],(e)=>({ dTop:-e.dy, dLeft:-e.dx }))
-      const toprightAction = viewModel.bindAction("resize",[["top","right"]],(e)=>({ dTop:-e.dy, dRight:e.dx }))
-      const bottomleftAction = viewModel.bindAction("resize",[["bottom","left"]],(e)=>({ dBottom:e.dy, dLeft:-e.dx }))
-      const bottomrightAction = viewModel.bindAction("resize",[["bottom","right"]],(e)=>({ dBottom:e.dy, dRight:e.dx }))
-      this.controllers.resize = {
-         move: moveable && new MoveController(moveHtmlElem,moveAction,{viewModel:viewModel}),
-         resize: new TouchResizeController(htmlElem,resizeAction,{viewModel}),
-         topResize: moveable && new MoveController(borders[0],topAction,{viewModel}),
-         rightResize: new MoveController(borders[1],rightAction,{viewModel}),
-         bottomResize: new MoveController(borders[2],bottomAction,{viewModel}),
-         leftResize: moveable && new MoveController(borders[3],leftAction,{viewModel}),
-         topLeftResize: moveable && new MoveController(borders[4],topleftAction,{viewModel}),
-         topRightResize: moveable && new MoveController(borders[5],toprightAction,{viewModel}),
-         bottomRightResize:  new MoveController(borders[6],bottomrightAction,{viewModel}),
-         bottomLeftResize: moveable && new MoveController(borders[7],bottomleftAction,{viewModel}),
-      }
-      this.switchStyles()
-   }
-
-   undecorateOnce(viewModel) {
-      if (this.resizeState) {
-         this.switchStyles()
-         for (const border of this.resizeState.borders)
-            border && border.remove()
-         this.resizeState = null
-      }
-   }
-
-   /**
-    * Changes cursor style of decorated element to "move" or restores old style (every call switches).
-    */
-   switchStyles() {
-      if (this.resizeState) {
-         if (this.resizeState.oldStyles)
-            (DOM.setStyles(this.resizeState.moveHtmlElem, this.resizeState.oldStyles), this.resizeState.oldStyles=null)
-         else if (this.controllers.resize.move)
-            this.resizeState.oldStyles = DOM.setStyles(this.resizeState.moveHtmlElem, {cursor:"move"})
-      }
-   }
-   setResizeable(isResizeable) {
-      if (this.resizeState && this.resizeState.isResizeable !== Boolean(isResizeable)) {
-         this.resizeState.isResizeable = Boolean(isResizeable)
-         if (isResizeable) {
-            for (const border of this.resizeState.borders)
-               border && DOM.show(border)
-         }
-         else {
-            for (const border of this.resizeState.borders)
-               border && DOM.hide(border)
-         }
-         for (const controller of Object.values(this.controllers.resize)) {
-            if (controller instanceof ViewController)
-               controller.muted = !isResizeable
-         }
-         this.switchStyles()
-      }
-   }
-
-}
-
-class WindowDecorator extends ResizeDecorator {
-
-   onMaximized({value:vWindowState}) {
-      this.setResizeable(vWindowState != WindowVM.MAXIMIZED)
-   }
-   /**
-    * @param {ViewModel} viewModel
-    * @param {object} options
-    */
-   decorateOnce(viewModel, options) {
-      if (viewModel instanceof WindowVM) {
-         this.windowState = { onMaximized:this.onMaximized.bind(this) }
-         super.decorateOnce(viewModel, options)
-         const closeSlot=viewModel.view.trySlot("close")
-         const minSlot=viewModel.view.trySlot("min")
-         const maxSlot=viewModel.view.trySlot("max")
-         this.controllers.window = {
-            close: closeSlot && new ClickController(closeSlot.htmlElem, viewModel.bindAction("close"), {viewModel}),
-            min: minSlot && new ClickController(minSlot.htmlElem, viewModel.bindAction("minimize"), {viewModel}),
-            max: maxSlot && new ClickController(maxSlot.htmlElem, viewModel.bindAction("toggleMaximize"), {viewModel}),
-         }
-         viewModel.addPropertyListener("vWindowState",this.windowState.onMaximized)
-      }
-   }
-
-   undecorateOnce(viewModel) {
-      if (this.windowState) {
-         viewModel.removePropertyListener("vWindowState",this.windowState.onMaximized)
-         super.undecorateOnce(viewModel)
-         this.windowState = null
-      }
+      viewElem.stylesManager.switchPositionToFixed(viewElem)
+      viewElem.stylesManager.setFixedPos(viewElem, posStyle, posClass, this.transitionStyle)
+      onChanged && viewElem.onceOnTransitionEnd(onChanged)
    }
 }
 
 class ViewModelActionInterface {
+   /**
+    * @param {any} o
+    * @return {o is ViewModelActionInterface}
+    */
+   static isType(o) {
+      return   (o && typeof o === "object")
+            && typeof o.isStarted === "function"
+            && typeof o.doAction === "function"
+            && typeof o.startAction === "function"
+            && typeof o.endAction === "function"
+   }
+   constructor() { return VMX.throwError(this, `ViewModelActionInterface is abstract.`) }
+   /**
+    * @return {boolean} *true*, if action was succesfully started (is locked).
+    */
+   isStarted() { return true }
+   /**
+    * Action is called if {@link startAction} was successfully called and all constraints are fulfilled.
+    * @param {{[name:string]: any}} [args]
+    * @return {void}
+    */
+   doAction(args) { return VMX.throwError(this, `ViewModelActionInterface.doAction not implemented.`) }
+   /**
+    * @return {boolean} *true* in case of action could be locked.
+    */
+   startAction() { return true }
+   /**
+    * Releases action lock acquired by a call to {@link startAction}.
+    */
+   endAction() {}
+}
+
+class ViewModelActionWrapper /*implements ViewModelActionInterface*/ {
    /** @type {(args:undefined|{[name:string]:any})=>any} */
    action
    /**
     * @param {(args:undefined|{[name:string]:any})=>any} action
     */
    constructor(action) {
-      this.action = action
       if (typeof action !== "function")
-         return VMX.throwErrorObject(this, `Argument action is not of type function.`)
+         return VMX.throwError(this, `Expect argument »action« of type function.`)
+      this.action = action
    }
+   isStarted() { return true }
    /**
-    * @returns {boolean} *true*, if action was succesfully started (is locked).
-    */
-   isLocked() { return true }
-   /**
-    * @returns {boolean} *true*, if action is available in general.
-    */
-   isAvailable() { return true }
-   /**
-    * Action is called if lock could be acquired and action is available.
-    * If {@link startAction} is not called previously the lock is acquired and released automatically (if possible).
+    * Action is always called.
     * @param {{[name:string]: any}} [args]
     */
-   doAction(args) {
-      if (!this.isAvailable()) return
-      const isLocked = this.isLocked()
-      if (isLocked || this.startAction()) {
-         this.action(args)
-         isLocked || this.endAction()
-      }
-   }
-   /**
-    * @returns {boolean} *true* in case of action could be locked.
-    */
-   startAction() {
-      return true
-   }
-   /**
-    * Releases action lock acquired by a call to {@link startAction}.
-    */
-   endAction() {
-   }
+   doAction(args) { this.action.call(null,args) }
+   startAction() { return true }
+   endAction() {}
 }
-
-// TODO: remove ViewActionAdapter
-class ViewActionAdapter extends ViewModelActionInterface {
-   /** @type {ViewModelActionInterface} vmAction */
-   vmAction
-   /**
-    * @param {(args:undefined|{[name:string]:any})=>undefined|{[name:string]:any}} [mapArgs]
-    * @param {ViewModelActionInterface} [vmAction]
-    */
-   constructor(mapArgs, vmAction) {
-      super(mapArgs ? (args) => this.vmAction.doAction(mapArgs(args)) : (args) => this.vmAction.doAction(args))
-      this.vmAction = vmAction ?? new ViewModelActionInterface(()=>undefined)
-   }
-   /**
-    * @returns {boolean} *true*, if action was succesfully started.
-    */
-   isLocked() { return this.vmAction.isLocked() }
-   /**
-    * @param {{[name:string]: any}} [args]
-    */
-   doAction(args) { return this.vmAction.doAction(args) }
-   /**
-    * @returns {boolean} *true* in case of action could be locked.
-    */
-   startAction() { return this.vmAction.startAction() }
-   /**
-    * Releases action lock acquired by a call to {@link startAction}.
-    */
-   endAction() { this.vmAction.endAction() }
-}
-
-
 
 /**
  * Combines an action of a ViewModel with a lock.
  * Returned from calling {@link ViewModel.bindAction}
  */
-class ViewModelAction extends ViewModelActionInterface {
-   /** @type {ActionLock} */
+class ViewModelAction /*implements ViewModelActionInterface*/ {
+   /** @type {(this:object,args:undefined|{[name:string]:any})=>any} */
+   action
+   /** @type {object} */
+   model
+   /** @type {ActionLockInterface} */
    lock
-   /** @type {undefined|ActionLock} */
-   notLocked
+   /** @type {undefined|((args:object) => object)} */
+   mapArgs
 
    /**
-    * @param {object} scope
-    * @param {string[][]} lockPath
-    * @param {undefined|boolean} shared *true*, if this is a shared lock. Else exclusive.
-    * @param {(args:{[name:string]:any})=>void} vmAction
+    * @param {ActionLockInterface} lock
+    * @param {object} model
+    * @param {(this:object,args:{[name:string]:any})=>void} vmAction
+    * @param {(args:object) => object} [mapArgs]
     */
-   constructor(scope, lockPath, shared, vmAction) {
-      super(vmAction)
-      this.lock = new ActionLock(scope, lockPath, shared)
+   constructor(lock, model, vmAction, mapArgs) {
+      if (typeof vmAction !== "function")
+         return VMX.throwError(this, `Expect argument »vmAction« of type function.`)
+      this.action = vmAction
+      this.model = model
+      this.lock = lock
+      this.mapArgs = mapArgs
+   }
+   isStarted() { return this.lock.isLocked() }
+   /**
+    * Action is called if {@link startAction} was successfully called and all constraints are fulfilled.
+    * @param {{[name:string]: any}} [args]
+    */
+   doAction(args) {
+      if (this.lock.isContextCondition() && this.isStarted())
+         this.action.call(this.model,this.mapArgs?.(args)??args)
    }
    /**
-    * @param {undefined|string[][]} lockPath
-    * @returns {ViewModelAction}
-    */
-   setNotLocked(lockPath) {
-      if (lockPath)
-         this.notLocked = new ActionLock(this.lock.scope, lockPath)
-      else if (this.notLocked)
-         delete this.notLocked
-      return this
-   }
-   isLocked() { return this.lock.isLocked() }
-   isAvailable() { return !Boolean(this.notLocked?.isPathLocked()) }
-   /**
-    * @returns {boolean} *true* in case of locking succeeded.
+    * @return {boolean} *true* in case of locking succeeded.
     */
    startAction() {
       if (this.lock.lock())
-         VMX.logInfoObject(this.lock.scope,`startAction: lock=${VMX.stringOf(this.lock.path)} OK << TODO: remove >>`)
+         VMX.logInfo(this.model??this,`startAction: lock=${VMX.stringOf(this.lock.getName())} OK << TODO: remove >>`)
       else
-         VMX.logInfoObject(this.lock.scope,`startAction: lock=${VMX.stringOf(this.lock.path)} FAILED << TODO: remove >>`)
+         VMX.logInfo(this.model??this,`startAction: lock=${VMX.stringOf(this.lock.getName())} FAILED << TODO: remove >>`)
       return this.lock.isLocked()
    }
    /**
@@ -3712,928 +3460,586 @@ class ViewModelAction extends ViewModelActionInterface {
     */
    endAction() {
       if (this.lock.isLocked()) {
-         VMX.logInfoObject(this.lock.scope,`Unlock ${VMX.stringOf(this.lock.path)}`)
+         VMX.logInfo(this.model??this,`Unlock ${VMX.stringOf(this.lock.getName())}`)
          this.lock.unlock()
       }
    }
 }
 
-class ActionLock {
-   /** @type {"-"} */
-   static SUBPATH_SEPARATOR="-"
-   /** @type {object} */
-   scope
-   /** @type {string[][]} */
-   path
-   /** @type {[ActionLockingPathNode,number][]} */
-   changedPathNodes
+class ActionLockInterface {
+   /**
+    * @return {boolean} *true*, if defined constraints on other locks are fulfilled.
+    */
+   isContextCondition() { return true }
+   /**
+    * @return {boolean} *true*, if this lock was acquired ({@link lock} was called successfully).
+    */
+   isLocked() { return false }
+   /**
+    * @return {string}
+    */
+   getName() { return "" }
+   /**
+    * Tries to acquire lock. If lock is already acquired nothing is done.
+    * @return {boolean} *true*, if lock is acquired.
+    */
+   lock() { return false }
+   /**
+    * Removes lock or undos changes of a partially acquired lock in case of an error.
+    * After return {@link isLocked} return *false*.
+    */
+   unlock() {}
+}
+
+class ActionLockState {
+   /** @type {number} Number of times the lock was acquired [0 ... (shared ? 100 : 1)]. */
+   lockCounter = 0
+   /** @type {boolean} *true*, if lock was acquired in shared mode. This value could be true even if configShared is false (parent nodes are locked shared). */
+   shared = false
+   /** @type {string} */
+   name
+   /** @type {boolean} *true*, if this lock is configured as shared lock. */
+   configShared
+   /** Closure of all parents ordered by depth. @type {ActionLockState[]} */
+   parents
+   /** Closure of all nodes which must be unlocked to satisfy context condition. @type {ActionLockState[]} */
+   contextUnlockedNodes
+
+   /**
+    * @param {ActionLockState[]} parents
+    * @return {ActionLockState[]}
+    */
+   static getContextUnlockNodesClosure(parents) {
+      const unlockedNodes = new Set()
+      for (const parent of parents)
+         parent.contextUnlockedNodes.forEach(node => unlockedNodes.add(node))
+      return [...unlockedNodes]
+   }
+
+   /**
+    * @param {ActionLockState[]} parents
+    * @return {ActionLockState[]}
+    */
+   static getParentsClosure(parents) {
+      const parentClosure = new Set(parents)
+      for (const parent of parents)
+         parent.parents.forEach(pparent => parentClosure.add(pparent))
+      const sortedClosure = new Set()
+      while (parentClosure.size) {
+         const increment = []
+         for (const parent of parentClosure)
+            if (parent.parents.every(pparent => sortedClosure.has(pparent)))
+               increment.push(parent)
+         for (const parent of increment) {
+            parentClosure.delete(parent)
+            sortedClosure.add(parent)
+         }
+      }
+      return [...sortedClosure]
+   }
+
+   /**
+    * @param {string} name
+    * @param {boolean} shared *true*, if this lock is a shared lock.
+    * @param {ActionLockState[]} parents
+    */
+   constructor(name, shared, ...parents) {
+      this.name = name
+      this.lockIsShared = shared
+      this.parents = ActionLockState.getParentsClosure(parents)
+      this.contextUnlockedNodes = ActionLockState.getContextUnlockNodesClosure(parents)
+   }
+   /** @param {ActionLockState[]} addedUnlockedNodes */
+   addContextUnlockedNodes(...addedUnlockedNodes) {
+      const unlockedNodes = new Set(this.contextUnlockedNodes)
+      for (const node of addedUnlockedNodes)
+         unlockedNodes.add(node)
+      this.contextUnlockedNodes = [...unlockedNodes]
+   }
+   ///////////
+   // Query //
+   ///////////
+   isContextCondition() { return this.contextUnlockedNodes.every(n => n.isNodeLockable(false)) }
+   /** @param {boolean} shared */
+   isNodeLockable(shared) { return this.lockCounter === 0 || (shared && this.shared) }
+   /** @return {boolean} */
+   isPathLockable() { return this.isNodeLockable(this.configShared) && this.parents.every(parent => parent.isNodeLockable(true)) }
+   ////////////
+   // Update //
+   ////////////
+   lock() { return this.isPathLockable() && (this.#increasePathCounter(), true) }
+   unlock() { this.#decreasePathCounter() }
+   /////////////
+   // Private //
+   /////////////
+   /** @param {boolean} shared */
+   #increaseNodeCounter(shared) {
+      if (this.lockCounter && (!shared || !this.shared)) throw VMX.throwError(this, `Lock already locked (name:${this.name}).`)
+      if (this.lockCounter >= 100) throw VMX.throwError(this, `Lock already locked 100 times (name:${this.name}).`)
+      ++ this.lockCounter
+      this.shared = shared
+   }
+   #decreaseNodeCounter() {
+      if (this.lockCounter <= 0) throw VMX.throwError(this, `Lock already unlocked (name:${this.name}).`)
+      if (-- this.lockCounter === 0) this.shared = false
+   }
+   #increasePathCounter() {
+      this.#increaseNodeCounter(this.configShared)
+      this.parents.every(parent => parent.#increaseNodeCounter(true))
+   }
+   #decreasePathCounter() {
+      this.#decreaseNodeCounter()
+      this.parents.every(parent => parent.#decreaseNodeCounter())
+   }
+}
+
+class ActionLockHolder /*implements ActionLockInterface*/ {
    /** @type {boolean} */
-   error
-   /** @type {boolean} */
-   shared
+   holdsLock = false
+   /** @type {ActionLockState} */
+   lockState
    /**
-    * @param {object} scope
-    * @param {string[][]} lockPath The contained arrays are not allowed to change afterwards (no copy is made).
-    * @param {boolean} [shared]
+    * @param {ActionLockState} lockState
     */
-   constructor(scope, lockPath, shared) {
-      this.scope = scope
-      this.path = [...lockPath]
-      this.changedPathNodes = []
-      this.error = false
-      this.shared = Boolean(shared)
+   constructor(lockState) {
+      this.lockState = lockState
    }
-   signalError() { this.error = true }
-   isError() { return this.error }
+   ///////////
+   // Query //
+   ///////////
+   isContextCondition() { return this.lockState.isContextCondition() }
+   isLocked() { return this.holdsLock }
+   getName() { return this.lockState.name }
+   ////////////
+   // Update //
+   ////////////
+   /** @return {boolean} *true* if lock could be acquired or is already acquired. */
+   lock() { return (this.holdsLock ||= this.lockState.lock()) }
    /**
-    * @returns {boolean} *true*, if this lock was acquired ({@link lock} was called successfully).
+    * Removes lock or undos changes of a partially acquired lock in case of an error.
+    * After return {@link isLocked} return *false*.
     */
-   isLocked() { return this.changedPathNodes.length !== 0 }
-   /**
-    * @returns {boolean} *true*, if path of this lock is locked by any lock.
-    */
-   isPathLocked() { return VMX.vmActionLocking.isPathLocked(this) }
-   /**
-    * @param {ActionLockingPathNode} node
-    * @param {number} nrAdded
-    */
-   addChange(node, nrAdded) {
-      this.changedPathNodes.push([node, nrAdded])
-   }
-   lock() {
-      return VMX.vmActionLocking.lock(this)
-   }
-   unlock() {
-      for (const tuple of this.changedPathNodes) {
-         tuple[0].undoChange(this.scope, tuple[1])
-      }
-      this.changedPathNodes = []
-      this.error = false
-   }
-   pathAsString() { return this.path.map(sp=>sp.join()).join(ActionLock.SUBPATH_SEPARATOR) }
-}
-
-class ActionLockingPathNode {
-   /** @type {number} */
-   level
-   /** @type {Map<string,ActionLockingPathNode|null>} */
-   subNodes
-   /** @type {Map<object,number>} Number 0 means this and all subNodes are locked for this scope. Number < 0 means abs(number) different shared locks hold a lock on this and all subNodes for this scope. No entry means nothing is locked. A number > 0 means there exists this number of subnodes where this scope holds a lock. */
-   lockedScopes
-   /**
-    * @param {number} level
-    */
-   constructor(level) {
-      this.level = level
-      this.subNodes = new Map()
-      this.lockedScopes = new Map()
-   }
-   /**
-    * @param {ActionLock} lock Contains scope, path, and changed node. If an error occurred somewhere in the path the error flag is set. But changes are not undone.
-    * @return {number} The number of locks added to this node and its subnodes.
-    */
-   tryLock(lock) {
-      const last = (lock.path.length <= this.level)
-      const nrSubNodes = this.lockedScopes.get(lock.scope)
-      let nrAdded = 0
-      if (last && (nrSubNodes === undefined || (lock.shared && nrSubNodes < 0))) {
-         const change = lock.shared ? -1 : 0
-         this.lockedScopes.set(lock.scope, (nrSubNodes??0)+change)
-         lock.addChange(this,change)
-         nrAdded = 1
-      }
-      else if (!last && (nrSubNodes === undefined || nrSubNodes > 0)) {
-         for (const action of lock.path[this.level]) {
-            let subNode = this.subNodes.get(action)
-            if (!subNode) {
-               subNode = new ActionLockingPathNode(this.level+1)
-               this.subNodes.set(action, subNode)
-            }
-            nrAdded += subNode.tryLock(lock)
-            if (lock.isError()) break
-         }
-         this.lockedScopes.set(lock.scope, (nrSubNodes??0)+nrAdded)
-         lock.addChange(this,nrAdded)
-      }
-      else
-         lock.signalError()
-      return nrAdded
-   }
-   /**
-    * @param {object} scope
-    * @param {number} nrAdded
-    */
-   undoChange(scope, nrAdded) {
-      const nrSubNodes = this.lockedScopes.get(scope)
-      if (nrSubNodes === undefined || (nrAdded<0)!==(nrSubNodes<0)) return VMX.throwErrorObject(this, "Invalid node state")
-      if (nrAdded !== nrSubNodes)
-         this.lockedScopes.set(scope, nrSubNodes-nrAdded)
-      else
-         this.lockedScopes.delete(scope)
-   }
-   /**
-    * @param {ActionLock} lock Contains scope and path to test for.
-    * @return {boolean} *true*, if an exclusive or shared lock is hold on any subpath.
-    */
-   isPathLocked(lock) {
-      const last = (lock.path.length <= this.level)
-      const nrSubNodes = this.lockedScopes.get(lock.scope)
-      if (nrSubNodes !== undefined) {
-         if (last || nrSubNodes <= 0) return true
-         for (const action of lock.path[this.level]) {
-            if (this.subNodes.get(action)?.isPathLocked(lock))
-               return true
-         }
-      }
-      return false
-   }
-   /**
-    * @param {ActionLock} lock Contains scope and path to test for.
-    * @return {boolean} *true*, if this lock could be acquired for all subpath.
-    */
-   isLockable(lock) {
-      const last = (lock.path.length <= this.level)
-      const nrSubNodes = this.lockedScopes.get(lock.scope)
-      if (nrSubNodes !== undefined) {
-         if (last) return (lock.shared && nrSubNodes < 0)
-         for (const action of lock.path[this.level]) {
-            const subNode = this.subNodes.get(action)
-            if (subNode && !subNode.isLockable(lock))
-               return false
-         }
-      }
-      return true
-   }
-}
-
-class ViewModelActionLocking {
-   /** @type {ActionLockingPathNode} */
-   rootNode
-
-   constructor() {
-      this.rootNode = new ActionLockingPathNode(0)
-   }
-   /**
-    * Tries to acquire the given lock. If lock is already acquired nothing is done.
-    * @param {ActionLock} lock The lock to acquire.
-    * @returns {boolean} *true*, if lock is acquired.
-    */
-   lock(lock) {
-      if (!lock.isLocked()) {
-         this.rootNode.tryLock(lock)
-         if (lock.isError())
-            lock.unlock()
-      }
-      return lock.isLocked()
-   }
-   /**
-    * @param {object} lock
-    * @returns {boolean} *true*, if any subpath of given lock is hold by a shared or exclusive lock.
-    */
-   isPathLocked(lock) { return this.rootNode.isPathLocked(lock) }
-}
-
-
-class ViewModelTypeClass extends TypeClass {
-   InterfaceLogID = new InterfaceLogID({})
-}
-
-/**
- * Model which is bound to a single view and manages its state.
- */
-class ViewModel /* implements ViewModelActionInterface */ {
-   static #typeClass = new ViewModelTypeClass(ViewModel,TypeClass.VIEWMODEL)
-   static get typeClass() { return ViewModel.#typeClass }
-   get typeClass() { return ViewModel.#typeClass }
-   /**
-    * @typedef ViewModelConfig Default configurations (for all instances) which could be overwritten in subclass.
-    * @property {null|(new(vm:ViewModel,options:object)=>ViewDecorator)} decorator Constructor of decorator which adds additional elements and controllers to the view model.
-    * @property {Set<string>} listenableProperties Defines set of valid property names which could be observed for change.
-    */
-   /** @type {ViewModelConfig} */
-   static Config = { decorator: null, listenableProperties: new Set(["hidden","connected"]) }
-   /** @type {HTMLElement} */
-   #htmlElem
-   /** @type {View} */
-   #view
-   /** @type {null|undefined|ViewDecorator} */
-   #decorator
-   #propertyListeners = {}
-   /** @type {LogID} */
-   LID
-   /**
-    *
-    * @param {HTMLElement} htmlElem
-    * @param {{decorator?:null|(new(vm:ViewModel,options:object)=>ViewDecorator),[o:string]:any}} options
-    * @returns
-    */
-   static create(htmlElem, { decorator, ...initOptions }={}) {
-      const config = this.Config
-      const vmodel = new this(htmlElem)
-      const decoOptions = vmodel.init(initOptions)
-      vmodel.decorate(decorator ?? config.decorator, decoOptions)
-      return vmodel
-   }
-   /**
-    * @param {HTMLElement} htmlElem
-    */
-   constructor(htmlElem) {
-      this.#htmlElem = htmlElem
-      this.#view = new View(htmlElem)
-      this.LID = new LogID(this, htmlElem)
-   }
-   free() {
-      const htmlElem = this.htmlElem
-      this.#decorator?.undecorate?.()
-      this.LID.unbind(this)
-      this.#htmlElem = null
-      this.#view = null
-      this.#decorator = null
-      this.#propertyListeners = {}
-      return htmlElem
-   }
-   /**
-    *
-    * @param {null|(new(vm:ViewModel,options:object)=>ViewDecorator)} decorator
-    * @param {object} decoratorOptions
-    */
-   decorate(decorator, decoratorOptions) {
-      if (decorator != null && !this.#decorator) {
-         if (typeof decorator !== "function" || !VMX.isConstructor(decorator) || !(decorator.prototype instanceof ViewDecorator))
-            VMX.logErrorObject(this, `Option »decorator« expects subclass of ViewDecorator not »${String(typeof decorator === "function" ? decorator.name : decorator).substring(0,30)}«.`)
-         else
-            this.#decorator = new decorator(this, decoratorOptions)
-      }
-   }
-   ////////////////////////////
-   // Overwritten in Subtype //
-   ////////////////////////////
-   /**
-    * Initializes view model after constructor has been run.
-    * Sets config and option values.
-    *
-    * @param {{[o:string]:any}} initOptions
-    */
-   init(initOptions) {
-      for (const [ name, value ] of Object.entries(initOptions)) {
-         this.setOption(name, value)
-      }
-   }
-   /**
-    * Sets certain value of this ViewModel.
-    * Overwrite setOption in subclass to support more options.
-    * Supported names are one of ["connected","hidden"].
-    * @param {string} name Name of option (or config value).
-    * @param {any} value Value of option.
-    */
-   setOption(name, value) {
-      switch (name) {
-         case "connected": this.connected = value; break;
-         case "hidden": this.hidden = value; break;
-         default: VMX.logErrorObject(this, `Unsupported option »${String(name)}«.`); break; // in subclass: super.setOption(name, value)
-      }
-   }
-   /**
-    * @param {string} action
-    * @param {null|string[][]} [subactions]
-    * @param {(args: object)=>object} [mapArgs]
-    * @returns {ViewModelAction} Bound action which calls the correct view model method.
-    */
-   bindAction(action, subactions, mapArgs) { return VMX.throwErrorObject(this, "bindAction not implemented") }
-   //
-   // Config & Options (could also change state)
-   //
-   /**
-    * @template {keyof ViewModelConfig} T
-    * @param {T} name
-    * @returns {ViewModelConfig[T]} The configured value.
-    */
-   config(name) {
-      if (ViewModel.Config[name])
-         return ViewModel.Config[name]
-      return VMX.throwErrorObject(this, `Unsupported config »${name}«.`)
-   }
-   /**
-    * @template {keyof ViewModelConfig} T
-    * @param {T} name
-    * @returns {undefined|ViewModelConfig[T]} The configured value.
-    */
-   tryConfig(name) {
-      if (ViewModel.Config[name])
-         return ViewModel.Config[name]
-   }
-   setOptions(options={}) {
-      for (const name in options)
-         this.setOption(name, options[name])
-      return this
-   }
-   //
-   // State
-   //
-   get name() {
-      return this.LID.toString(this)
-   }
-   set name(name) {
-      VMX.throwErrorObject(this, "Not supported (TODO: remove).")
-   }
-   get htmlElem() {
-      return this.#htmlElem
-   }
-   get view() {
-      return this.#view
-   }
-   get decorator() {
-      return this.#decorator
-   }
-   /**
-    * @type {{parent:null|Node, nextSibling:null|Node}}
-    */
-   get connectedTo() {
-      // !htmlElem.isConnected ==> parent == nextSibling == null
-      const htmlElem = this.htmlElem
-      return { parent: htmlElem.parentNode, nextSibling: htmlElem.nextSibling }
-   }
-   /**
-    * @param {undefined|null|{parent:null|Node, nextSibling:null|Node}} connectTo
-    */
-   set connectedTo(connectTo) {
-      const htmlElem = this.htmlElem
-      const isConnected = htmlElem.isConnected
-      if (!connectTo?.parent) {
-         if (htmlElem instanceof HTMLElement)
-            htmlElem.remove()
-      }
-      else if (htmlElem.parentNode !== connectTo.parent || htmlElem.nextSibling !== connectTo.nextSibling)
-         connectTo.parent.insertBefore(htmlElem, connectTo.parent === connectTo.nextSibling?.parentNode ? connectTo.nextSibling : null )
-      if (isConnected != htmlElem.isConnected)
-         this.notifyPropertyListener("connected",htmlElem.isConnected)
-   }
-   get connected() {
-      return this.htmlElem.isConnected
-   }
-   set connected(isConnect) {
-      const htmlElem = this.htmlElem
-      if (isConnect != htmlElem.isConnected) {
-         if (isConnect)
-            document.body.append(htmlElem)
-         else if (htmlElem instanceof HTMLElement)
-            htmlElem.remove()
-         this.notifyPropertyListener("connected",isConnect)
-      }
-   }
-   get hidden() {
-      return this.view.hidden
-   }
-   set hidden(isHidden) {
-      if (isHidden != this.hidden) {
-         this.view.hidden = isHidden
-         this.notifyPropertyListener("hidden",isHidden)
-      }
-   }
-   onceOnViewUpdate(delayCount, callback) {
-      VMX.viewUpdateListener.onceOnViewUpdate(delayCount, callback)
-   }
-   //
-   // Property Change Listener
-   //
-   listenableNames() {
-      return [...this.config("listenableProperties").keys()]
-   }
-   /**
-    * @param {string} name
-    */
-   assertListenableName(name) {
-      if (!this.config("listenableProperties").has(name))
-         VMX.throwErrorObject(this, `Unsupported listenable '${name}'.`)
-   }
-   /**
-    * Notifies all listeners of a property that its value was changed.
-    * Every caller must ensure that cleaning up code is run in a finally clause
-    * to ensure that an exception thrown by a listener does not mess up internal state.
-    * @param {string} name - Name of listenable property
-    * @param {any} newValue - New value of property after it has changed.
-    */
-   notifyPropertyListener(name, newValue) {
-      this.assertListenableName(name)
-      const event = { vm:this, value:newValue, name }
-      this.#propertyListeners[name]?.forEach( callback => callback(event))
-   }
-   addPropertyListener(name, callback) {
-      this.assertListenableName(name)
-      this.#propertyListeners[name] ??= []
-      this.#propertyListeners[name].push(callback)
-   }
-   removePropertyListener(name, callback) {
-      this.assertListenableName(name)
-      const listeners = this.#propertyListeners[name]?.filter( cb => cb !== callback)
-      if (listeners)
-         this.#propertyListeners[name] = listeners
-   }
-}
-
-class ResizeVM extends ViewModel {
-   /** @type {ViewModelConfig} */
-   static Config = { ...super.Config, decorator: ResizeDecorator, }
-
-   constructor(htmlElem) {
-      super(htmlElem)
-   }
-
-   /**
-    * Initializes object after constructor has been completed.
-    * Set moveable to false if moving window is to be disabled (resizing is supported).
-    * Set moveable to true if moving window should be enabled for style="position:relative".
-    * @param {{moveable?:Node|string, [o:string]:any}} options
-    * @returns {object} Options for decorator
-    */
-   init({moveable, ...initOptions}) {
-      const pos = this.view.initialPos
-      super.init({ left:pos.left, top:pos.top, width:pos.width, height:pos.height, ...initOptions})
-      const decoOptions = { moveable: moveable ?? this.moveable(pos.position) }
-      return decoOptions
-   }
-
-   config(name) {
-      if (ResizeVM.Config[name])
-         return ResizeVM.Config[name]
-      return super.config(name)
-   }
-
-   setOption(name, value) {
-      switch (name) {
-         case "left": this.vLeft = value; break;
-         case "height": this.vHeight = value; break;
-         case "top": this.vTop = value; break;
-         case "width": this.vWidth = value; break;
-         default: super.setOption(name, value); break;
-      }
-   }
-
-   /**
-    * @param {string} name
-    * @param {number} value
-    */
-   setPosAttr(name, value) {
-      if (isFinite(value) && this.htmlElem instanceof HTMLElement)
-         this.htmlElem.style[name] = this.roundPosValue(value)+"px"
-   }
-   /**
-    * @param {string} name
-    * @returns {undefined|number}
-    */
-   getPosAttr(name) {
-      if (this.htmlElem instanceof HTMLElement)
-         return ViewElem.parseFloatDefault(this.htmlElem.style[name],0)
-   }
-   roundPosValue(value) {
-      return Math.round(value*1000)/1000
-   }
-   get pos() {
-      return { width:this.getPosAttr("width"), height:this.getPosAttr("height"), top:this.getPosAttr("top"), left:this.getPosAttr("left") }
-   }
-   set pos(pos) {
-      for (const name of ["width","height","top","left"]) {
-         isFinite(pos[name]) && this.setPosAttr(name, pos[name])
-      }
-   }
-   /**
-    * @param {number} value
-    */
-   set vHeight(value/*pixels*/) {
-      this.setPosAttr("height", (value < 0 ? 0 : value))
-   }
-   /**
-    * @returns {number}
-    */
-   get vHeight() {
-      return this.getPosAttr("height") ?? -1
-   }
-   /**
-    * @param {number} value
-    */
-   set vWidth(value/*pixels*/) {
-      this.setPosAttr("width", (value < 0 ? 0 : value))
-   }
-   /**
-    * @returns {number}
-    */
-   get vWidth() {
-      return this.getPosAttr("width") ?? -1
-   }
-   /**
-    * @param {number} value
-    */
-   set vTop(value/*pixels*/) {
-      this.setPosAttr("top", value)
-   }
-   /**
-    * @returns {number}
-    */
-   get vTop() {
-      return this.getPosAttr("top") ?? -1
-   }
-   /**
-    * @param {number} value
-    */
-   set vLeft(value/*pixels*/) {
-      this.setPosAttr("left", value)
-   }
-   /**
-    * @returns {number}
-    */
-   get vLeft() {
-      return this.getPosAttr("left") ?? -1
-   }
-   /**
-    * @param {string} [position]
-    * @returns {boolean} True in case "position" attribute of style could be positioned with "left" and "top" styles.
-    */
-   moveable(position) {
-      return ["fixed","absolute"].includes(position ?? getComputedStyle(this.htmlElem)["position"])
-   }
-   /**
-    * @param {number} deltax
-    * @param {number} deltay
-    */
-   move(deltax,deltay) { this.vLeft += deltax; this.vTop += deltay; }
-   /**
-    * @param {undefined|number} dTop Resizes top by dTop pixel. A negative value shrinks the size.
-    * @param {undefined|number} dRight Resizes right by dRight pixel. A negative value shrinks the size.
-    * @param {undefined|number} dBottom Resizes bottom by dBottom pixel. A negative value shrinks the size.
-    * @param {undefined|number} dLeft Resizes left by dLeft pixel. A negative value shrinks the size.
-    */
-   resize(dTop, dRight, dBottom, dLeft) {
-      if (dTop) { this.vTop -= dTop; this.vHeight += dTop }
-      if (dRight) { this.vWidth += dRight }
-      if (dBottom) { this.vHeight += dBottom }
-      if (dLeft)  { this.vLeft -= dLeft; this.vWidth += dLeft }
-   }
+   unlock() { this.holdsLock &&= (this.lockState.unlock(), false) }
 }
 
 class ViewExtension {
    /**
     * Frees resources and possibly undo changes.
-    * @param {View2} view
-    * @returns {void}
+    * @param {View} view
+    * @return {void}
     */
-   free(view) { return VMX.throwErrorObject(this,`free not implemented.`) }
+   free(view) { return VMX.throwError(this,`free not implemented.`) }
 }
 
-class ViewDecorator2 {
-   /**
-    * @typedef ViewDecorator2Extension
-    * @property {{[option:string]:string}} initOptions
-    */
-   /** @type {ViewDecorator2Extension} */
-   static Extension = {
-      initOptions: {}
+class ViewDecorator {
+   static ClassConfig = {
+      /** @type {{[name:symbol]:never}} */
+      InitOptions: {}
    }
    /**
-    * @param {View2} view
+    * @param {View} view
+    * @param {ViewModel} viewModel
     * @param {object} options
     * @param {ViewRestrictions} restrictions
-    * @returns {undefined|ViewDecorator2} Returns created ViewDecorator2 object or undefined if initOptions prevents creation.
+    * @return {undefined|ViewDecorator} Returns created ViewDecorator object or undefined if initOptions prevents creation.
     */
-   static init(view, options, restrictions) { return VMX.throwErrorStatic(this,`init not implemented.`) }
+   static init(view, viewModel, options, restrictions) { return VMX.throwError(this,`init not implemented.`) }
    /**
     * Frees resources and possibly undo changes.
-    * @param {View2} view
-    * @returns {void}
+    * @param {View} view
+    * @return {void}
     */
-   free(view) { return VMX.throwErrorObject(this,`free not implemented.`) }
+   free(view) { return VMX.throwError(this,`free not implemented.`) }
    /**
-    * @param {View2} view
+    * @param {View} view
     * @param {{[action:string]:ViewController|null|undefined|false}} controllers
     */
-   connectActions(view, controllers) {
-      const connector = view.modelConnector
+   setActions(view, controllers) {
       for (const [action,controller] of Object.entries(controllers)) {
-         if (controller instanceof ViewController)
-            controller.connectToAction(connector.getVMAction(action))
+         if (controller instanceof ViewController) {
+            controller.setAction(view.getAction(action))
+         }
       }
    }
 }
 
-class View2TypeClass extends TypeClass {
-   InterfaceLogID = new InterfaceLogID({ getParent: (owner) => owner instanceof View2 ? owner.viewParent : undefined })
+class ViewConfig {
+   static Category = VMXConfig.VIEW
+   /** @type {{[option:symbol]:never}} ViewConfigInitOptions */
+   static InitOptions = {}
+   // TODO: not used in transitions (instead ViewElemStylesManager.TransitionStyle is used)
+   /** Transition style for resize and change position animation. @type {{"transition-delay":string, "transition-duration":string, "transition-property":string, "transition-timing-function":string }} */
+   static TransitionStyle = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"all", "transition-timing-function":"ease-out" }
 }
 
-class View2 {
-   static #typeClass = new View2TypeClass(View2,TypeClass.VIEW)
-   static get typeClass() { return View2.#typeClass }
-   get typeClass() { return View2.#typeClass }
-   /**
-    * @typedef View2Config
-    * @property {{connection:string,[option:string]:string}} initOptions Supported init options.
-    * @property {{[style:string]:string, "transition-property":string, "transition-duration":string }} transitionStyle Transition style for resize and change position animation.
-    */
-   /**
-    * Basic view Configuration. Should be copied in subtype and extended or overwritten accordingly.
-    * @type {View2Config}
-    */
-   static Config = {
-      initOptions:{
-         "connection":"Defines connections between properties of view to properties of view-model.",
-         "connector":"Optional implementation of ViewViewModelConnectorInterface which connects view and view-model.",
-         "viewModel":"Optional implementation of ViewModel2 which is used to create a default implementation of ViewViewModelConnectorInterface.",
-      },
-      transitionStyle:{ "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"all", "transition-timing-function":"ease-out" }
+class View { // implements ViewModelObserver
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** Returns config values which are used for all instances of this class (if not overwritten in instance). @return {typeof ViewConfig} */
+   get ClassConfig() { return ViewConfig }
+   /** Returns single config value valid for a single instance. @param {string} config @return any */
+   getUserConfig(config) { return this.#config?.[config] ?? this.ClassConfig[config] }
+   /** Overwrites config for a single instance. @param {string} config @param {any} value */
+   setUserConfig(config, value) {
+      if (!(config in this.ClassConfig)) return VMX.throwError(this, `Can not set unknown config »${String(config)}«.`)
+      const defaultValue = this.ClassConfig[config]
+      if (typeof value !== typeof defaultValue || value === null) return VMX.throwError(this, `Expect config »${String(config)}« of type ${typeof defaultValue} instead of ${value === null ? "null" : typeof value}.`)
+      this.#config ??= {}
+      this.#config[config] = value
+      if (typeof value === "object")
+         this.#config[config] = Object.assign({},this.#config[config],value)
    }
+
+   //////////////////////////
+   // implement LogIDOwner //
+   //////////////////////////
+   getLogID() { return this.#logid }
+   getLogIDParent() { return this.#viewModel }
+
    /**
-    * @template {View2} T
-    * @this {new(...args:any[])=>T} Either View2 or a derived subtype.
+    * @template {View} T
+    * @this {new(...args:any[])=>T} Either View or a derived subtype.
     * @param {string} htmlString
-    * @returns {T} A View2 (or derived type) which wraps the supplied HTML Element created from the provided HTML string.
+    * @return {T} A View (or derived type) which wraps the supplied HTML Element created from the provided HTML string.
     */
    static fromHtml(htmlString) {
       return new this(ViewElem.fromHtml(htmlString))
    }
    /**
-    * @template T extends View2
-    * @this {new(...args:any[])=>T} Either View2 or a derived subtype.
+    * @template T extends View
+    * @this {new(...args:any[])=>T} Either View or a derived subtype.
     * @param {string} textString
-    * @returns {T} A View2 (or derived type) which wraps the supplied HTML Text node created from the provided text string.
+    * @return {T} A View (or derived type) which wraps the supplied HTML Text node created from the provided text string.
     */
    static fromText(textString) {
-      return new this(ViewElemText.fromText(textString))
+      return new this(ViewText.fromText(textString))
    }
+   /**
+    * @param {HTMLElement|ViewElem} viewElem
+    * @param {{viewModel:ViewModel} & ViewInitOptions} [viewOptions]
+    */
+   static create(viewElem, { viewModel, ...viewOptions }={}) {
+      return new this(viewElem, viewModel).init(viewOptions)
+   }
+
    /** @type {ViewElem} */
    #viewElem
-   /** @type {undefined|ViewViewModelConnectorInterface} */
-   #modelConnector
-   /** @type {{[name: string]: ViewExtension|ViewDecorator2}} */
+   /** @type {(ViewExtension|ViewDecorator)[]} */
    #extensions
+   /** @type {ViewModel} */
+   #viewModel
    /** @type {LogID} */
-   LID
+   #logid
+   /** @type {undefined|{[config:string]:any}} */
+   #config
 
+   ////////////////////////////
+   // Overwritten in Subtype //
+   ////////////////////////////
    /**
-    * @param {ViewElem} viewElem
+    * Initializes value properties.
+    * @param {HTMLElement|ViewElem} viewElem
+    * @param {ViewModel} viewModel
     */
-   constructor(viewElem) {
+   constructor(viewElem, viewModel) {
+      if (!(viewModel instanceof ViewModel)) return VMX.throwError(this, BasicTypeChecker.expectNameValueOfType("argument »viewModel«",viewModel,"ViewModel"))
+      viewElem = viewElem instanceof HTMLElement ? new ViewElem(viewElem) : viewElem
       this.#viewElem = ViewElem.assertType(viewElem)
-      this.#extensions = {}
-      this.LID = new LogID(this, viewElem.htmlElem)
+      this.#extensions = []
+      this.#viewModel = viewModel
+      this.#logid = new LogID(this, viewElem.htmlElem)
    }
    /**
-    * @param {{connector?:ViewViewModelConnectorInterface,viewModel?:ViewModel2,connection:ViewViewModelConnectionLiteral,[option:string]:any}} initOptions
-    * @return {View2}
+    * @typedef {object} ViewInitOptions
+    * @typedef {{[property:string]:any}} ViewRestrictions
     */
-   init(initOptions) {
-      const connector = this.#modelConnector ?? this.createConnector(initOptions)
-      this.validateInitOptions(initOptions,this.config.initOptions)
-      connector.connect(initOptions.connection,() => this.subinit(initOptions))
+   /**
+    * Connects view (if not already connected) and validates viewOptions.
+    * Must be overwriteen in subtype.
+    * The init of the subtype should provide default values for the options
+    * and initialize the default values of the model if taken from the view.
+    * After that it should connect the model to the view and set all view
+    * values to the connected model values (if not done already).
+    * @param {ViewInitOptions} viewOptions
+    * @return {View}
+    */
+   init(viewOptions) {
+      this.validateInitOptions(viewOptions)
+      this.connect()
+      this.#logid.init(this, this.viewElem.htmlElem)
       return this
    }
    /**
-    * Frees bound resources.
+    * Frees bound resources. Call does nothing if already freed before.
+    * @param {()=>void} [onFree] Callback which is called if free is executed (not ignored).
     */
-   free() {
-      this.LID.unbind(this)
-      // TODO: this.#viewModel.unbindView(this)
-   }
-   /**
-    * @param {{[option:string]:any}} initOptions
-    * @param {{[option:string]:string}} allowedOptions
-    */
-   validateInitOptions(initOptions, allowedOptions) {
-      for (const name in initOptions) {
-         if (!(name in allowedOptions))
-            VMX.throwErrorObject(this, `Unknown init option »${String(name)}«.`)
+   free(onFree) {
+      if (!this.#logid.isFree()) {
+         this.#logid.free()
+         onFree?.()
+         this.freeExtensions()
+         this.#viewElem.disconnect()
+         this.#viewModel.free()
       }
    }
+   /////////////////
+   // Init Helper //
+   /////////////////
    /**
-    * @param {ViewViewModelConnectorInterface} connector
+    * @param {{[option:string]:any}} options
     */
-   connectToModel(connector) {
-      this.#modelConnector = ViewViewModelConnectorInterface.assertType(connector,"connector")
+   validateInitOptions(options) {
+      const allowedOptions = this.ClassConfig.InitOptions
+      BasicTypeChecker.validateOptions(this, options, allowedOptions)
    }
-   /**
-    * @param {{connector?:ViewViewModelConnectorInterface,viewModel?:ViewModel2}} initOptions
-    * @returns {ViewViewModelConnectorInterface}
-    */
-   createConnector(initOptions) {
-      const connector = (initOptions.connector instanceof ViewViewModelConnectorInterface && initOptions.connector)
-                        || (initOptions.viewModel instanceof ViewModel2 && new ViewViewModelConnector(this, initOptions.viewModel))
-      if (!connector)
-         return VMX.throwErrorObject(this, `Expect initOption connector of type ViewViewModelConnectorInterface or initOption vm of type ViewModel2 instead of »${VMX.typeof(initOptions.connector)}«,»${VMX.typeof(initOptions.viewModel)}«.`)
-      return connector
-   }
+   ////////////////
+   // Properties //
+   ////////////////
    // TODO: rename htmlElements -> viewElements with type ViewElem[]
    /** @type {(HTMLElement)[]} */
-   get htmlElements() {
-      return [ this.#viewElem.htmlElem ]
-   }
-   /**
-    * @returns {View2.Config}
-    */
-   get config() { return View2.Config }
-   /**
-    * @returns {boolean} True in case view is connected to the document.
-    */
+   get htmlElements() { return [ this.#viewElem.htmlElem ] }
+   /** @return {boolean} True in case view is connected to the document. */
    get connected() { return this.#viewElem.connected() }
-   /**
-    * @returns {ViewViewModelConnectorInterface}
-    */
-   get modelConnector() { return this.#modelConnector || VMX.throwErrorObject(this, `Call connectToModel first.`) }
-   /**
-    * @return {boolean}
-    */
+   /** Appends view to document if not connected. On return {@link connected} returns true. */
+   connect() { this.#viewElem.connect() }
+   /** Replaces connected view with other node. On return {@link connected} is false. @param {ViewNode} viewNode */
+   replaceWith(viewNode) { this.#viewElem.replaceWith(viewNode) }
+   /** @return {boolean} */
    get hidden() { return this.#viewElem.hidden }
-   /**
-    * @param {boolean} hidden *true*, if view should be hidden. *false*, if be shown.
-    */
+   /** @param {boolean} hidden *true*, if view should be hidden. *false*, if be shown. */
    set hidden(hidden) { this.#viewElem.hidden = hidden }
-   /**
-    * @returns {ViewElem}
-    */
+   /** @return {ViewElem} */
    get viewElem() { return this.#viewElem }
-   /**
-    * @returns {undefined|ImplementsInterfaceLogID}
-    */
-   get viewParent() { return this.#modelConnector?.viewParent() }
+   /** @return {ViewElem} */
+   get elem() { return this.#viewElem }
+   /** Returns {@link ViewModel} attached to view. @return {ViewModel} */
+   get viewModel() { return this.#viewModel }
+   /** Returns {@link ViewModel} attached to view. Should be overwritten in inheriting type. @return {ViewModel} */
+   get model() { return this.#viewModel }
+   /** Returns {@link ViewModel} attached to view. @return {any} */
+   get _unsafe_model() { return this.#viewModel }
    /**
     * @param {string} slot
-    * @returns {undefined|ViewElem}
+    * @return {undefined|ViewElem}
     */
    trySlot(slot) { return this.viewElem.trySlot(slot) }
-   /**
-    * @template V
-    * @param {string} property
-    * @param {V} value
-    */
-   notifyUpdate(property, value) {
-      this.modelConnector.onUpdateNotification({from:this, property, value})
-   }
    ///////////////////////
    // Extension Support //
    ///////////////////////
    /**
     * @template T
-    * @param {T&(ViewExtension|ViewDecorator2)} extension
+    * @param {T&(ViewExtension|ViewDecorator)} extension
     * @return {T}
     */
    extend(extension) {
-      const name = extension.constructor.name
-      if (typeof name !== "string")
-         return VMX.throwErrorObject(this, `extension has no name.`)
-      if (this.#extensions[name])
-         return VMX.throwErrorObject(this, `extension already exists.`)
-      return this.#extensions[name] = extension
+      const extensionClass = extension.constructor
+      if (typeof extensionClass !== "function")
+         return VMX.throwError(this, `extension has no constructor.`)
+      if (this.#extensions.some(e => e instanceof extensionClass))
+         return VMX.throwError(this, `extension already exists.`)
+      return this.#extensions.push(extension), extension
    }
    /**
-    * @template {ViewDecorator2} T
-    * @param {{name:string, init:(view:View2,initOptions:object,restrictions:ViewRestrictions)=>undefined|T}} decoratorClass
+    * @template {ViewDecorator} T
+    * @param {{name:string, init:(view:View,viewModel:ViewModel,initOptions:object,restrictions:ViewRestrictions)=>undefined|T}} decoratorClass
+    * @param {ViewModel} viewModel
     * @param {object} initOptions
     * @param {ViewRestrictions} restrictions Decorator could add additional properties which restricts the view (describes the view configuration).
     */
-   decorate(decoratorClass, initOptions, restrictions) {
-      const decorator = decoratorClass.init(this, initOptions, restrictions)
+   decorate(decoratorClass, viewModel, initOptions, restrictions) {
+      const decorator = decoratorClass.init(this, viewModel, initOptions, restrictions)
       if (decorator) this.extend(decorator)
    }
-   /**
-    * @template {ViewExtension|ViewDecorator2} T
-    * @param {new(...args:any[])=>T} extensionClass
-    * @returns {undefined|T}
-    */
-   getExtension(extensionClass) {
-      const name = extensionClass.name
-      if (typeof name !== "string")
-         return VMX.throwErrorObject(this, `extensionClass has no name.`)
-      if (this.#extensions[name] instanceof extensionClass)
-         return this.#extensions[name]
+   freeExtensions() {
+      for (let i=this.#extensions.length; (--i)>=0;)
+         this.#extensions[i].free(this)
+      this.#extensions = []
    }
    /**
-    * @template {ViewExtension|ViewDecorator2} T
+    * @template {ViewExtension|ViewDecorator} T
     * @param {new(...args:any[])=>T} extensionClass
-    * @returns {undefined|T}
+    * @return {undefined|T}
+    */
+   getExtension(extensionClass) {
+      for (const extension of this.#extensions)
+         if (extension instanceof extensionClass)
+            return extension
+   }
+   /**
+    * @template {ViewExtension|ViewDecorator} T
+    * @param {new(...args:any[])=>T} extensionClass
+    * @return {undefined|T}
     */
    removeExtension(extensionClass) {
-      const extension = this.getExtension(extensionClass)
-      if (extension) {
-         delete this.#extensions[extensionClass.name]
-         return extension
+      for (let i=this.#extensions.length; (--i)>=0;) {
+         const extension = this.#extensions[i]
+         if (extension instanceof extensionClass) {
+            this.#extensions.splice(i,1)
+            return extension
+         }
       }
    }
 
-   /////////////////
-   // Transitions //
-   /////////////////
+   /////////////
+   // Actions //
+   /////////////
 
-   // TODO: implement
-
-   ////////////////////////////
-   // Overwritten in Subtype //
-   ////////////////////////////
-   /** @typedef {{[property:string]:any}} ViewRestrictions */
    /**
-    * @param {{[option:string]:any}} initOptions
-    * @return {ViewRestrictions} Restricted properties which are of fixed value which forces the view-model to adapt accordingly.
+    * @param {string} action
+    * @param {(args: object)=>object} [mapArgs]
+    * @return {ViewModelAction} Bound action which calls the correct view model method (or view method).
     */
-   subinit(initOptions) { return VMX.throwErrorObject(this, "subinit(initOptions) not implemented in subtype.") }
+   getAction(action, mapArgs) { return this.#viewModel.getVMAction(action,mapArgs) }
+
+   ///////////////////////
+   // ViewModelObserver //
+   ///////////////////////
+
+   /**
+    * Updates view properties with values from view model if they are changed.
+    * View properties which are synced by this method must have the same same
+    * as the view model property but prefixed with a "v_".
+    * @param {VMPropertyUpdateNotification} notification
+    * @return {void}
+    */
+   onVMUpdate(notification) {
+      const viewProperty = "v_" + notification.property
+      if (!VMX.getPropertyDescriptor(this,viewProperty)?.set)
+         return VMX.throwError(this, `Unknown view property ${String(viewProperty)}.`)
+      this[viewProperty] = notification.value
+   }
+
+   ////////////////////////
+   // Transition & Style //
+   ////////////////////////
+
+   /**
+    * Allows to wait for end of transition.
+    * Notification is done either by callback or by waiting for the returned promise.
+    * If no transition is running notification is done immediately.
+    * @param {()=>void} [onTransitionEnd] Callback to signal end of transition (all computed view attributes has reached their final value).
+    * @return {undefined|Promise<null>} Promise if onTransitionEnd is undefined else undefined.
+    */
+   onceOnTransitionEnd(onTransitionEnd) { return this.viewElem.onceOnTransitionEnd(onTransitionEnd) }
+
+   /**
+    * @param {ViewStyles} newStyles
+    * @return {object} Old values of set style values.
+    */
+   setStyles(newStyles) { return this.#viewElem.setStyles(newStyles) }
 
 }
 
-class ReframeViewDecorator2 extends ViewDecorator2 {
+class ReframeViewDecorator extends ViewDecorator {
    /**
-    * @typedef ReframeViewDecorator2_Imports
+    * @typedef ReframeViewDecorator_Imports
     * @property {ViewElem} viewElem
-    * @property {undefined|ViewElemText|ViewElem} content
+    * @property {undefined|ViewText|ViewElem} content
+    *
+    * @typedef ReframeViewDecoratorInitOptions
+    * @property {BasicTypeChecker} content The ViewElem which is connected to the document. Its position within the document is replaced by the window frame.
+    * @property {BasicTypeChecker} reframe True activates reframing extension.
     */
-   static Extension = {
-      initOptions: {
-         content: "The ViewElem whose position within the document is replaced by the window frame.",
-         reframe: "True activates extension which means window frame replaces the content within the document during init. The content must be connected to the document."
+   static ClassConfig = {
+      /** @type {ReframeViewDecoratorInitOptions} */
+      InitOptions: {
+         content: new BasicTypeChecker( (value,typeCheckerContext) =>
+            !(value instanceof ViewElem || value === undefined) && BasicTypeChecker.expectValueOfType(value, "ViewElem")
+            || Boolean(typeCheckerContext?.reframe) && (value === undefined) && BasicTypeChecker.requiredValue()
+            || Boolean(typeCheckerContext?.reframe) && !(value instanceof ViewElem && value.connected()) && BasicTypeChecker.expectSomething("to be a ViewElem connected to the document")
+            ).makeRequired(),
+         reframe: BasicTypeChecker.booleanType
       },
    }
-   /** @type {undefined|ViewElem_InitialPos} */
-   initialPos
    /** @type {undefined|object} */
    oldContentStyles
-   /** @type {undefined|object} */
-   oldViewStyles
    /**
-    * @param {any} content
-    * @returns {content is ViewElem}
-    */
-   static assertContentSupported(content) {
-      if (!(content instanceof ViewElem && content.connected()))
-         return VMX.throwErrorObject(this, `Expect »content« to be of type ViewElem and connected to the document.`)
-      return true
-   }
-   /**
-    * @param {View2&ReframeViewDecorator2_Imports} view
+    * @param {View&ReframeViewDecorator_Imports} view
+    * @param {ViewModel} viewModel
     * @param {{reframe:boolean, content:ViewElem}} options
-    * @returns {undefined|ReframeViewDecorator2}
+    * @return {undefined|ReframeViewDecorator}
     */
-   static init(view, { reframe, content }) {
+   static init(view, viewModel, { reframe, content }) {
       if (reframe) {
-         return new ReframeViewDecorator2(view, content)
+         return new ReframeViewDecorator(view, content)
       }
    }
    /**
-    * @param {ReframeViewDecorator2_Imports} view
+    * @param {ReframeViewDecorator_Imports} view
     * @param {ViewElem} content
     */
    constructor(view, content) {
       super()
-      ReframeViewDecorator2.assertContentSupported(content)
-      const pos = content.initialPos()
-      this.initialPos = pos
+      const pos = content.computedPos()
       this.oldContentStyles = content.setStyles({ width:"100%", height:"100%", position:"static" })
-      this.oldViewStyles = view.viewElem.setStyles({ position:pos.position })
+      view.viewElem.setStyles({ position: pos.position })
       content.replaceWith(view.viewElem)
       view.viewElem.setPos({ left:pos.left, top:pos.top, width:pos.width, height:pos.height })
    }
    /**
-    * @param {View2&ReframeViewDecorator2_Imports} view
+    * @param {View&ReframeViewDecorator_Imports} view
     */
    free(view) {
-      if (this.initialPos) {
+      if (this.oldContentStyles) {
+         this.oldContentStyles = undefined
+         // default is to not unframe in case of close window
+      }
+   }
+   /**
+    * @param {View&ReframeViewDecorator_Imports} view
+    * @return {undefined|ViewElem} *ViewElem* in case of success else content was not reframed.
+    */
+   unframeContent(view) {
+      if (this.oldContentStyles) {
          const content = view.content
-         if (ReframeViewDecorator2.assertContentSupported(content)) {
+         if (content instanceof ViewElem) {
             view.viewElem.replaceWith(content)
             content.updateStyles(this.oldContentStyles)
-            view.viewElem.updateStyles(this.oldViewStyles)
-            content.setPos(this.initialPos)
+            this.oldContentStyles = undefined
+            return content
          }
-         this.initialPos = undefined
       }
    }
 }
 
-class MoveResizeViewDecorator2 extends ViewDecorator2 {
+class MoveResizeViewDecorator extends ViewDecorator {
    /**
-    * @typedef MoveResizeViewDecorator2_CalledActions
+    * @typedef MoveResizeViewDecorator_CalledActions
     * @property {(e:MoveControllerEvent)=>void} move moveable set to true.
-    * @property {(e:TouchResizeControllerEvent)=>void} resize resizeable and moveable set to true.
-    * @property {(e:TouchResizeControllerEvent)=>void} resizeNotMoveable resizeable set to true and moveable set to false.
+    * @property {(e:TouchResizeControllerEvent)=>void} resize resizeable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeTop resizeable and moveable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeTopRight resizeable and moveable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeRight resizeable set to true.
-    * @property {(e:MoveControllerEvent)=>void} resizeRightBottom resizeable set to true.
+    * @property {(e:MoveControllerEvent)=>void} resizeBottomRight resizeable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeBottom resizeable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeBottomLeft resizeable and moveable set to true.
     * @property {(e:MoveControllerEvent)=>void} resizeLeft resizeable and moveable set to true.
-    * @property {(e:MoveControllerEvent)=>void} resizeLeftTop resizeable and moveable set to true.
+    * @property {(e:MoveControllerEvent)=>void} resizeTopLeft resizeable and moveable set to true.
+    *
+    * @typedef MoveResizeViewDecoratorInitOptions
+    * @property {BasicTypeChecker} moveable *true*, if user is allowed to to move view.
+    * @property {BasicTypeChecker} resizeable *true*, if user is allowed to resize view.
     */
-   static Extension = {
-      initOptions: {
-         moveable: "boolean value. Set to true, if view should support moving around.",
-         resizeable: "boolean value. Set to true, if view should support resizing around.",
+   static ClassConfig = {
+      /** @type {MoveResizeViewDecoratorInitOptions} */
+      InitOptions: {
+         moveable: BasicTypeChecker.booleanType,
+         resizeable: BasicTypeChecker.booleanType,
       },
    }
    /**
-    * @param {View2} view
+    * @param {View} view
+    * @param {ViewModel} viewModel
     * @param {{moveable?:boolean, resizeable?:boolean, [o:string]:any}} options
     * @param {ViewRestrictions} restrictions
-    * @returns {undefined|MoveResizeViewDecorator2}
+    * @return {undefined|MoveResizeViewDecorator}
     */
-   static init(view, {moveable, resizeable}, restrictions) {
-      moveable = Boolean(moveable) && view.viewElem.moveable()
-      restrictions.moveable = moveable
-      restrictions.resizeable = Boolean(resizeable)
+   static init(view, viewModel, {moveable, resizeable}, restrictions) {
+      restrictions.moveable = moveable = Boolean(moveable) && view.viewElem.moveable()
+      restrictions.resizeable = resizeable = Boolean(resizeable) && view.viewElem.moveable()
       if (moveable || resizeable) {
-         return new MoveResizeViewDecorator2(view, Boolean(moveable), Boolean(resizeable))
+         return new MoveResizeViewDecorator(view, viewModel, moveable, resizeable)
       }
    }
    /** @type {(false|ViewElem)[]} */
@@ -4645,11 +4051,12 @@ class MoveResizeViewDecorator2 extends ViewDecorator2 {
    /** @type {null|{[name:string]:string|number}} */
    oldStyles
    /**
-    * @param {View2} view
+    * @param {View} view
+    * @param {ViewModel} viewModel
     * @param {boolean} moveable
     * @param {boolean} resizeable
     */
-   constructor(view, moveable, resizeable) {
+   constructor(view, viewModel, moveable, resizeable) {
       super()
       const viewElem=view.viewElem
       const [borderpx, edgepx, outerpx] = ["15px","20px","-10px"]
@@ -4665,32 +4072,29 @@ class MoveResizeViewDecorator2 extends ViewDecorator2 {
          both && ViewElem.fromDiv({top:outerpx, left:outerpx, width:edgepx, height:edgepx, cursor:"nw-resize", position:"absolute"}),
       ]
       viewElem.appendChildren(...this.borders.filter(b => b!==false))
-      this.moveElem = view.trySlot("move") ?? view.viewElem
+      this.moveElem = view.trySlot(WindowView.Slots.move) ?? view.viewElem
       this.controllers = {
-         move: moveable && new MoveController(this.moveElem.htmlElem,null,{view}),
-         resize: resizeable && moveable && new TouchResizeController(viewElem.htmlElem,null,{view}),
-         resizeNotMoveable: resizeable && !moveable && new TouchResizeController(viewElem.htmlElem,null,{view}),
-         resizeTop: this.borders[0] && new MoveController(this.borders[0].htmlElem,null,{view}),
-         resizeRight: this.borders[1] && new MoveController(this.borders[1].htmlElem,null,{view}),
-         resizeBottom: this.borders[2] && new MoveController(this.borders[2].htmlElem,null,{view}),
-         resizeLeft: this.borders[3] && new MoveController(this.borders[3].htmlElem,null,{view}),
-         resizeTopRight: this.borders[4] && new MoveController(this.borders[4].htmlElem,null,{view}),
-         resizeRightBottom: this.borders[5] && new MoveController(this.borders[5].htmlElem,null,{view}),
-         resizeBottomLeft: this.borders[6] && new MoveController(this.borders[6].htmlElem,null,{view}),
-         resizeLeftTop: this.borders[7] && new MoveController(this.borders[7].htmlElem,null,{view}),
+         move: moveable && new MoveController(this.moveElem.htmlElem,{view,viewModel}),
+         resize: resizeable && new TouchResizeController(viewElem.htmlElem,{view,viewModel}),
+         resizeTop: this.borders[0] && new MoveController(this.borders[0].htmlElem,{view,viewModel}),
+         resizeRight: this.borders[1] && new MoveController(this.borders[1].htmlElem,{view,viewModel}),
+         resizeBottom: this.borders[2] && new MoveController(this.borders[2].htmlElem,{view,viewModel}),
+         resizeLeft: this.borders[3] && new MoveController(this.borders[3].htmlElem,{view,viewModel}),
+         resizeTopRight: this.borders[4] && new MoveController(this.borders[4].htmlElem,{view,viewModel}),
+         resizeBottomRight: this.borders[5] && new MoveController(this.borders[5].htmlElem,{view,viewModel}),
+         resizeBottomLeft: this.borders[6] && new MoveController(this.borders[6].htmlElem,{view,viewModel}),
+         resizeTopLeft: this.borders[7] && new MoveController(this.borders[7].htmlElem,{view,viewModel}),
       }
-      this.connectActions(view, this.controllers)
+      this.setActions(view, this.controllers)
       this.oldStyles = null
       this.#setMoveable(moveable)
-      // TODO: implement notification interface
-      // viewModel.addPropertyListener("isMoveResizeable",this.setEnable.bind(this))
    }
    /**
-    * @param {View2} view
+    * @param {View} view
     */
    free(view) {
       if (this.controllers) {
-         this.setEnable(false)
+         this.enable(false)
          for (const border of this.borders)
             if (border) border.remove()
          for (const controller of Object.values(this.controllers))
@@ -4699,11 +4103,11 @@ class MoveResizeViewDecorator2 extends ViewDecorator2 {
       }
    }
    /**
-    * @param {boolean} isEnabled
+    * @param {boolean} enabled
     */
-   setEnable(isEnabled) {
-      this.#setMoveable(isEnabled)
-      this.#setResizeable(isEnabled)
+   enable(enabled) {
+      this.#setMoveable(enabled)
+      this.#setResizeable(enabled)
    }
    /**
     * Changes cursor style of decorated element to "move" or restores old style.
@@ -4726,7 +4130,7 @@ class MoveResizeViewDecorator2 extends ViewDecorator2 {
     * @param {boolean} isResizeable *true*, if window frame should support resizing else feature is turned off
     */
    #setResizeable(isResizeable) {
-      if (this.controllers?.resize && this.controllers.resize.muted !== isResizeable) {
+      if (this.controllers?.resize && this.controllers.resize.muted === isResizeable) {
          if (isResizeable) {
             for (const border of this.borders)
                if (border) border.show()
@@ -4735,50 +4139,61 @@ class MoveResizeViewDecorator2 extends ViewDecorator2 {
             for (const border of this.borders)
                if (border) border.hide()
          }
-         this.controllers.resize.muted = isResizeable
+         this.controllers.resize.muted = !isResizeable
       }
    }
 }
 
-class WindowControlsDecorator2 extends ViewDecorator2 {
+class WindowControlsDecorator extends ViewDecorator {
    /**
-    * @typedef WindowControlsDecorator2_CalledActions
+    * @typedef WindowControlsDecorator_CalledActions
     * @property {(e:TouchControllerEvent&{type:TouchController.CLICK})=>void} close
     * @property {(e:TouchControllerEvent&{type:TouchController.CLICK})=>void} minimize
     * @property {(e:TouchControllerEvent&{type:TouchController.CLICK})=>void} toggleMaximize
+    *
+    * @typedef WindowControlsDecoratorInitOptions
+    * @property {BasicTypeChecker} controls *true*, if view support window controls.
     */
-   static Extension = {
-      initOptions: {
-         controls: "boolean value. Set to true, if view should support window controls.",
+   static ClassConfig = {
+      /** @type {WindowControlsDecoratorInitOptions}} */
+      InitOptions: {
+         controls: BasicTypeChecker.booleanType
       },
    }
    /**
-    * @param {View2} view
+    * @param {View} view
+    * @param {ViewModel} viewModel
     * @param {{controls?:boolean, [o:string]:any}} options
     * @param {ViewRestrictions} restrictions
-    * @returns {undefined|WindowControlsDecorator2}
+    * @return {undefined|WindowControlsDecorator}
     */
-   static init(view, {controls}, restrictions) {
-      if (controls && ["close","min","max"].some(slotName => view.trySlot(slotName)))
-         return new WindowControlsDecorator2(view)
+   static init(view, viewModel, {controls}, restrictions) {
+      if (controls) {
+         const [ closeSlot, minSlot, maxSlot ] = [ view.trySlot(WindowView.Slots.close), view.trySlot(WindowView.Slots.min), view.trySlot(WindowView.Slots.max) ]
+         if (closeSlot || minSlot || maxSlot)
+            return new WindowControlsDecorator(view,viewModel,closeSlot,minSlot,maxSlot)
+      }
    }
    /** @type {null|{[name:string]:undefined|ClickController}} */
    controllers
    /**
-    * @param {View2} view
+    * @param {View} view
+    * @param {ViewModel} viewModel
+    * @param {undefined|ViewElem} closeSlot
+    * @param {undefined|ViewElem} minSlot
+    * @param {undefined|ViewElem} maxSlot
     */
-   constructor(view) {
+   constructor(view, viewModel, closeSlot, minSlot, maxSlot) {
       super()
-      const [ closeSlot, minSlot, maxSlot ] = [ view.trySlot("close"), view.trySlot("min"), view.trySlot("max") ]
       this.controllers = {
-         close: closeSlot && new ClickController(closeSlot.htmlElem, null, {view}),
-         minimize: minSlot && new ClickController(minSlot.htmlElem, null, {view}),
-         toggleMaximize: maxSlot && new ClickController(maxSlot.htmlElem, null, {view}),
+         close: closeSlot && new ClickController(closeSlot.htmlElem, {view,viewModel}),
+         minimize: minSlot && new ClickController(minSlot.htmlElem, {view,viewModel}),
+         toggleMaximize: maxSlot && new ClickController(maxSlot.htmlElem, {view,viewModel}),
       }
-      this.connectActions(view, this.controllers)
+      this.setActions(view, this.controllers)
    }
    /**
-    * @param {View2} view
+    * @param {View} view
     */
    free(view) {
       if (this.controllers) {
@@ -4789,530 +4204,622 @@ class WindowControlsDecorator2 extends ViewDecorator2 {
    }
 }
 
-class WindowView extends View2 {
+class WindowViewConfig extends ViewConfig {
+   /**
+    * Checks that content option is of correct type.
+    * @param {any} value
+    * @return {false|((name:string)=>string)}
+    */
+   static isContentType(value) { return !(value instanceof ViewElem || value instanceof ViewText) && BasicTypeChecker.expectValueOfType(value, "ViewElem|ViewText") }
+
+   /**
+    * @typedef WindowViewConfigInitOptions
+    * @property {BasicTypeChecker} content The ViewElem or ViewText which is set as child of the content slot.
+    * @property {BasicTypeChecker} controls *true*, if view support window controls.
+    * @property {BasicTypeChecker} moveable *true*, if user is allowed to to move view.
+    * @property {BasicTypeChecker} reframe *true*, if content should be replaced by window frame. content must be connected to the document and of type ViewElem.
+    * @property {BasicTypeChecker} resizeable *true*, if user is allowed to resize view.
+    * @property {BasicTypeChecker} top Top distance (0: top, > 0 going down) of view in (css) pixel. Real on screen position depends on position style.
+    * @property {BasicTypeChecker} left Left distance (0: left, > 0 going right) of view in (css) pixel. Real on screen position depends on position style.
+    * @property {BasicTypeChecker} width Width of view in (css) pixel.
+    * @property {BasicTypeChecker} height Height of view in (css) pixel.
+    * @property {BasicTypeChecker} hide Set value to true if window should be hidden initially.
+    * @property {BasicTypeChecker} show Set value to true if window should be shown initially.
+    * @property {BasicTypeChecker} title Text string which is shown in the title bar of the window.
+    */
+
+   /** @type {WindowViewConfigInitOptions}. */
+   static InitOptions = {...ViewConfig.InitOptions,
+      ...ReframeViewDecorator.ClassConfig.InitOptions,
+      ...MoveResizeViewDecorator.ClassConfig.InitOptions,
+      ...WindowControlsDecorator.ClassConfig.InitOptions,
+      top: BasicTypeChecker.numberType,
+      left: BasicTypeChecker.numberType,
+      width: BasicTypeChecker.numberType,
+      height: BasicTypeChecker.numberType,
+      hide: BasicTypeChecker.booleanType,
+      show: BasicTypeChecker.booleanType,
+      title: BasicTypeChecker.stringType,
+   }
+
+   /** Class to mark window frame as maximized. */
+   static MaximizedClass = "maximized"
+   /** Class to mark window frame as minimized. */
+   static MinimizedClass = "minimized"
+   /** Styles to resize window into maximized state. */
+   static MaximizedStyle = { width:"100%", height:"100%", top:"0px", left:"0px" }
+   /** Styles to resize window into minimized state. */
+   static MinimizedStyle = { width:"32px", height:"16px", top:"unset", bottom:"32px", left:"5px" }
+}
+
+class WindowView extends View {
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** @return {typeof WindowViewConfig} */
+   get ClassConfig() { return WindowViewConfig }
+   /** @template {keyof typeof WindowViewConfig} K @param {K} config @return {typeof WindowViewConfig[K]} */
+   getUserConfig(config) { return super.getUserConfig(config) }
+
+   /**
+    * Optional slot names which could be exported in the window frame by "data-slot=<name>".
+    * @type {{content:"content", title:"title", close:"close", min:"min", max:"max", move:"move"}}
+    */
+   static Slots = { content:"content", title:"title", close:"close", min:"min", max:"max", move:"move" }
+
    /**
     * WindowView_CalledActions enumerates all called actions.
-    * @typedef {MoveResizeViewDecorator2_CalledActions & WindowControlsDecorator2_CalledActions} WindowView_CalledActions
+    * @typedef {MoveResizeViewDecorator_CalledActions & WindowControlsDecorator_CalledActions} WindowView_CalledActions
     */
-   /**
-    * @typedef WindowViewConfig
-    * @property {string} maximizedClass Class name which is set on frame if window is maximized.
-    * @property {{content:string, controls:string, moveable:string, reframe:string, resizeable:string}} initOptions
-    */
-   /** @type {View2Config&WindowViewConfig}. */
-   static Config = { ...super.Config,
-      maximizedClass: "maximized",
-      initOptions: {...super.Config.initOptions,
-         ...ReframeViewDecorator2.Extension.initOptions,
-         ...MoveResizeViewDecorator2.Extension.initOptions,
-         ...WindowControlsDecorator2.Extension.initOptions,
-         content: "The ViewElem which is set as child of the content slot."
-      }
-   }
-   /** Optional slot names which could be exported in the window frame by "data-slot=<name>". */
-   static Slots = { content:"content", title:"title", close:"close", min:"min", max:"max"}
-   /////////////////////
-   // Overwrite View2 //
-   /////////////////////
+
+   ////////////////////
+   // Overwrite View //
+   ////////////////////
    /**
     * @param {ViewElem} viewElem
+    * @param {null|undefined|WindowVM} [viewModel]
     */
-   constructor(viewElem) {
-      super(viewElem)
+   constructor(viewElem, viewModel) {
+      super(viewElem, viewModel ?? new WindowVM())
+      if (!(this.viewModel instanceof WindowVM)) return VMX.throwError(this, BasicTypeChecker.expectNameValueOfType("argument »viewModel«",viewModel,"WindowVM"))
    }
    /**
     * @typedef WindowViewInitOptions
-    * @property {null|ViewElem|ViewElemText} content ViewElem which is set as child of the content slot.
-    * @property {boolean} reframe *true*, window frame replaces content within the document. The content must be set and connected to the document.
-    * @property {boolean} moveable *true*, window frame can be moved if ViewElem supports it (HTML position is "absolute","fixed",or "relative")
-    * @property {boolean} resizeable
-    * @property {boolean} controls
+    * @property {ViewElem|ViewText} [content] ViewElem which is set as child of the content slot.
+    * @property {boolean} [reframe] *true*, window frame replaces content within the document. The content must be if type ViewElem and connected to the document.
+    * @property {boolean} [moveable] *true*, window frame can be moved if ViewElem supports it (HTML position is "absolute","fixed",or "relative").
+    * @property {boolean} [resizeable] *true*, window frame can be resized.
+    * @property {boolean} [controls] *true*, if view support window controls.
+    * @property {number} [top] Distance from top of screen in css pixel.
+    * @property {number} [left] Distance from left of screen in css pixel.
+    * @property {number} [height] Height of view in css pixel.
+    * @property {number} [width] Width of view in css pixel.
+    * @property {boolean} [hide] True if view is hidden initially.
+    * @property {boolean} [show] True if view is shown initially.
+    * @property {string} [title] Title (text string/no html) shown in window title bar.
     */
    /**
-    * @param {WindowViewInitOptions} initOptions
-    * @return {ViewRestrictions} Restricted properties which are of fixed value which forces the view-model to adapt accordingly.
+    * @see {@link View.init}
+    * @param {WindowViewInitOptions} viewOptions
+    * @return {WindowView}
     */
-   subinit(initOptions) {
-      const restrictions={}
-      this.decorate(ReframeViewDecorator2, initOptions, restrictions)
-      this.decorate(MoveResizeViewDecorator2, initOptions, restrictions)
-      this.decorate(WindowControlsDecorator2, initOptions, restrictions)
-      if (initOptions.content && (initOptions.content instanceof ViewElem || initOptions.content instanceof ViewElemText))
-         this.content = initOptions.content
-      return restrictions
+   init(viewOptions) {
+      const model = this.model, restrictions = {}
+      viewOptions = this.completeOptions(viewOptions)
+      super.init(viewOptions)
+      this.decorate(ReframeViewDecorator, model, viewOptions, restrictions)
+      this.decorate(MoveResizeViewDecorator, model, viewOptions, restrictions)
+      this.decorate(WindowControlsDecorator, model, viewOptions, restrictions)
+      restrictions.hasTitle = this.trySlot(WindowView.Slots.title) !== undefined
+      if (viewOptions.content && (viewOptions.content instanceof ViewElem || viewOptions.content instanceof ViewText))
+         this.content = viewOptions.content
+      // position and title is initially taken from view if not set in options
+      const pos = this.viewElem.computedPos()
+      if (viewOptions.top !== undefined) pos.top = viewOptions.top
+      if (viewOptions.left !== undefined) pos.left = viewOptions.left
+      if (viewOptions.height !== undefined) pos.height = viewOptions.height
+      if (viewOptions.width !== undefined) pos.width = viewOptions.width
+      model.pos = pos
+      if (viewOptions.hide)
+         model.windowState = WindowVM.HIDDEN
+      if (viewOptions.show)
+         model.windowState = WindowVM.SHOWN
+      if (typeof viewOptions.title === "string")
+         model.title = viewOptions.title
+      else if (!model.title && this.v_title)
+         model.title = this.v_title
+      model.connectView(this,restrictions)
+      // == initial update ==
+      this.v_title = model.title
+      this.v_pos = model.pos
+      this.v_windowState = model.windowState
+      return this
    }
+   /** Returns the {@link WindowVM} attached to view. @return {WindowVM} */
+   get model() { return this._unsafe_model }
+   /////////////////
+   // Init Helper //
+   /////////////////
    /**
-    * Content is removed from window frame and replaces frame in the document.
+    * @param {WindowViewInitOptions} [options]
+    * @return {WindowViewInitOptions}
     */
-   unframeContent() { this.removeExtension(ReframeViewDecorator2)?.free(this) }
-   ///////////////////////////
-   // WindowView Properties //
-   ///////////////////////////
-   /**
-    * @returns {View2Config&WindowViewConfig}
-    */
-   get config() { return WindowView.Config }
-   /**
-    * @returns {undefined|ViewElemText|ViewElem}
-    */
-   get content() { return this.viewElem.slot(WindowView.Slots.content).child() }
-   /**
-    * @param {undefined|ViewElemText|ViewElem} view
-    */
-   set content(view) { this.viewElem.setSlot(WindowView.Slots.content, view) }
-   /**
-    * @returns {WindowVM2Pos}
-    */
-   get pos() { return this.viewElem.pos() }
-   /**
-    * @param {WindowVM2PosArgs} pos
-    */
-   set pos(pos) {
-      const changed = this.viewElem.setPos(pos)
-      if (changed)
-         this.notifyUpdate("pos", changed)
+   completeOptions(options) {
+      const o = { ...options }
+      if (o.content instanceof HTMLElement) o.content = new ViewElem(o.content)
+      if (o.controls === undefined) o.controls = true
+      if (o.moveable === undefined) o.moveable = true
+      if (o.reframe === undefined && o.content instanceof ViewElem && o.content.connected()) o.reframe = true
+      if (o.resizeable === undefined) o.resizeable = true
+      if (o.moveable && o.reframe && o.content instanceof ViewElem && !o.content.moveable()) o.moveable = false
+      return o
    }
-   // XXXXX
+   /////////////
+   // Actions //
+   /////////////
    /**
-    * @param {WindowVM2State} state
+    * This method succeeds only if content was reframed (option.reframe=true) by this window.
+    * In case of failure nothing is done. In case of success content
+    * is removed from window frame and replaces frame in the document
+    * and the window is freed.
+    * @return {ViewElem|undefined} *ViewElem* in case of success.
     */
-   set windowState(state) {
-      const pc = this.getExtension(ViewElemPositionControl) ?? this.extend(new ViewElemPositionControl(this.viewElem))
+   unframeContent() { const content = this.getExtension(ReframeViewDecorator)?.unframeContent(this); return content && this.free(), content }
+   ////////////////
+   // Properties //
+   ////////////////
+   /** @param {true} closed *true* if windowState will be set to WindowVM.CLOSED. */
+   set v_closed(closed) { if (closed) VMX.extpoint.closeWindowView(this) }
+   /** @type {{content:"content", title:"title", close:"close", min:"min", max:"max", move:"move"}} */
+   get slots() { return WindowView.Slots }
+   /**
+    * @return {undefined|ViewText|ViewElem}
+    */
+   get content() { return this.viewElem.slot(this.slots.content).child() }
+   /**
+    * @param {undefined|ViewText|ViewElem} view
+    */
+   set content(view) { this.viewElem.setSlot(this.slots.content, view) }
+   /**
+    * @return {WindowVMPos}
+    */
+   get v_pos() { return this.viewElem.pos() }
+   /**
+    * @param {WindowVMPosArgs} pos
+    */
+   set v_pos(pos) { this.viewElem.setPos(pos) }
+   /** @return {string} */
+   get v_title() { return this.model.hasTitle ? this.viewElem.slot(this.slots.title).text() : "" }
+   /** @param {string} title */
+   set v_title(title) { this.model.hasTitle && this.viewElem.setSlot(this.slots.title, ViewText.fromText(title)) }
+   /**
+    * @param {WindowVMState} state
+    */
+   set v_windowState(state) {
+      const withTransition = !this.model.lastWindowStateHidden
+      const pc = new ViewElemPositionControl(this.viewElem, withTransition)
+      this.hidden = (state === WindowVM.HIDDEN)
+      this.getExtension(MoveResizeViewDecorator)?.enable(state !== WindowVM.MAXIMIZED)
       switch(state) {
-         case WindowVM2.MAXIMIZED:
-            pc.maximize()
-            this.hidden = false
-            break;
-         case WindowVM2.MINIMIZED:
-            pc.minimize()
-            this.hidden = false
-            break;
-         case WindowVM2.CLOSED:
-         case WindowVM2.HIDDEN:
-         case WindowVM2.VISIBLE:
+         case WindowVM.MAXIMIZED:
+            pc.changePos(this.getUserConfig("MaximizedStyle"),this.getUserConfig("MaximizedClass"))
+            break
+         case WindowVM.MINIMIZED:
+            pc.changePos(this.getUserConfig("MinimizedStyle"),this.getUserConfig("MinimizedClass"),() => this.model.windowState === WindowVM.MINIMIZED && (this.hidden=true))
+            break
+         case WindowVM.CLOSED:
             pc.restore()
-            this.removeExtension(ViewElemPositionControl)
-            this.hidden = (state !== WindowVM2.VISIBLE)
-            break;
+            this.free()
+            break
+         case WindowVM.HIDDEN:
+         case WindowVM.SHOWN:
+            pc.restore()
+            break
       }
    }
 }
 
-class ViewViewModelConnection {
+class ViewModelObserver {
    /**
-    * @typedef ViewViewModelConnectionLiteral
-    * @property {{[viewAction:string]:VVMConnectionLock}} locks
-    * @property {{[viewAction:string]:VVMConnectionAction}} actions
-    * @property {VVMConnectionRestriction[]} restrictions
-    * @property {VVMConnectionProperty[]} properties
-    */
-   //////////////////////////////////////////////////
-   // Types used in ViewViewModelConnectionLiteral //
-   /**
-    * @typedef VVMConnectionLock
-    * @property {string[][]} path
-    * @property {string} notlocked
-    * @property {boolean} shared
-    */
-   /**
-    * @typedef VVMConnectionAction
-    * @property {string} method
-    * @property {string} lock
-    * @property {(...actionArgs:any)=>any} mapArgs
-    */
-   /**
-    * @typedef VVMConnectionProperty
-    * @property {"view"|"vm"|"both"|undefined} update Defines view or view-model as the one which receives updates from the other side. In case update is set to "both" both sides sides (vm or view) receives updates from the other side. If not set or undefined neither side is updated if the other side changes.
-    * @property {"view"|"vm"|undefined} init Defines view or view-model as the one whose property is set during initialization from the read value of the other side. If not set or undefined neither side is set during intialization.
-    * @property {string} view Name of connected view property.
-    * @property {string} vm Name of connected view-model property.
-    * @property {null|((...viewValues:any)=>any)} [mapToVM] Maps view value to a format the view-model property expects.
-    * @property {null|((...vmValues:any)=>any)} [mapToView] Maps view-model value to a format the view property expects.
-    */
-   /**
-    * @typedef VVMConnectionRestriction
-    * @property {string} view Name of restriction property of view (read).
-    * @property {string} vm Name of view-model restriction property (set during init).
-    * @property {null|((...viewValues:any)=>any)} [mapToVM] Maps read value to a format the view-model expects.
-    */
-   /////////////////////////////////////////////////////
-   // Types used in validated ViewViewModelConnection //
-   /**
-    * @typedef ViewViewModelConnectionLock
-    * @property {string[][]} path
-    * @property {undefined|ViewViewModelConnectionLock} notlocked
-    * @property {boolean} shared
-    */
-   /** @type {{[lock:string]:ViewViewModelConnectionLock}} */
-   locks={}
-   /**
-    * @typedef ViewViewModelConnectionAction
-    * @property {string} method
-    * @property {undefined|ViewViewModelConnectionLock} lock
-    * @property {(...actionArgs:any)=>any} mapArgs
-    */
-   /** @type {{[action:string]:ViewViewModelConnectionAction}} */
-   actions={}
-   /**
-    * @typedef ViewViewModelConnectionProperty
-    * @property {"view"|"vm"|"both"|undefined} update
-    * @property {"view"|"vm"|undefined} init
-    * @property {string} view
-    * @property {string} vm
-    * @property {(...viewValues:any)=>any} mapToVM
-    * @property {(...vmValues:any)=>any} mapToView
-    */
-   /** @type {ViewViewModelConnectionProperty[]} */
-   properties=[]
-   /**
-    * @typedef ViewViewModelConnectionRestriction
-    * @property {string} view
-    * @property {string} vm
-    * @property {(...viewValues:any)=>any} mapToVM
-    */
-   /** @type {ViewViewModelConnectionRestriction[]} */
-   restrictions=[]
-   /** @type {(val:any)=>any} */
-   mapid=((value) => value)
-
-   /**
-    * @param {ViewViewModelConnectionLiteral} literal
-    */
-   constructor(literal) {
-      if (literal instanceof ViewViewModelConnection)
-         return literal
-      // == locks ==
-      for (const key of Object.keys(literal.locks)) {
-         const lock = literal.locks[key]
-         if (!Array.isArray(lock.path))
-            return VMX.throwErrorObject(this,`Expect locks.${key}.path of type string[][].`)
-         this.locks[key] = { path:new Array(literal.locks[key].path.length), notlocked:undefined, shared:Boolean(lock.shared) }
-         for (var si=0; si<lock.path.length; ++si) {
-            if (!Array.isArray(lock.path[si]))
-               return VMX.throwErrorObject(this,`Expect locks.${key}.path[${si}] of type string[].`)
-            this.locks[key].path[si] = new Array(lock.path[si].length)
-            for (var ni=0; ni<lock.path[si].length; ++ni) {
-               if (typeof lock.path[si][ni] !== "string")
-                  return VMX.throwErrorObject(this,`Expect locks.${key}.path[${si}][${ni}] of type string.`)
-               this.locks[key].path[si][ni] = lock.path[si][ni]
-            }
-         }
-         if (lock.notlocked !== undefined) {
-            if (typeof lock.notlocked !== "string")
-               return VMX.throwErrorObject(this,`Expect locks.${key}.notlocked of type string.`)
-            if (!(lock.notlocked in literal.locks))
-               return VMX.throwErrorObject(this,`Expect locks.${key}.notlocked:'${lock.notlocked}' to refer to defined lock.`)
-         }
-      }
-      for (const key of Object.keys(literal.locks)) {
-         if (literal.locks[key].notlocked !== undefined)
-            this.locks[key].notlocked = this.locks[literal.locks[key].notlocked]
-      }
-      // == actions ==
-      for (const key of Object.keys(literal.actions)) {
-         const action = literal.actions[key]
-         if (typeof action.method !== "string")
-            return VMX.throwErrorObject(this,`Expect actions.${key}.method of type string.`)
-         if (action.lock !== undefined) {
-            if (typeof action.lock !== "string")
-               return VMX.throwErrorObject(this,`Expect actions.${key}.lock of type string.`)
-            if (!(action.lock in this.locks))
-               return VMX.throwErrorObject(this,`Expect actions.${key}.lock:'${action.lock}' to refer to defined lock.`)
-         }
-         if (action.mapArgs && typeof action.mapArgs !== "function")
-            return VMX.throwErrorObject(this,`Expect actions.${key}.mapArgs of type function.`)
-         this.actions[key] = { method:action.method, lock:action.lock?this.locks[action.lock]:undefined, mapArgs:action.mapArgs??this.mapid }
-      }
-      // == restrictions ==
-      for (let key=0; key<literal.restrictions.length; ++key) {
-         const prop = literal.restrictions[key]
-         if (typeof prop.view !== "string")
-            return VMX.throwErrorObject(this, `Expect restrictions.${key}.view of type string.`)
-         if (typeof prop.vm !== "string")
-            return VMX.throwErrorObject(this, `Expect restrictions.${key}.vm of type string.`)
-         if (prop.mapToVM && typeof prop.mapToVM !== "function")
-            return VMX.throwErrorObject(this, `Expect restrictions.${key}.mapToVM of type function.`)
-         this.restrictions[key] = { view:prop.view, vm:prop.vm, mapToVM:prop.mapToVM??this.mapid }
-      }
-      // == properties ==
-      const validUpdate = ["vm","view","both"]
-      const validInit = ["vm","view"]
-      for (let key=0; key<literal.properties.length; ++key) {
-         const prop = literal.properties[key]
-         if (prop.update !== undefined && !validUpdate.includes(prop.update))
-            return VMX.throwErrorObject(this, `Expect properties[${key}].update:'${String(prop.update)}' a value out of [${validUpdate}] or undefined.`)
-         if (prop.init !== undefined && !validInit.includes(prop.init))
-            return VMX.throwErrorObject(this, `Expect properties[${key}].init:'${String(prop.init)}' a value out of [${validInit}] or undefined.`)
-         if (prop.update === undefined && prop.init === undefined)
-            return VMX.throwErrorObject(this, `Expect properties[${key}].update (or init) to be not undefined.`)
-         if (typeof prop.view !== "string")
-            return VMX.throwErrorObject(this, `Expect properties[${key}].view of type string.`)
-         if (typeof prop.vm !== "string")
-            return VMX.throwErrorObject(this, `Expect properties[${key}].vm of type string.`)
-         if (prop.mapToView && typeof prop.mapToView !== "function")
-            return VMX.throwErrorObject(this, `Expect properties[${key}].mapToView of type function.`)
-         if (prop.mapToVM && typeof prop.mapToVM !== "function")
-            return VMX.throwErrorObject(this, `Expect properties[${key}].mapToVM of type function.`)
-         this.properties[key] = { update:prop.update, init:prop.init, view:prop.view, vm:prop.vm, mapToView:prop.mapToView??this.mapid, mapToVM:prop.mapToVM??this.mapid }
-      }
-   }
-}
-
-class ViewViewModelConnectorInterface {
-   /**
-    * @typedef UpdateNotification
-    * @property {View2|ViewModel2} from
+    * @typedef VMPropertyUpdateNotification
+    * @property {"VMPropertyUpdate"} type
+    * @property {ViewModel} from
     * @property {string} property
     * @property {any} value
+    *
+    * @typedef {(notification:VMPropertyUpdateNotification)=>void} VMPropertyUpdateFunction
     */
 
    /**
-    * @param {any} connector Argument value which is tested to be of type ViewViewModelConnectorInterface.
-    * @param {string} argument Name of tested argument.
-    * @returns {ViewViewModelConnectorInterface}
+    * Creates an update notification message for an ViewModel property value.
+    * @param {ViewModel} viewModel ViewModel whose property has changed.
+    * @param {string} property Name of property
+    * @param {any} value New value of property.
+    * @return {VMPropertyUpdateNotification}
     */
-   static assertType(connector, argument) {
-      if (connector instanceof ViewViewModelConnectorInterface)
-         return connector
-      return VMX.throwErrorObject(this, `Expect argument ${argument} of type ViewViewModelConnectorInterface instead of »${VMX.typeof(connector)}«.`)
+   static VMPropertyUpdateNotification(viewModel,property,value) {
+      return { type:"VMPropertyUpdate", from:viewModel, property, value}
    }
+
    /**
-    * @returns {boolean} *true*, if initConnection was called before.
+    * @template T
+    * @param {T} owner Object which owns the method.
+    * @param {(this:T,arg:object)=>void} method Method which is called whenever a ViewModel property changes.
     */
-   isConnected() { return VMX.throwErrorObject(this, `isConnected not implemented.`)}
-   /**
-    * @param {ViewViewModelConnectionLiteral} connection
-    * @param {()=>ViewRestrictions} getViewRestrictions
-    * @returns {void}
-    */
-   connect(connection, getViewRestrictions) { return VMX.throwErrorObject(this, `connect not implemented.`)}
-   /**
-    * @returns {(HTMLElement)[]}
-    */
-   htmlElements() { return VMX.throwErrorObject(this, `htmlElements not implemented.`)}
-   /**
-    * @returns {ImplementsInterfaceLogID}
-    */
-   viewParent()  { return VMX.throwErrorObject(this, `viewParent not implemented.`)}
-   /**
-    * @param {string} action
-    * @return {ViewModelAction}
-    */
-   getVMAction(action) { return VMX.throwErrorObject(this, `getVMAction not implemented.`) }
-   /**
-    * @param {UpdateNotification} updateNotification
-    * @returns {void}
-    */
-   onUpdateNotification(updateNotification) { return VMX.throwErrorObject(this, `onUpdateNotification not implemented.`)}
+   static createProxy(owner, method) { return new this.Proxy(owner,method) }
+
+   static Proxy = class ViewModelObserverProxy { // implements ViewModelObserver
+      /**
+       * @param {object} owner Object which owns the method.
+       * @param {(this:object,arg:VMPropertyUpdateNotification)=>void} method Method which is called whenever a ViewModel property changes.
+       */
+      constructor(owner, method) {
+         this.owner = owner
+         this.method = method
+      }
+
+      /** @param {object} o */
+      equals(o) { return o instanceof ViewModelObserver.Proxy && o.owner == this.owner && o.method == this.method }
+
+      /** @type {VMPropertyUpdateFunction} */
+      onVMUpdate(notification) { this.method.call(this.owner,notification) }
+   }
+
+   /** @type {VMPropertyUpdateFunction} */
+   onVMUpdate(notification) { return VMX.throwError(this, `onVMUpdate not implemented.`) }
 }
 
-class ViewViewModelConnector extends ViewViewModelConnectorInterface {
+// XXXXX
 
-   /** @type {View2} */
-   view
-   /** @type {ViewModel2} */
-   viewModel
-   /** @type {undefined|ViewViewModelConnection} */
-   connection
-   /** @type {{[vprop:string]:{vm:string, mapToVM:(...args:any)=>any}}} */
-   viewProperties
-   /** @type {{[vmprop:string]:{view:string, mapToView:(...args:any)=>any}}} */
-   vmProperties
-   /** @type {Set<string>} */
-   viewLocks
-   /** @type {Set<string>} */
-   vmLocks
-   /** @type {boolean} *false*, onUpdateNotification will transfer updates between connected properties. */
-   ignoreConnectedUpdates
+class ViewModelObserverHub {
+   /**
+    * @typedef {(VMPropertyUpdateFunction|ViewModelObserver)[]} ViewModelObservers
+    * @typedef {Map<string,ViewModelObservers>} PropertyObservers
+    * @typedef {typeof ViewModel|ViewModel} ViewModelObservers_VMType
+    * @typedef {Map<ViewModelObservers_VMType,PropertyObservers>} VMTypeObservers
+    * @type {VMTypeObservers}
+    */
+   modelObservers
+   /** @type {(()=>void)[]|undefined} */
+   onUpdateEndCallbacks
+
+   constructor() {
+      this.modelObservers = new Map()
+      this.onUpdateEndCallbacks = undefined
+   }
+
+   /** @return {(typeof ViewModel|ViewModel)[]} */
+   get vmtypes() { return [...this.modelObservers.keys()] }
+   /** @return {Set<String>} */
+   get properties() {
+      const result = new Set()
+      this.modelObservers.forEach( (propertyObservers) => propertyObservers.forEach( (_v,property) => result.add(property)))
+      return result
+   }
+   /**
+    * @return {{vmtype:typeof ViewModel|ViewModel, property:string, observers:ViewModelObservers}[]}
+    */
+   get observers() {
+      const result = []
+      for (const [ vmtype, propertyObservers ] of this.modelObservers) {
+         for (const [ property, observers ] of propertyObservers) {
+            result.push({vmtype, property, observers:[...observers]})
+         }
+      }
+      return result
+   }
 
    /**
-    * @param {View2} view
-    * @param {ViewModel2} viewModel
+    * @param {typeof ViewModel|ViewModel} vmtype
+    * @return {{}|{[property:string]:ViewModelObservers}}
     */
-   constructor(view, viewModel) {
-      super()
-      this.view = view
-      this.viewModel = viewModel
-      this.viewProperties = {}
-      this.vmProperties = {}
-      this.viewLocks = new Set()
-      this.vmLocks = new Set()
-      this.ignoreConnectedUpdates = true
-      view.connectToModel(this)
-      viewModel.connectToView(this)
-   }
-   ignoreUpdates() { this.ignoreConnectedUpdates = true }
-   enableUpdates() { this.ignoreConnectedUpdates = false }
-   setVMRestrictions(vmrestrictions) { this.viewModel.init(vmrestrictions) }
-   ////////////////////////////////////////////////
-   // Implements ViewViewModelConnectorInterface //
-   ////////////////////////////////////////////////
-   /**
-    * @returns {boolean}
-    */
-   isConnected() { return this.connection !== undefined }
-   /**
-    * @param {ViewViewModelConnectionLiteral} connection
-    * @param {()=>ViewRestrictions} getViewRestrictions
-    */
-   connect(connection, getViewRestrictions) {
-      if (!connection || typeof connection !== "object" || typeof connection.actions !== "object" || typeof connection.properties !== "object" || typeof connection.restrictions !== "object")
-         return VMX.throwErrorObject(this, `Expect argument connection of type ViewViewModelConnectionLiteral instead of »${VMX.typeof(connection)}«.`)
-      if (this.isConnected())
-         return VMX.throwErrorObject(this,`connect already called.`)
-      this.connection = new ViewViewModelConnection(connection)
-      // XXXXX
-      // == restrictions ==
-      const viewrestrictions = getViewRestrictions()
-      const vmrestrictions = {}
-      for (const prop of this.connection.restrictions) {
-         if (!(prop.view in viewrestrictions))
-            return VMX.throwErrorObject(this, `Missing viewrestriction ${prop.view}.`)
-         vmrestrictions[prop.vm] = prop.mapToVM(viewrestrictions[prop.view])
-      }
-      this.setVMRestrictions(vmrestrictions)
-      // == properties ==
-      for (const prop of this.connection.properties) {
-         // update flow
-         if ("view" === prop.update || "both" === prop.update) {
-            this.vmProperties[prop.vm] = prop
-         }
-         if ("vm" === prop.update || "both" === prop.update) {
-            this.viewProperties[prop.view] = prop
-         }
-         // init flow
-         if ("vm" === prop.init)
-            this.viewModel[prop.vm] = prop.mapToVM(this.view[prop.view])
-         else if ("view" === prop.init)
-            this.view[prop.view] = prop.mapToView(this.viewModel[prop.vm])
-      }
-      this.enableUpdates()
-   }
-   /**
-    * @returns {(HTMLElement)[]}
-    */
-   htmlElements() { return this.view.htmlElements }
-   /**
-    * @returns {ImplementsInterfaceLogID}
-    */
-   viewParent()  { return this.viewModel }
-   /**
-    * @param {string} viewAction
-    * @return {ViewModelAction}
-    */
-   getVMAction(viewAction) {
-      if (!this.connection)
-         return VMX.throwErrorObject(this,`Call connect first.`)
-      const conn = this.connection.actions[viewAction]
-      if (!conn)
-         return VMX.throwErrorObject(this, `Action »${viewAction}« is unknown.`)
-      const { method, mapArgs } = conn
-      const lock = conn.lock ?? { path:[[method]], notlocked:undefined, shared:false }
-      const notlockedPath = lock.notlocked ? lock.notlocked.path : undefined
-      if (!(method in this.viewModel) || typeof this.viewModel[method] !== "function")
-         return VMX.throwErrorObject(this, `Action »${viewAction}« can not access ViewModel method »${method}«.`)
-      return new ViewModelAction(this.viewModel, lock.path, lock.shared, (args) => this.viewModel[method](mapArgs(args))).setNotLocked(notlockedPath)
-   }
-   /**
-    * @param {UpdateNotification} updateNotification
-    */
-   onUpdateNotification(updateNotification) {
-      if (this.ignoreConnectedUpdates) return
-      if (updateNotification.from === this.view) {
-         if (this.viewLocks.has(updateNotification.property)) return
-         const connectedProperty = this.viewProperties[updateNotification.property]
-         if (connectedProperty) {
-            this.vmLocks.add(connectedProperty.vm)
-            this.viewModel[connectedProperty.vm] = connectedProperty.mapToVM(updateNotification.value)
-            this.vmLocks.delete(connectedProperty.vm)
+   observersByVM(vmtype) {
+      const result = {}
+      const propertyObservers = this.modelObservers.get(vmtype)
+      if (propertyObservers) {
+         for (const [ property, observers ] of propertyObservers) {
+            result[property] = [...observers]
          }
       }
-      else if (updateNotification.from === this.viewModel) {
-         if (this.vmLocks.has(updateNotification.property)) return
-         const connectedProperty = this.vmProperties[updateNotification.property]
-         if (connectedProperty) {
-            this.viewLocks.add(connectedProperty.view)
-            this.view[connectedProperty.view] = connectedProperty.mapToView(updateNotification.value)
-            this.viewLocks.delete(connectedProperty.view)
+      return result
+   }
+
+   /**
+    * @param {string} property
+    * @return {{vmtype: typeof ViewModel|ViewModel, observers:(VMPropertyUpdateFunction|ViewModelObserver)[]}[]}
+    */
+   observersByProperty(property) {
+      const result = []
+      for (const [ vmtype, propertyObservers ] of this.modelObservers) {
+         const observers = propertyObservers.get(property)
+         if (observers) {
+            result.push({vmtype, observers:[...observers]})
+         }
+      }
+      return result
+   }
+
+   /** @param {typeof ViewModel|ViewModel} vmtype */
+   vmtypeName(vmtype) { return typeof vmtype === "function" ? "class "+vmtype.name : "object "+vmtype.getLogID().name(vmtype) }
+
+   /**
+    * @param {typeof ViewModel|ViewModel} vmtype
+    * @return {PropertyObservers}
+    */
+   registerType(vmtype) {
+      const propertyObservers = this.modelObservers.get(vmtype)
+      if (propertyObservers) return propertyObservers
+      const emptyObservers = new Map()
+      this.modelObservers.set(vmtype,emptyObservers)
+      return emptyObservers
+   }
+
+   /**
+    * Registers an observer which is notified for change of a property value.
+    * @param {typeof ViewModel|ViewModel} vmtype
+    * @param {string} property
+    * @param {VMPropertyUpdateFunction|ViewModelObserver} observer
+    */
+   addPropertyObserver(vmtype, property, observer) {
+      const isFunction = typeof observer === "function"
+      if (!(isFunction || typeof observer === "object" && typeof observer?.onVMUpdate === "function"))
+         return VMX.throwError(this, `Expect argument »observer« of type function or ViewModelObserver instead of ${VMX.typeof(observer)}.`)
+      const isProxy = !isFunction && observer instanceof ViewModelObserver.Proxy
+      const propertyObservers = this.registerType(vmtype)
+      const observers = propertyObservers.get(property) ?? []
+      if (observers.length === 0) propertyObservers.set(property,observers)
+      if (observers.findIndex(o => o === observer || (isProxy && observer.equals(o))) === -1) {
+         observers.push(observer)
+      }
+   }
+
+   /**
+    * @param {typeof ViewModel|ViewModel} vmtype
+    * @param {string} property
+    * @param {VMPropertyUpdateFunction|ViewModelObserver} observer
+    */
+   removePropertyObserver(vmtype, property, observer) {
+      const propertyObservers = this.modelObservers.get(vmtype)
+      if (!propertyObservers) return
+      const isProxy = observer instanceof ViewModelObserver.Proxy
+      const observers = propertyObservers.get(property)
+      if (!observers) return
+      const index = observers.findIndex(o => o === observer || (isProxy && observer.equals(o)))
+      if (index === -1) return
+      if (observers.length === 1)
+         propertyObservers.delete(property)
+      else
+         observers.splice(index,1)
+   }
+
+   /** @param {()=>void} callback*/
+   onceOnUpdateEnd(callback) {
+      if (typeof callback === "function") this.onUpdateEndCallbacks?.push(callback)
+   }
+
+   ///////////////////////
+   // ViewModelObserver //
+   ///////////////////////
+
+   /**
+    * @param {VMPropertyUpdateNotification} notification
+    * @return {void}
+    */
+   onVMUpdate(notification) {
+      const oldonUpdateEndCallbacks = this.onUpdateEndCallbacks
+      this.onUpdateEndCallbacks = []
+      this.#sendNotification(notification,notification.from)
+      this.#sendNotification(notification,notification.from.constructor)
+      this.onUpdateEndCallbacks.forEach(cb=>cb())
+      this.onUpdateEndCallbacks = oldonUpdateEndCallbacks
+   }
+   /**
+    * @param {VMPropertyUpdateNotification} notification
+    * @param {Function|ViewModel} vmtype
+    * @return {void}
+    */
+   #sendNotification(notification, vmtype) {
+      /** @type {any} remove warning from typescript compiler */
+      const _vmtype = vmtype
+      const observers = this.modelObservers.get(_vmtype)?.get(notification.property)
+      if (observers) {
+         for (const observer of [...observers]) {
+            (typeof observer === "function") ? observer(notification) : observer.onVMUpdate(notification)
          }
       }
    }
 }
 
-class ViewModel2TypeClass extends TypeClass {
-   InterfaceLogID = new InterfaceLogID({})
+/**
+ * Basic view model configuration.
+ * Should be copied in subtype and extended or overwritten accordingly.
+ */
+class ViewModelConfig {
+   /** @type {{[option:symbol]:never}} */
+   static ConnectOptions = {}
+   /**
+    * @typedef ViewModelConfigLock
+    * @property {string[]} parents
+    * @property {boolean} [shared]
+    * @property {string} [contextUnlockedNode]
+    */
+   /** @type {{[name:string]:ViewModelConfigLock}} */
+   static Locks = {}
 }
 
-class ViewModel2 {
-   static #typeClass = new ViewModel2TypeClass(ViewModel2,TypeClass.VIEWMODEL)
-   static get typeClass() { return ViewModel2.#typeClass }
-   get typeClass() { return ViewModel2.#typeClass }
+class ViewModel {
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** Returns config values which are used for all instances of this class. @return {typeof ViewModelConfig} */
+   get ClassConfig() { return ViewModelConfig }
+   //////////////////////////
+   // implement LogIDOwner //
+   //////////////////////////
+   getLogID() { return this.#logid }
+   getLogIDParent() { return undefined }
+
    /**
     * @param {any} viewModel
-    * @returns {ViewModel2}
+    * @return {ViewModel}
     */
    static assertType(viewModel) {
-      if (viewModel instanceof ViewModel2)
+      if (viewModel instanceof ViewModel)
          return viewModel
-      return VMX.throwErrorStatic(this, `Expect type ViewModel and not »${VMX.typeof(viewModel)}«.`)
+      return VMX.throwError(this, `Expect type ViewModel and not »${VMX.typeof(viewModel)}«.`)
    }
 
-   /** @type {undefined|ViewViewModelConnectorInterface} */
-   #viewConnector
+   /** @type {undefined|View} */
+   #view
    /** @type {LogID} */
-   LID
+   #logid
+   /** @type {{[lock:string]:ActionLockState}} */
+   #lockStates
+
+
+   ////////////////////////////
+   // Overwritten in Subtype //
+   ////////////////////////////
    /**
-    *
+    * Initializes value properties.
     */
    constructor() {
-      this.LID = new LogID(this)
+      this.#logid = new LogID(this)
+      this.#lockStates = {}
    }
    /**
-    * @param {{[vmrestriction:string]:any}} vmrestrictions
+    * @param {View} view
+    * @param {ViewRestrictions} connectOptions
+    * @return {ViewModel}
     */
-   init(vmrestrictions) { }
-   /**
-    *
-    */
-   free() { this.LID.unbind(this) }
-   /**
-    * @param {ViewViewModelConnectorInterface} connector
-    */
-   connectToView(connector) {
-      this.#viewConnector = ViewViewModelConnectorInterface.assertType(connector,"connector")
-      this.LID.bindElems(this, connector.htmlElements())
+   connectView(view, connectOptions) {
+      if (this.#view)
+         return VMX.throwError(this,`connectView called twice.`)
+      this.#view = view
+      this.#logid.init(this, view.htmlElements)
+      this.validateConnectOptions(connectOptions)
+      return this
    }
-   get viewConnector() { return this.#viewConnector || VMX.throwErrorObject(this, `Call connectToView first.`) }
    /**
-    * @template V
+    * Frees resources. Call is ignored if already freed before.
+    * @param {()=>void} [onFree] Callback which is called if free is executed (not ignored).
+    */
+   free(onFree) {
+      if (!this.#logid.isFree()) {
+         this.#logid.free()
+         onFree?.()
+         this.#view?.free()
+         this.#view = undefined
+      }
+   }
+   // overwrite also:
+   // --- getVMAction
+
+   /////////////////
+   // Init Helper //
+   /////////////////
+   /**
+    * @param {{[option:string]:any}} options
+    */
+   validateConnectOptions(options) {
+      const allowedOptions = this.ClassConfig.ConnectOptions
+      BasicTypeChecker.validateOptions(this, options, allowedOptions)
+   }
+   ////////////////
+   // Properties //
+   ////////////////
+   /** @return {View} */
+   get view() { return this.#view || VMX.throwError(this,`view only valid after call to connectView.`) }
+
+   ////////////////////
+   // Action Support //
+   ////////////////////
+   /**
+    * @param {string} action
+    * @param {(args: object)=>object} [mapArgs]
+    * @return {ViewModelAction} Bound action which calls the correct view model method.
+    */
+   getVMAction(action, mapArgs) { return VMX.throwError(this, `Unknown action ${String(action)}.`) }
+   /** @param {string} name @return {ActionLockState} */
+   getVMActionLockState(name) {
+      return (this.#lockStates[name] ??= (() => {
+         const config = this.ClassConfig.Locks[name]
+         if (!config) return VMX.throwError(this, `Unknown lock configuration ${name}.`)
+         const parents = config.parents.map(parent => this.getVMActionLockState(parent))
+         const lockState = new ActionLockState(name, Boolean(config.shared), ...parents)
+         if (config.contextUnlockedNode)
+            lockState.addContextUnlockedNodes(this.getVMActionLockState(config.contextUnlockedNode))
+         return lockState
+      })())
+   }
+   /** @param {string} name @return {ActionLockHolder} */
+   getVMActionLock(name) { return new ActionLockHolder(this.getVMActionLockState(name)) }
+
+   ///////////////////
+   // Notifications //
+   ///////////////////
+   /**
     * @param {string} property
-    * @param {V} value
+    * @param {any} value
     */
-   notifyUpdate(property, value) {
-      this.viewConnector.onUpdateNotification({from:this, property, value})
+   notifyPropertyUpdate(property, value) {
+      const notification = ViewModelObserver.VMPropertyUpdateNotification(this,property,value)
+      VMX.vmObserver.onVMUpdate(notification)
+      this.#view?.onVMUpdate(notification)
    }
 }
 
-class WindowVM2 extends ViewModel2 {
-   // static #typeClass = new ViewModel2TypeClass(WindowVM2,TypeClass.VIEWMODEL)
-   // static get typeClass() { return WindowVM2.#typeClass }
-   // get typeClass() { return WindowVM2.#typeClass }
+class WindowVMConfig extends ViewModelConfig {
    /**
-    * @typedef WindowVM2Pos
+    * @typedef WindowVMConnectOptions
+    * @property {BasicTypeChecker} moveable Could the window be moved.
+    * @property {BasicTypeChecker} resizeable Could the window be resized.
+    * @property {BasicTypeChecker} hasTitle Could title be set (and displayed in view).
+    */
+   /** @type {WindowVMConnectOptions} */
+   static ConnectOptions = {...ViewModelConfig.ConnectOptions,
+      moveable: BasicTypeChecker.booleanType,
+      resizeable: BasicTypeChecker.booleanType,
+      hasTitle: BasicTypeChecker.booleanType
+   }
+   static Locks = {...ViewModelConfig.Locks,
+      click: { parents:[], shared:true },
+      move: { parents:[], contextUnlockedNode: "click" },
+      top: { parents:["move"] },
+      topRight: { parents:["top","right"] },
+      right: { parents:["move"] },
+      bottomRight: { parents:["bottom","right"] },
+      bottom: { parents:["move"] },
+      bottomLeft: { parents:["bottom","left"] },
+      left: { parents:["move"] },
+      topLeft: { parents:["top","left"] },
+   }
+}
+
+class WindowVM extends ViewModel {
+   //////////////////////
+   // implement Config //
+   //////////////////////
+   /** @return {typeof WindowVMConfig} */
+   get ClassConfig() { return WindowVMConfig }
+
+   /**
+    * @typedef WindowVMPos
     * @property {number} width
     * @property {number} height
     * @property {number} top
     * @property {number} left
     */
    /**
-    * @typedef WindowVM2PosArgs
+    * @typedef WindowVMPosArgs
     * @property {number|undefined} [width]
     * @property {number|undefined} [height]
     * @property {number|undefined} [top]
     * @property {number|undefined} [left]
+    * @property {boolean|undefined} [transition]
     */
    /**
-    * @typedef {"closed"|"hidden"|"maximized"|"minimized"|"visible"} WindowVM2State
+    * @typedef {"closed"|"hidden"|"maximized"|"minimized"|"shown"} WindowVMState
     */
    /** @type {"closed"} */
    static CLOSED = "closed"
@@ -5322,606 +4829,473 @@ class WindowVM2 extends ViewModel2 {
    static MAXIMIZED = "maximized"
    /** @type {"minimized"} */
    static MINIMIZED = "minimized"
-   /** @type {"visible"} */
-   static VISIBLE = "visible"
+   /** @type {"shown"} */
+   static SHOWN = "shown"
    /**
     * @param {any} viewModel
-    * @returns {WindowVM2}
+    * @return {WindowVM}
     */
    static assertType(viewModel) {
-      if (viewModel instanceof WindowVM2)
+      if (viewModel instanceof WindowVM)
          return viewModel
-      return VMX.throwErrorStatic(this, `Expect type WindowVM2 and not »${VMX.typeof(viewModel)}«.`)
+      return VMX.throwError(this, `Expect type WindowVM and not »${VMX.typeof(viewModel)}«.`)
    }
 
-   /** @type {WindowVM2State} */
-   #windowState = WindowVM2.HIDDEN
-   /** @type {WindowVM2Pos} The current position of the window frame (no matter which state). */
+   /** @type {WindowVMState} */
+   #windowState = WindowVM.SHOWN
+   /** @type {WindowVMPos} The current position of the window frame (no matter which state). */
    #pos = { width:0, height:0, top:0, left:0 }
    /** @type {number} */
-   #flags = 3
+   #flags = 1/*MOVEABLE*/ | 2/*RESIZEABLE*/ | 4/*HASTITLE*/ // | 8/*LASTWINDOWSTATEHIDDEN*/
+   /** @type {string} */
+   #title = ""
 
-   //////////////////////////
-   // Overwrite ViewModel2 //
-   //////////////////////////
+   /////////////////////////
+   // Overwrite ViewModel //
+   /////////////////////////
 
    /**
-    * @param {{moveable:boolean,resizeable:boolean,[vmrestriction:string]:any}} vmrestrictions
+    * @param {View} view
+    * @param {ViewRestrictions} connectOptions
+    * @return {ViewModel}
     */
-   init(vmrestrictions) {
-      this.#setMoveable(vmrestrictions.moveable)
-      this.#setResizeable(vmrestrictions.resizeable)
+   connectView(view, connectOptions) {
+      super.connectView(view,connectOptions)
+      this.#setMoveable(connectOptions.moveable)
+      this.#setResizeable(connectOptions.resizeable)
+      this.#setHasTitle(typeof connectOptions.hasTitle !== "boolean" || connectOptions.hasTitle)
+      return this
    }
 
-   /////////////////////
-   // WindowViewModel //
-   /////////////////////
+   //////////////
+   // WindowVM //
+   //////////////
+
+   //// Restrictions ////
+
+   /** @return {boolean} *true*, if changing left/top is supported. */
+   get moveable() { return Boolean(this.#flags&1) }
+   /** @param {boolean} flag */
+   #setMoveable(flag) { this.#flags = flag ? this.#flags|1 : this.#flags&(~1) }
+
+   /** @return {boolean} *true*, if changing width/height is supported. */
+   get resizeable() { return Boolean(this.#flags&2) }
+   /** @param {boolean} flag */
+   #setResizeable(flag) { this.#flags = flag ? this.#flags|2 : this.#flags&(~2) }
+
+   /** @return {boolean} *true*, if setting title is supported. */
+   get hasTitle() { return Boolean(this.#flags&4) }
+   /** @param {boolean} flag */
+   #setHasTitle(flag) { this.#flags = flag ? this.#flags|4 : this.#flags&(~4) }
+
+   /** @return {boolean} flag */
+   get lastWindowStateHidden() { return Boolean(this.#flags&8); }
+   /** @param {boolean} flag */
+   #setLastWindowStateHidden(flag) { this.#flags = flag ? this.#flags|8 : this.#flags&(~8) }
+
+   //// Pos Helper ////
 
    /**
-    * @param {string[]} posAttributes
-    * @param {WindowVM2PosArgs} newPos
-    * @param {WindowVM2Pos} updatedPos
-    * @return {undefined|WindowVM2PosArgs} Valid value, if any value changed else undefined.
+    * @param {string} property
+    * @param {object} newValue
+    * @param {object} oldValue
+    * @param {object} changed
+    * @return {boolean} Attribute value differs.
     */
-   updatePos(posAttributes, newPos, updatedPos) {
+   diffNumberProperty(property, newValue, oldValue, changed) {
+      const value = newValue[property]
+      if (isFinite(value) && oldValue[property] !== value) {
+         changed[property] = value
+         return true
+      }
+      return false
+   }
+   /**
+    * @param {WindowVMPosArgs} newPos
+    * @return {undefined|WindowVMPosArgs} Valid value, if any value changed else undefined.
+    */
+   diffPos(newPos) {
       const changed = {}
       let hasChanged = false
-      for (const name of posAttributes) {
-         const value = newPos[name]
-         if (isFinite(value) && updatedPos[name] !== value) {
-            hasChanged = true
-            updatedPos[name] = changed[name] = value
-         }
+      if (this.moveable) {
+         hasChanged = this.diffNumberProperty("top", newPos, this.#pos, changed) || hasChanged
+         hasChanged = this.diffNumberProperty("left", newPos, this.#pos, changed) || hasChanged
+      }
+      if (this.resizeable) {
+         hasChanged = this.diffNumberProperty("width", newPos, this.#pos, changed) || hasChanged
+         hasChanged = this.diffNumberProperty("height", newPos, this.#pos, changed) || hasChanged
       }
       return hasChanged ? changed : undefined
    }
    /**
-    * @return {WindowVM2Pos}
+    * Notifes view of pos changes if there are any.
+    * @param {WindowVMPosArgs} [newPos]
+    */
+   notifyPosUpdate(newPos) { this.notifyPropertyUpdate("pos",newPos ?? this.#pos) }
+
+   //// Properties ////
+
+   /**
+    * @return {WindowVMPos}
     */
    get pos() { return { ...this.#pos } }
    /**
-    * @param {WindowVM2PosArgs} pos
+    * @param {WindowVMPosArgs} pos
     */
    set pos(pos) {
-      if (!this.moveable && !this.resizeable) return
-      const changed = this.updatePos([...(this.resizeable ? ["width","height"] : []), ...(this.moveable ? ["top","left"] : [])], pos, this.#pos)
-      if (changed) {
-         if (this.isNotifyForUpdatedPos)
-            this.notifyUpdate("pos", changed)
-         else
-            this.#setPosChanged(true)
+      const changedPos = this.diffPos(pos)
+      if (changedPos) {
+         Object.assign(this.#pos,changedPos)
+         pos.transition && (changedPos.transition = true)
+         this.notifyPosUpdate(changedPos)
       }
    }
-   /**
-    * @returns {boolean} *true*, if changing left/top is supported.
-    */
-   get moveable() { return Boolean(this.#flags&1) }
-   /**
-    * @returns {boolean} *true*, if changing width/height is supported.
-    */
-   get resizeable() { return Boolean(this.#flags&2) }
-   /**
-    * @returns {boolean} *true*, if pos changed but {@link isNotifyForUpdatedPos} returned false.
-    */
-   get posChanged() { return Boolean(this.#flags&4) }
-   /**
-    * @returns {boolean} *true*, if view is notfied of pos updates immediately.
-    */
-   get isNotifyForUpdatedPos() {
-      return (this.#windowState === WindowVM2.VISIBLE || this.#windowState === WindowVM2.HIDDEN)
-   }
-   /**
-    * Notifes view of pos changes if there are any.
-    */
-   notifyUpdatedPos() {
-      if (this.posChanged) {
-         this.notifyUpdate("pos", this.#pos)
-         this.#setPosChanged(false)
-      }
-   }
-   /**
-    * @param {boolean} flag
-    */
-   #setMoveable(flag) { this.#flags = flag ? this.#flags|1 : this.#flags&(~1) }
-   /**
-    * @param {boolean} flag
-    */
-   #setResizeable(flag) { this.#flags = flag ? this.#flags|2 : this.#flags&(~2) }
-   /**
-    * @param {boolean} flag
-    */
-   #setPosChanged(flag) { this.#flags = flag ? this.#flags|4 : this.#flags&(~4) }
+   get title() { return this.#title }
+   set title(title) { this.notifyPropertyUpdate("title", this.#title = String(title)) }
    get windowState() { return this.#windowState }
    set windowState(newState) {
       const oldState = this.#windowState
       switch (newState) {
-      case WindowVM2.CLOSED:
-      case WindowVM2.HIDDEN:
-      case WindowVM2.MAXIMIZED:
-      case WindowVM2.MINIMIZED:
-      case WindowVM2.VISIBLE:
+      case WindowVM.CLOSED:
+      case WindowVM.HIDDEN:
+      case WindowVM.MAXIMIZED:
+      case WindowVM.MINIMIZED:
+      case WindowVM.SHOWN:
          this.#windowState = newState
          break
       default:
          break
       }
       if (this.#windowState === oldState) return
-      this.notifyUpdate("windowState", newState)
-      this.isNotifyForUpdatedPos && this.notifyUpdatedPos()
+      this.#setLastWindowStateHidden(oldState === WindowVM.HIDDEN)
+      this.notifyPropertyUpdate("windowState",newState)
+      newState === WindowVM.CLOSED && this.notifyPropertyUpdate("closed",true)
    }
+   get hidden() { return this.#windowState === WindowVM.HIDDEN }
+   get minimized() { return this.#windowState === WindowVM.MINIMIZED }
    /////////////
    // Actions //
    /////////////
    /**
-    * Set windowState to CLOSED.
+    * @param {string} action
+    * @param {(args: object)=>object} [mapArgs]
+    * @return {ViewModelAction} Bound action which calls the correct view model method.
     */
-   close() { this.windowState = WindowVM2.CLOSED }
+   getVMAction(action, mapArgs) {
+      switch (action) {
+      case "move": return new ViewModelAction(this.getVMActionLock("move"), this, this.move, mapArgs)
+      case "resize": return new ViewModelAction(this.getVMActionLock("move"), this, this.resize, mapArgs)
+      case "resizeTop": return new ViewModelAction(this.getVMActionLock("top"), this, this.resizeTop, mapArgs)
+      case "resizeTopRight": return new ViewModelAction(this.getVMActionLock("topRight"), this, this.resizeTopRight, mapArgs)
+      case "resizeRight": return new ViewModelAction(this.getVMActionLock("right"), this, this.resizeRight, mapArgs)
+      case "resizeBottomRight": return new ViewModelAction(this.getVMActionLock("bottomRight"), this, this.resizeBottomRight, mapArgs)
+      case "resizeBottom": return new ViewModelAction(this.getVMActionLock("bottom"), this, this.resizeBottom, mapArgs)
+      case "resizeBottomLeft": return new ViewModelAction(this.getVMActionLock("bottomLeft"), this, this.resizeBottomLeft, mapArgs)
+      case "resizeLeft": return new ViewModelAction(this.getVMActionLock("left"), this, this.resizeLeft, mapArgs)
+      case "resizeTopLeft": return new ViewModelAction(this.getVMActionLock("topLeft"), this, this.resizeTopLeft, mapArgs)
+      case "close": return new ViewModelAction(this.getVMActionLock("click"), this, this.close, mapArgs)
+      case "minimize": return new ViewModelAction(this.getVMActionLock("click"), this, this.minimize, mapArgs)
+      case "toggleMaximize": return new ViewModelAction(this.getVMActionLock("click"), this, this.toggleMaximize, mapArgs)
+      }
+      return super.getVMAction(action,mapArgs)
+   }
    /**
-    * Set windowState to MINIMIZED.
+    * Set windowState to {@link CLOSED}
     */
-   minimize() { this.windowState = WindowVM2.MINIMIZED }
+   close() { this.windowState = WindowVM.CLOSED }
    /**
-    * Switches windowState to MAXIMIZED if not maximized else VISIBLE.
+    * Set windowState to {@link MAXIMIZED}.
     */
-   toggleMaximize() { this.windowState = this.windowState === WindowVM2.MAXIMIZED ? WindowVM2.VISIBLE : WindowVM2.MAXIMIZED }
+   maximize() { this.windowState = WindowVM.MAXIMIZED }
    /**
+    * Set windowState to {@link MINIMIZED}.
+    */
+   minimize() { this.windowState = WindowVM.MINIMIZED }
+   /**
+    * Set windowState to {@link HIDDEN}.
+    */
+   hide() { this.windowState = WindowVM.HIDDEN }
+   /**
+    * Set windowState to {@link SHOWN}.
+    */
+   show() { this.windowState = WindowVM.SHOWN }
+   /**
+    * Switches windowState to {@link MAXIMIZED} if not maximized else {@link SHOWN}.
+    */
+   toggleMaximize() { this.windowState = this.windowState === WindowVM.MAXIMIZED ? WindowVM.SHOWN : WindowVM.MAXIMIZED }
+   /**
+    * Move window position dx pixels horizontal and dy pixels vertical.
+    * If (dx > 0) in the right direction else left. If (dy > 0) in the bottom direction else top.
+    * @this {WindowVM}
     * @param {{dx?:number, dy?:number}} args
     */
    move({dx, dy}) {
-      console.log(`move-action(dx:${dx}, dy:${dy})`)
       const { top, left } = this.pos
       this.pos = { top:top+(dy?dy:0), left:left+(dx?dx:0) }
    }
+   /** @this {WindowVM} @param {{dy:number}} e */
+   resizeTop(e) { return this.moveBorder({dtop:e.dy}) }
+   /** @this {WindowVM} @param {{dx:number,dy:number}} e */
+   resizeTopRight(e) { return this.moveBorder({dtop:e.dy,dright:e.dx}) }
+   /** @this {WindowVM} @param {{dx:number}} e */
+   resizeRight(e) { return this.moveBorder({dright:e.dx}) }
+   /** @this {WindowVM} @param {{dx:number,dy:number}} e */
+   resizeBottomRight(e) { return this.moveBorder({dbottom:e.dy,dright:e.dx}) }
+   /** @this {WindowVM} @param {{dy:number}} e */
+   resizeBottom(e) { return this.moveBorder({dbottom:e.dy}) }
+   /** @this {WindowVM} @param {{dx:number,dy:number}} e */
+   resizeBottomLeft(e) { return this.moveBorder({dbottom:e.dy,dleft:e.dx}) }
+   /** @this {WindowVM} @param {{dx:number}} e */
+   resizeLeft(e) { return this.moveBorder({dleft:e.dx}) }
+   /** @this {WindowVM} @param {{dx:number,dy:number}} e */
+   resizeTopLeft(e) { return this.moveBorder({dtop:e.dy,dleft:e.dx}) }
    /**
+    * Moves a horizontal border (dright,dleft) to the left if value < 0 else to the right.
+    * Moves a vertical border (dtop,dbottom) to the top if value < 0 else to the bottom.
+    * @this {WindowVM}
     * @param {{dtop?:number, dright?:number, dbottom?:number, dleft?:number}} args
     */
-   resize({dtop=0, dright=0, dbottom=0, dleft=0}) {
-      console.log(`resize-action(dtop:${dtop}, dright:${dright}, dbottom:${dbottom}, dleft:${dleft})`)
+   moveBorder({dtop=0, dright=0, dbottom=0, dleft=0}) {
       const { top, left, width, height } = this.pos
-      this.pos = { top:top-dtop, left:left-dleft, width:width+dleft+dright, height:height+dtop+dbottom }
-   }
-}
-
-class WindowVM extends ResizeVM {
-   /**
-    * @typedef WindowViewModelConfig
-    * @property {string} maximizedClass
-    */
-   /** @type {ViewModelConfig&WindowViewModelConfig} */
-   static Config = { ...super.Config, decorator: WindowDecorator,
-      listenableProperties: new Set(["vWindowState", ...super.Config.listenableProperties]),
-      /** Class name which sets display to none if set on htmlElement. Additional property! */
-      maximizedClass: "maximized",
-   }
-   /// window states ///
-   static HIDDEN = "hidden"; static VISIBLE = "visible"; static MINIMIZED = "minimized"; static MAXIMIZED = "maximized"; static CLOSED = "closed";
-   /** Transition style for resize and change position animation. */
-   static TRANSITION_STYLE = { "transition-delay":"0s", "transition-duration":"0.2s", "transition-property":"width,height,top,left", "transition-timing-function":"ease-out" }
-
-   #windowState
-   #windowStateBefore = WindowVM.VISIBLE
-   #visiblePos={ width:"0px", height:"0px", top:"0px", left:"0px" }
-   #transitionPos
-   #oldTransitionStyle
-   #replacedOldStyles
-
-   #initWindowState() {
-      this.#windowState = (this.view.displayed ? WindowVM.VISIBLE : WindowVM.HIDDEN)
-   }
-
-   constructor(htmlElem) {
-      super(htmlElem)
-      this.#initWindowState()
-   }
-
-   /**
-    * Initializes object after constructor has been completed.
-    * @param {{content?:Node|string}} options
-    * @returns {object} Options for decorator
-    */
-   init({ content, ...initOptions }) {
-      if (content)
-         this.vContent = content
-      const decoOptions = super.init({ ...initOptions })
-      return decoOptions
-   }
-
-   config(name) {
-      if (WindowVM.Config[name])
-         return WindowVM.Config[name]
-      return super.config(name)
-   }
-
-   setOption(name, value) {
-      switch (name) {
-         case "content": this.vContent = value; break;
-         case "title": this.vTitle = value; break;
-         default: super.setOption(name, value); break;
-      }
-   }
-
-   /**
-    * @param {string} action
-    * @param {null|string[][]} [subactions]
-    * @param {(args: object)=>object} [mapArgs]
-    * @returns {ViewModelAction} Bound action which calls the correct view model method.
-    */
-   bindAction(action, subactions, mapArgs) {
-      let lockAction = [action]
-      let vmAction
-      switch(action) {
-         case "close": lockAction = ["move"]; vmAction = () => this.close(); break
-         case "minimize": lockAction = ["move"]; vmAction = () => this.minimize(); break
-         case "move": lockAction = ["move","resize"]; vmAction = (args) => this.move(args.dx,args.dy); break
-         case "resize": vmAction = (args) => this.resize(args.dTop,args.dRight,args.dBottom,args.dLeft); break
-         case "toggleMaximize": lockAction = ["move"]; vmAction = () => this.toggleMaximize(); break
-         default: return super.bindAction(action, subactions, mapArgs)
-      }
-      return new ViewModelAction(this, [lockAction, ...(subactions?subactions:[])], false, mapArgs ? (args) => vmAction(mapArgs(args)) : vmAction)
-   }
-
-   replaceWithContent() {
-      const content = this.vContent
-      if (content) {
-         this.htmlElem.replaceWith(content)
-         if (this.#replacedOldStyles)
-            DOM.setStyles(content, this.#replacedOldStyles)
-         this.#replacedOldStyles = undefined
-      }
-      return content
-   }
-
-   get vTitle() {
-      return this.view.slot("title").html
-   }
-   set vTitle(html) {
-      if (typeof html === "string")
-         this.view.slot("title").html = html
-   }
-
-   needReplaceContent(htmlElem) {
-      return htmlElem instanceof Element && htmlElem.isConnected && htmlElem.parentElement
-   }
-
-   /** @type {undefined|Node} */
-   get vContent() {
-      const child = this.view.slot("content").child()
-      return child instanceof ViewElem ? child.htmlElem : child ? child.textNode : undefined
+      this.pos = { top:top+dtop, left:left+dleft, width:width-dleft+dright, height:height-dtop+dbottom }
    }
    /**
-    * Assigns content as child to the window frame.
-    * If content is connected a Node connected to the document
-    * it is replaced with the WindowVM.htmlElem therefore the window takes
-    * up the same space as the content and the content is inserted as child
-    * to the window.
-    * Use {@link replaceWithContent} to move the content back to DOM location
-    * where {@link htmlElem} is currently placed.
-    * @param {undefined|string|Node} content An HTML string (resulting in a single HTML node) or a single html element.
+    * @this {WindowVM}
+    * @param {{dx?:number, dy?:number}} args
     */
-   set vContent(content) {
-      const slot = this.view.slot("content")
-      if (typeof content === "string")
-         slot.html = content
-      else {
-         const needReplace = this.needReplaceContent(content)
-         if (needReplace && content instanceof HTMLElement) {
-            const pos = new ViewElem(content).initialPos()
-            content.replaceWith(this.htmlElem)
-            this.#replacedOldStyles = DOM.setStyles(content, { width:"100%", height:"100%", position:"static" })
-            this.view.setStyles({ position: pos.position })
-            this.#initWindowState()
-            this.setOptions({ left:pos.left, top:pos.top, width:pos.width, height:pos.height })
-         }
-         slot.setChildNode(content)
-      }
+   resize({dx=0, dy=0}) {
+      if (!this.resizeable) return
+      const { top, left, width, height } = this.pos
+      this.pos = this.moveable
+                  ? { top:top-dy, left:left-dx, width:width+2*dx, height:height+2*dy }
+                  : { width:width+2*dx, height:height+2*dy }
    }
-
-   get useVisiblePos() {
-      return this.vWindowState === WindowVM.VISIBLE || this.vWindowState === WindowVM.HIDDEN
-   }
-   setPosAttr(name, value) {
-      value = this.roundPosValue(value)
-      if (isFinite(value)) {
-         if (this.useVisiblePos)
-            this.#visiblePos[name] = value+"px"
-         if (this.#transitionPos)
-            this.#transitionPos[name] = value+"px"
-         else
-            super.setPosAttr(name, value)
-      }
-   }
-
-   get visiblePos() {
-      const pos = this.#visiblePos
-      return { width:parseFloat(pos.width), height:parseFloat(pos.height), top:parseFloat(pos.top), left:parseFloat(pos.left) }
-   }
-   /**
-    * Sets new position of visible (or hidden) window.
-    * Setting flag transition starts a transition to animate the window movement to the new position if it is visible.
-    * @param {{width:number,height:number,top:number,left:number,transition?:boolean}} pos The new position in css pixel coordinates.
-    */
-   set visiblePos(pos) {
-      for (const name of ["width","height","top","left"]) {
-         const value = this.roundPosValue(pos[name])
-         if (isFinite(value))
-            this.#visiblePos[name] = value+"px"
-      }
-      if (this.useVisiblePos) {
-         const useRunningTransition = (this.#transitionPos && pos.transition)
-         this.#transitionPos = this.#visiblePos
-         if (!useRunningTransition)
-            this.#startTransition(pos.transition)
-      }
-   }
-
-   #startTransition(useTransition, onTransitionEnd) {
-      const htmlElem = this.htmlElem
-      if (this.#transitionPos && useTransition) {
-         this.#oldTransitionStyle ??= DOM.setStyles(htmlElem, WindowVM.TRANSITION_STYLE)
-         DOM.setStyles(htmlElem, this.#transitionPos)
-         new TransitionController(htmlElem, (e) => {
-            if (! e.isTransition) {
-               this.disableTransition()
-               onTransitionEnd?.()
-            }
-         }).ensureInTransitionElseEnd()
-      }
-      else {
-         this.disableTransition()
-         this.#transitionPos && DOM.setStyles(htmlElem, this.#transitionPos)
-         onTransitionEnd?.()
-      }
-      this.#transitionPos = undefined
-   }
-   disableTransition() {
-      if (this.#oldTransitionStyle) {
-         DOM.setStyles(this.htmlElem, this.#oldTransitionStyle)
-         this.#oldTransitionStyle = undefined
-         TransitionController.endTransition(this.htmlElem)
-      }
-   }
-   isTransition() {
-      return this.#transitionPos || this.#oldTransitionStyle || TransitionController.isTransition(this.htmlElem)
-   }
-   /**
-    * Allows to wait for end of transition.
-    * Notification is done either by callback or by waiting for the returned promise.
-    * If no transition is running notification is done immediately.
-    * @param {()=>void} [onTransitionEnd] Optional callback called after transition ends.
-    * @returns {Promise<boolean>} Resolved after transition ends with flag set to true if transition was running at the time this function was called.
-    */
-   onceOnTransitionEnd(onTransitionEnd) {
-      const promiseHolder = new PromiseHolder()
-      if (this.isTransition())
-         new TransitionController(this.htmlElem, (e) => {
-            if (!e.isTransition) {
-               promiseHolder.resolve(true)
-               onTransitionEnd?.()
-            }
-         })
-      else {
-         promiseHolder.resolve(false)
-         onTransitionEnd?.()
-      }
-      return promiseHolder.promise
-   }
-
-   close() {
-      this.vWindowState = WindowVM.CLOSED
-   }
-   toggleMaximize() {
-      this.vWindowState === WindowVM.MAXIMIZED
-      ? this.show()
-      : this.maximize()
-   }
-   maximize() {
-      this.vWindowState = WindowVM.MAXIMIZED
-   }
-   minimize() {
-      this.vWindowState = WindowVM.MINIMIZED
-   }
-   show() {
-      this.vWindowState = WindowVM.VISIBLE
-   }
-   hide() {
-      this.vWindowState = WindowVM.HIDDEN
-   }
-   get hidden() {
-      return super.hidden
-   }
-   set hidden(isHidden) {
-      if (Boolean(isHidden) !== (this.vWindowState === WindowVM.HIDDEN)) {
-         this.vWindowState = isHidden ? WindowVM.HIDDEN : this.#windowStateBefore
-      }
-   }
-   get vWindowState() {
-      return this.#windowState
-   }
-   set vWindowState(state) {
-      const oldState = this.#windowState
-      if (oldState === state)
-         return
-      if (oldState === WindowVM.CLOSED) {
-         this.connectedTo = this.closedState?.connectedTo
-         delete this.closedState
-      }
-      this.connected = true
-      const htmlElem = this.htmlElem
-      if (state === WindowVM.VISIBLE) {
-         super.hidden = false
-         this.#transitionPos = this.#visiblePos
-         this.onceOnViewUpdate(1, () => {  // switching display from "none" (hidden true->false) needs one frame waiting to make transitions work
-            if (this.#windowState === WindowVM.VISIBLE) {
-               this.#startTransition(true, () => {
-                  if (this.#windowState === WindowVM.VISIBLE)
-                     htmlElem.scrollIntoView?.({block:"nearest"})
-               })
-            }
-         })
-      }
-      else if (state === WindowVM.HIDDEN) {
-         super.hidden = true
-         this.#transitionPos = undefined
-      }
-      else if (state === WindowVM.MINIMIZED) {
-         super.hidden = false
-         const cstyle = getComputedStyle(htmlElem)
-         const pos = htmlElem.getBoundingClientRect()
-         const top = window.innerHeight-32, left = 5
-         this.#transitionPos = { width:"32px", height:"16px", top:(top-pos.top+parseFloat(cstyle.top))+"px", left:(left-pos.left+parseFloat(cstyle.left))+"px" }
-         super.hidden = (oldState === WindowVM.HIDDEN)
-         this.onceOnViewUpdate(1, () => {
-            if (this.#windowState === WindowVM.MINIMIZED) {
-               this.#startTransition(true, () => {
-                  if (this.#windowState === WindowVM.MINIMIZED)
-                     super.hidden = true
-               })
-            }
-         })
-      }
-      else if (state === WindowVM.MAXIMIZED) {
-         super.hidden = false
-         const pos = htmlElem.getBoundingClientRect()
-         const cstyle = getComputedStyle(htmlElem)
-         this.#transitionPos = { width:"100vw", height:"100vh", top:(parseFloat(cstyle.top)-pos.top)+"px", left:(parseFloat(cstyle.left)-pos.left)+"px" }
-         this.onceOnViewUpdate(1, () => {
-            if (this.#windowState === WindowVM.MAXIMIZED) {
-               this.#startTransition(true, () => {
-                  if (this.#windowState === WindowVM.MAXIMIZED)
-                     htmlElem.scrollIntoView?.({block:"start"})
-               })
-            }
-         })
-      }
-      else if (state == WindowVM.CLOSED) {
-         this.closedState = { connectedTo: this.connectedTo }
-         this.connected = false
-      }
-      else
-         VMX.throwErrorObject(this, `Unsupported window state: ${state}`)
-      this.view.switchClass(state == WindowVM.MAXIMIZED, this.config("maximizedClass"))
-      if (oldState === WindowVM.HIDDEN && this.#transitionPos)
-         DOM.setStyles(htmlElem, this.#transitionPos)
-      this.#windowStateBefore = this.#windowState
-      this.#windowState = state
-      this.notifyPropertyListener("vWindowState",state)
-   }
-}
-
-class WindowStackVM extends ViewModel {
-   #onUpdate = this.onUpdate.bind(this)
-   /** @type {Map<WindowVM, { windowVM: WindowVM, vWindowState:string, minimized:null|{htmlElem:HTMLElement, controllers:(false|ViewController)[]} }>} */
-   #windowVMs = new Map()
-   /** @type {HTMLElement} */
-   #template
-   /**
-    * @param {HTMLElement} htmlElem
-    */
-   constructor(htmlElem) {
-      super(htmlElem)
-   }
-   /**
-    * @param {{minimizedTemplate:undefined|null|HTMLElement, [o: string]: any}} options
-    */
-   init({ minimizedTemplate, ...initOptions }) {
-      super.init(initOptions)
-      this.setMinimizedTemplate(minimizedTemplate)
-   }
-   /**
-    * @returns {HTMLElement}
-    */
-   defaultTemplate() {
-      const htmlElem = DOM.newElement("<div data-slot='title' style='cursor:pointer; padding:2px; border:2px black solid'></div>")
-      if (htmlElem instanceof HTMLElement)
-         return htmlElem
-      return VMX.throwErrorObject(this, "Default template is no HTMLElement")
-   }
-   /**
-    * @param {undefined|null|HTMLElement} htmlElem
-    */
-   setMinimizedTemplate(htmlElem) {
-      this.#template = htmlElem ?? this.defaultTemplate()
-   }
-   /**
-    * @param {WindowVM} windowVM
-    * @returns {{windowVM: WindowVM, vWindowState:string, minimized:null|{htmlElem:HTMLElement, controllers:(false|ViewController)[]}}}
-    */
-   getState(windowVM) {
-      const state = this.#windowVMs.get(windowVM)
-      return state ?? VMX.throwErrorObject(this, "received update event for unregistered Window-View-Model.")
-   }
-   /**
-    * @param {{windowVM: WindowVM, vWindowState:string, minimized:null|{htmlElem:HTMLElement, controllers:(false|ViewController)[]}}} state
-    * @param {WindowVM} windowVM
-    */
-   addMinimized(state, windowVM) {
-      if(! state.minimized) {
-         const elem = new ViewElem(this.#template).clone()
-         const htmlElem = elem.htmlElem
-         elem.slot("title").copyFrom(windowVM.view.slot("title"))
-         const controllers = [
-            elem.hasSlot("close") && new ClickController(elem.slot("close").htmlElem, (e) => {
-               windowVM.vWindowState = WindowVM.CLOSED
-            }),
-            new ClickController(elem.slot("title").htmlElem, (e) => {
-               this.resetWindowState(state, windowVM)
-            }),
-         ]
-         this.htmlElem.append(htmlElem)
-         state.minimized = { htmlElem, controllers }
-      }
-   }
-   /**
-    * @param {{windowVM: WindowVM, vWindowState:string, minimized:null|{htmlElem:HTMLElement, controllers:(false|ViewController)[]}}} state
-    * @param {WindowVM} windowVM
-    */
-   removeMinimized(state, windowVM) {
-      const minimized = state.minimized
-      if (minimized) {
-         minimized.htmlElem.remove()
-         minimized.controllers.forEach( cntrl => { if (cntrl instanceof ViewController) cntrl.free() })
-         state.minimized = null
-      }
-      state.vWindowState = windowVM.vWindowState
-   }
-   /**
-    * @param {{windowVM: WindowVM, vWindowState:string, minimized:null|{htmlElem:HTMLElement, controllers:(false|ViewController)[]}}} state
-    * @param {WindowVM} windowVM
-    */
-   resetWindowState(state, windowVM) {
-      windowVM.vWindowState = state.vWindowState
-   }
-   /**
-    * @param {WindowVM} windowVM
-    */
-   unregister(windowVM) {
-      const state = this.getState(windowVM)
-      this.removeMinimized(state, windowVM)
-      this.#windowVMs.delete(windowVM)
-      windowVM.removePropertyListener("vWindowState", this.#onUpdate)
-   }
-   register(windowVM) {
-      if (!this.#windowVMs.has(windowVM)) {
-         this.#windowVMs.set(windowVM, { windowVM, vWindowState:windowVM.vWindowState, minimized:null })
-         windowVM.addPropertyListener("vWindowState", this.#onUpdate)
-      }
-   }
-
-   onUpdate({vm: windowVM, value: vWindowState}) {
-      const state = this.getState(windowVM)
-      if (vWindowState === WindowVM.MINIMIZED || vWindowState === WindowVM.HIDDEN)
-         this.addMinimized(state, windowVM)
-      else if (vWindowState === WindowVM.CLOSED)
-         this.unregister(windowVM)
-      else if (vWindowState === WindowVM.MAXIMIZED || vWindowState === WindowVM.VISIBLE)
-         this.removeMinimized(state, windowVM)
-      else
-         VMX.throwErrorObject(this, `Unhandled WindowVM.State »${String(vWindowState)}«.`)
-   }
-
 }
 
 // XXXXX
+
+class WindowManagerVM extends ViewModel {
+   /** @type {[ViewComment,View][]} */
+   #closed = []
+   /** @type {WindowVM[]} */
+   #windowVMs = []
+   /** @type {Set<Number>} */
+   #winIDs = new Set()
+
+   /////////////////////////
+   // Overwrite ViewModel //
+   /////////////////////////
+   /** */
+   constructor() {
+      super()
+      VMX.vmObserver.addPropertyObserver(WindowVM,"windowState",this)
+   }
+   /** @param {()=>void} [onFree] */
+   free(onFree) {
+      super.free(() => {
+         onFree?.()
+         VMX.vmObserver.removePropertyObserver(WindowVM,"windowState",this)
+      })
+   }
+   /** @param {WindowManagerView} view */
+   connectView(view) { return super.connectView(view,{}) }
+
+   ///////////////////////
+   // ViewModelObserver //
+   ///////////////////////
+
+   /** @return {ViewComment[]} */
+   closedPlaceHolders() { return this.#closed.map(([placeHolder])=>placeHolder) }
+
+   /** @type {VMPropertyUpdateFunction} */
+   onVMUpdate(notification) {
+      const windowVM = notification.from
+      if (!(windowVM instanceof WindowVM)) return
+      if (notification.property === "windowState") {
+         if (notification.value === WindowVM.MINIMIZED)
+            this.addWindow(windowVM)
+         else {
+            this.removeWindow(windowVM)
+            if (notification.value === WindowVM.CLOSED)
+               this.storeClosed(windowVM)
+         }
+      }
+   }
+
+   ////////////
+   // Action //
+   ////////////
+
+   /** @typedef {{closeable:boolean, index:number, title:string, winID:number}} WindowManagerVM_addWindowNotification */
+   /** @typedef {{index:number, winID:number}} WindowManagerVM_removeWindowNotification */
+
+   /** @param {WindowVM} windowVM */
+   storeClosed(windowVM) {
+      if (windowVM.windowState !== WindowVM.CLOSED) return
+      if (windowVM.view.connected) {
+         const placeHolder = ViewComment.fromText(`Closed Window * ${windowVM.getLogID().name(windowVM)}`)
+         windowVM.view.replaceWith(placeHolder)
+         this.#closed.push([placeHolder,windowVM.view])
+      }
+   }
+
+   restoreClosed() {
+      const closed = this.#closed.shift()
+      if (closed) {
+         const [ placeHolder, view ] = closed
+         placeHolder.replaceWith(view.viewElem)
+         view.init({show:true})
+      }
+   }
+
+   /** @param {WindowVM} windowVM */
+   removeClosed(windowVM) {
+      const i = this.#closed.findIndex(([ placeHolder, view ]) => view.viewModel === windowVM )
+      if (i === -1) return
+      const [ placeHolder, view ] = this.#closed[i]
+      placeHolder.disconnect()
+      this.#closed.splice(i,1)
+   }
+
+   /** @param {WindowVM} windowVM */
+   addWindow(windowVM) {
+      const winID = windowVM.getLogID().id
+      if (this.#winIDs.has(winID)) return
+      const closeable = Boolean(windowVM.view.trySlot("close"))
+      const newIndex = this.#windowVMs.length
+      this.#winIDs.add(winID)
+      this.#windowVMs.push(windowVM)
+      /** @type {WindowManagerVM_addWindowNotification} */
+      const notification = {closeable, index:newIndex, title:windowVM.title, winID:winID}
+      this.notifyPropertyUpdate("addWindow",notification)
+   }
+
+   /** @param {WindowVM} windowVM */
+   removeWindow(windowVM) {
+      const winID = windowVM.getLogID().id
+      if (!this.#winIDs.has(winID)) return
+      this.#winIDs.delete(winID)
+      const index = this.#windowVMs.findIndex(vm => vm === windowVM)
+      if (index === -1) return
+      this.#windowVMs.splice(index,1)
+      /** @type {WindowManagerVM_removeWindowNotification} */
+      const notification = {index:index, winID:winID}
+      this.notifyPropertyUpdate("removeWindow",notification)
+   }
+
+   /** @param {number} winID */
+   closeWindow(winID) {
+      if (!this.#winIDs.has(winID)) return
+      const windowVM = this.#windowVMs.find(vm => vm.getLogID().id === winID)
+      if (!windowVM) return
+      windowVM.close()
+   }
+
+   /** @param {number} winID */
+   showWindow(winID) {
+      if (!this.#winIDs.has(winID)) return
+      const windowVM = this.#windowVMs.find(vm => vm.getLogID().id === winID)
+      if (!windowVM) return
+      windowVM.show()
+   }
+}
+
+class WindowManagerViewConfig extends ViewConfig {
+   /**
+    * @typedef WindowManagerViewConfigInitOptions
+    * @property {BasicTypeChecker} minimizedTemplate
+    */
+   /** @type {WindowManagerViewConfigInitOptions} */
+   static InitOptions = {...ViewConfig.InitOptions,
+      minimizedTemplate: BasicTypeChecker.default((value)=>value instanceof ViewElem,"ViewElem")
+   }
+}
+
+class WindowManagerView extends View {
+   /////////////////////////
+   // implement Config //
+   /////////////////////////
+   /** @return {typeof WindowManagerViewConfig} */
+   get ClassConfig() { return WindowManagerViewConfig }
+
+   /** @type {ViewElem} */
+   #template
+   /** State to reference added window templates. @type {{child:ViewElem,controllers:(false|ViewController)[]}[]} */
+   #state
+
+   ////////////////////
+   // Overwrite View //
+   ////////////////////
+   /**
+    * @param {ViewElem} viewElem
+    * @param {null|undefined|WindowManagerVM} [viewModel]
+    */
+   constructor(viewElem, viewModel) {
+      super(viewElem, viewModel ?? new WindowManagerVM())
+      if (!(this.viewModel instanceof WindowManagerVM)) return VMX.throwError(this, BasicTypeChecker.expectNameValueOfType("argument »viewModel«",viewModel,"WindowManagerVM"))
+      this.setMinimizedTemplate(null)
+      this.#state = []
+   }
+   /**
+    * @see {@link View.init}
+    * @param {{minimizedTemplate?:ViewElem}} viewOptions
+    * @return {WindowManagerView}
+    */
+   init(viewOptions) {
+      const model = this.model
+      super.init(viewOptions)
+      this.setMinimizedTemplate(viewOptions.minimizedTemplate)
+      const restoreButton = this.viewElem.query("button")
+      restoreButton && new ClickController(restoreButton, null, ()=>this.model.restoreClosed())
+      model.connectView(this)
+      return this
+   }
+   /** Returns the {@link WindowManagerVM Model} attached to view. @return {WindowManagerVM} */
+   get model() { return this._unsafe_model }
+
+   /////////////////
+   // Init Helper //
+   /////////////////
+   /** @param {null|undefined|ViewElem} [template] */
+   setMinimizedTemplate(template) { this.#template = template ?? ViewElem.fromHtml("<div style='cursor:pointer; padding:2px; border:2px black solid'><div data-slot='title'></div></div>") }
+
+   ////////////////
+   // Properties //
+   ////////////////
+   /** @param {WindowManagerVM_addWindowNotification} arg */
+   set v_addWindow({closeable, index, title, winID}) {
+      if (index > this.#state.length) return
+      const childs = this.viewElem.trySlot("childs") ?? this.viewElem
+      const child = this.#state[index]?.child ?? this.#template.clone()
+      child.slot("title").setChild(title)
+      if (index < this.#state.length)
+         this.#freeController(this.#state[index])
+      else
+         childs.appendChildren(child)
+      if (!closeable) child.slot("close").visibility = false
+      const controllers = [
+         closeable && new ClickController(child.slot("close"), null, (e) => this.model.closeWindow(winID)),
+         new ClickController(child.slot("title"), null, (e) => this.model.showWindow(winID))
+      ]
+      this.#state[index] = {child,controllers}
+   }
+
+   /** @param {WindowManagerVM_removeWindowNotification} arg */
+   set v_removeWindow({index}) {
+      if (index < this.#state.length) {
+         const state = this.#state[index]
+         this.#state.splice(index,1)
+         this.#freeController(state)
+         state.child.updateStyles(state.child.computedPosStyles())
+         state.child.setPos({height:0,transition:true})
+         state.child.onceOnTransitionEnd(()=>{ state.child.remove() })
+      }
+   }
+
+   /** @param {{controllers:(false|ViewController)[]}} state */
+   #freeController(state) { state.controllers.forEach( (controller) => { if (controller) controller.free() }) }
+}
+
 
 
    // TODO: integrate into ViewElemDocument
@@ -5942,7 +5316,7 @@ class DocumentObserver {
 */
 
 
-class DocumentView extends View2 {
+class DocumentView extends View {
 
    /** @type {number} Size of one CSS pixel to the size of one physical pixel. Or number of device's pixels used to draw a single CSS pixel. */
    devicePixelRatio
@@ -5951,42 +5325,34 @@ class DocumentView extends View2 {
    /** @type {{width:number, height:number}} Size of viewport(window) which shows the document. */
    viewport
 
-   // TODO: support update notifications <-> same as viewmodel
-   // n2mObserving twoway dataflow
+   // TODO: visualViewport
 
 }
 
 
-// TODO:
-//  ==== log message : Notify View of ViewModel updates (v2)  ====
 // ViewElemDocument <-> DocumentView <-> DocumentVM
-// !!! Model receives updates from view !!!
-//                     change --> set change
-//                     update <-- change
-// binding yyy <-converter-> xxx
 // supports different sub-models/sub-views
 
-class DocumentVM extends ViewModel2 {
+class DocumentVM extends ViewModel {
+   #keyLockStates = []
 
    constructor() {
       super()
    }
 
-   /**
-    * @param {string} action
-    * @param {null|string[][]} [subactions]
-    * @param {(args: object)=>object} [mapArgs]
-    * @returns {ViewModelAction} Bound action which calls the correct view model method.
-    */
-   bindAction(action, subactions, mapArgs) {
-      VMX.logInfoObject(this,`bindAction ${action} ${VMX.stringOf(subactions)}`)
-      switch(action) {
-         case KeyController.KEYUP: break
-         case KeyController.KEYDOWN: break
-         default: return VMX.throwErrorObject(this, `bindAction does not support action ${action}`)
+   /** @param {string} name @return {ActionLockState} */
+   getVMActionLockState(name) {
+      if (name.startsWith("key-")) {
+         const i = this.#keyLockStates.findIndex(ls => ls.name === name)
+         const lockState = i === -1 ? new ActionLockState(name,false) : this.#keyLockStates.splice(i, 1)[0]
+         if (this.#keyLockStates.length > 5)
+            this.#keyLockStates.pop()
+         this.#keyLockStates.unshift(lockState)
+         return lockState
       }
-      return new ViewModelAction(this, [[action], ...(subactions?subactions:[])], false, (args)=>mapArgs?.(args))
+      return super.getVMActionLockState(name)
    }
+
 }
 
 const VMX = new ViewModelContext()

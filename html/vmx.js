@@ -61,18 +61,8 @@ class BasicTypeChecker {
       this.validateType = validateType
       if (subtype) this.subtype = subtype
    }
-   /**
-    * @param {BasicTypeCheckerTypePredicate} typePredicate
-    * @param {string} type Name of expected type.
-    * @returns
-    */
-   static default(typePredicate, type) {
-      return new BasicTypeChecker((value,typeCheckerContext) => !typePredicate(value,typeCheckerContext) && BasicTypeChecker.expectValueOfType(value,type))
-   }
-   /**
-    * @return BasicTypeChecker
-    */
-   makeRequired() { return this.required = true, this }
+   /** @param {boolean} required @return BasicTypeChecker */
+   makeRequired(required=true) { return this.required = required, this }
    /**
     * @param {any} value
     * @param {object} typeCheckerContext
@@ -80,16 +70,16 @@ class BasicTypeChecker {
     */
    validate(value, typeCheckerContext) { return this.validateType(value,typeCheckerContext) }
    /**
+    * @param {BasicTypeCheckerTypePredicate} typePredicate
+    * @param {string} type Name of expected type.
+    * @returns {BasicTypeChecker}
+    */
+   static simple(typePredicate, type) { return new BasicTypeChecker((value,typeCheckerContext) => !typePredicate(value,typeCheckerContext) && BasicTypeChecker.expectValueOfType(value,type)) }
+   /**
     * @param {string} ofSmething Description of validation expectation.
     * @return {(name:string)=>string} Error description generator.
     */
    static expectSomething(ofSmething) { return (name)=>`Expect ${name} ${ofSmething}.` }
-   /**
-    * @param {any} value Value of validated argument.
-    * @param {string} type Name of expected type.
-    * @return {(name:string)=>string} Error description generator.
-    */
-   static expectValueOfType(value, type) { return (name)=>`Expect ${name} of type ${type} instead of ${VMX.typeof(value)}.` }
    /**
     * @param {string} name Name of argument.
     * @param {any} value Value of validated argument.
@@ -97,6 +87,12 @@ class BasicTypeChecker {
     * @return {string} Error description.
     */
    static expectNameValueOfType(name, value, type) { return this.expectValueOfType(value,type)(name) }
+   /**
+    * @param {any} value Value of validated argument.
+    * @param {string} type Name of expected type.
+    * @return {(name:string)=>string} Error description generator.
+    */
+   static expectValueOfType(value, type) { return (name)=>`Expect ${name} of type ${type} instead of ${VMX.typeof(value)}.` }
    /**
     * @return {(name:string)=>string} Error description generator.
     */
@@ -620,10 +616,10 @@ class Logger {
             this.writeLog(level, this.levelName(level), componentName, message2, isSevere ? undefined : args)
             return
          }
-         catch(except) {
+         catch(error) {
             // ignore failure to write log
             if (componentName !== undefined) {
-               console.log(this.formatError(Logger.ERROR,this,"writeLog failed",except))
+               console.log(this.formatError(Logger.ERROR,this,"writeLog failed",error))
                return
             }
             componentName = "-" + String(component) + "-"
@@ -758,7 +754,7 @@ class ViewModelContext {
     * @returns {boolean} *true* if constructor as a function serving as a constructor.
     */
    isConstructor(constructor) {
-      try { return (Reflect.construct(String,[],constructor), true) } catch(except) { return false }
+      try { return (Reflect.construct(String,[],constructor), true) } catch(error) { return false }
    }
    /**
     * @param {{constructor:{name:string}}|{LID:LogID, constructor:{name:string}}} obj
@@ -1500,7 +1496,7 @@ class ViewController {
    callAction(ce) {
       const action = this.#action
       if (!this.#muted && action && action.isStarted()) {
-         try { action.doAction(ce) } catch(except) { VMX.logException(this, "callAction failed.", except) }
+         try { action.doAction(ce) } catch(error) { VMX.logException(this, "callAction failed.", error) }
       }
    }
    /**
@@ -2569,6 +2565,9 @@ class ViewElem extends ViewNode { // implements ViewNode
    /** @type {undefined|ViewElemStylesManager} */
    #stylesManager
 
+   ////////////////////////
+   // Overwrite ViewNode //
+   ////////////////////////
    /**
     * @param {HTMLElement} htmlElem
     */
@@ -2576,9 +2575,6 @@ class ViewElem extends ViewNode { // implements ViewNode
       super()
       this.#htmlElem = ViewElem.assertHTMLElement(htmlElem)
    }
-   ////////////////////////
-   // Overwrite ViewNode //
-   ////////////////////////
    /** @return {HTMLElement} */
    get htmlNode() { return this.#htmlElem }
    ////////////////
@@ -2590,9 +2586,9 @@ class ViewElem extends ViewNode { // implements ViewNode
     * @return {"data-slot"}
     */
    get slotattr() { return "data-slot" }
-   get isStylesManager() { return this.#stylesManager !== undefined }
    get stylesManager() { return (this.#stylesManager ??= new ViewElemStylesManager(this.deleteStylesManager.bind(this))) }
    deleteStylesManager() { if (this.#stylesManager?.isFree) this.#stylesManager = undefined }
+   isStylesManager() { return this.#stylesManager !== undefined }
    ////////////
    // Create //
    ////////////
@@ -2622,6 +2618,15 @@ class ViewElem extends ViewNode { // implements ViewNode
     */
    static fromHtml(htmlString) {
       return new ViewElem(this.newHTMLElement(htmlString))
+   }
+   /**
+    * @param {string} textString The text content of a newly created HTML Text node.
+    * @return {ViewElem} Encapsulates HTML span node which contains text as its single child.
+    */
+   static fromText(textString) {
+      const div = document.createElement("div")
+      div.appendChild(document.createTextNode(textString))
+      return new ViewElem(div)
    }
    /**
     * @param {string} htmlString
@@ -3713,7 +3718,7 @@ class View { // implements ViewModelObserver
     * @return {T} A View (or derived type) which wraps the supplied HTML Text node created from the provided text string.
     */
    static fromText(textString) {
-      return new this(ViewText.fromText(textString))
+      return new this(ViewElem.fromText(textString))
    }
    /**
     * @param {HTMLElement|ViewElem} viewElem
@@ -3740,9 +3745,10 @@ class View { // implements ViewModelObserver
    /**
     * Initializes value properties.
     * @param {HTMLElement|ViewElem} viewElem
-    * @param {ViewModel} viewModel
+    * @param {null|undefined|ViewModel} [viewModel]
     */
    constructor(viewElem, viewModel) {
+      viewModel ??= new ViewModel()
       if (!(viewModel instanceof ViewModel)) return VMX.throwError(this, BasicTypeChecker.expectNameValueOfType("argument »viewModel«",viewModel,"ViewModel"))
       viewElem = viewElem instanceof HTMLElement ? new ViewElem(viewElem) : viewElem
       this.#viewElem = ViewElem.assertType(viewElem)
@@ -3768,6 +3774,8 @@ class View { // implements ViewModelObserver
       this.validateInitOptions(viewOptions)
       this.connect()
       this.#logid.init(this, this.viewElem.htmlElem)
+      if (this.constructor === View)
+         this.viewModel.connectView(this,{})
       return this
    }
    /**
@@ -3801,10 +3809,6 @@ class View { // implements ViewModelObserver
    get htmlElements() { return [ this.#viewElem.htmlElem ] }
    /** @return {boolean} True in case view is connected to the document. */
    get connected() { return this.#viewElem.connected() }
-   /** Appends view to document if not connected. On return {@link connected} returns true. */
-   connect() { this.#viewElem.connect() }
-   /** Replaces connected view with other node. On return {@link connected} is false. @param {ViewNode} viewNode */
-   replaceWith(viewNode) { this.#viewElem.replaceWith(viewNode) }
    /** @return {boolean} */
    get hidden() { return this.#viewElem.hidden }
    /** @param {boolean} hidden *true*, if view should be hidden. *false*, if be shown. */
@@ -3824,6 +3828,13 @@ class View { // implements ViewModelObserver
     * @return {undefined|ViewElem}
     */
    trySlot(slot) { return this.viewElem.trySlot(slot) }
+   ////////////
+   // update //
+   ////////////
+   /** Appends view to document if not connected. On return {@link connected} returns true. */
+   connect() { this.#viewElem.connect() }
+   /** Replaces connected view with other node. On return {@link connected} is false. @param {ViewNode} viewNode */
+   replaceWith(viewNode) { this.#viewElem.replaceWith(viewNode) }
    ///////////////////////
    // Extension Support //
    ///////////////////////
@@ -3945,10 +3956,11 @@ class ReframeViewDecorator extends ViewDecorator {
       /** @type {ReframeViewDecoratorInitOptions} */
       InitOptions: {
          content: new BasicTypeChecker( (value,typeCheckerContext) =>
-            !(value instanceof ViewElem || value === undefined) && BasicTypeChecker.expectValueOfType(value, "ViewElem")
-            || Boolean(typeCheckerContext?.reframe) && (value === undefined) && BasicTypeChecker.requiredValue()
-            || Boolean(typeCheckerContext?.reframe) && !(value instanceof ViewElem && value.connected()) && BasicTypeChecker.expectSomething("to be a ViewElem connected to the document")
-            ).makeRequired(),
+            Boolean(typeCheckerContext?.reframe) &&
+            (  (value === undefined) && BasicTypeChecker.requiredValue()
+            || !(value instanceof ViewElem) && BasicTypeChecker.expectValueOfType(value, "ViewElem")
+            || !(value.connected()) && BasicTypeChecker.expectSomething("to be a ViewElem connected to the document")
+            )).makeRequired(),
          reframe: BasicTypeChecker.booleanType
       },
    }
@@ -4037,7 +4049,7 @@ class MoveResizeViewDecorator extends ViewDecorator {
     */
    static init(view, viewModel, {moveable, resizeable}, restrictions) {
       restrictions.moveable = moveable = Boolean(moveable) && view.viewElem.moveable()
-      restrictions.resizeable = resizeable = Boolean(resizeable) && view.viewElem.moveable()
+      restrictions.resizeable = resizeable = Boolean(resizeable)
       if (moveable || resizeable) {
          return new MoveResizeViewDecorator(view, viewModel, moveable, resizeable)
       }
@@ -4233,6 +4245,10 @@ class WindowViewConfig extends ViewConfig {
       ...ReframeViewDecorator.ClassConfig.InitOptions,
       ...MoveResizeViewDecorator.ClassConfig.InitOptions,
       ...WindowControlsDecorator.ClassConfig.InitOptions,
+      content: new BasicTypeChecker( (value,typeCheckerContext) =>
+         ReframeViewDecorator.ClassConfig.InitOptions.content.validate(value,typeCheckerContext)
+         || (value !== undefined) && !(value instanceof ViewElem || value instanceof ViewText) && BasicTypeChecker.expectValueOfType(value, "ViewElem|ViewText")
+         ).makeRequired(ReframeViewDecorator.ClassConfig.InitOptions.content.required),
       top: BasicTypeChecker.numberType,
       left: BasicTypeChecker.numberType,
       width: BasicTypeChecker.numberType,
@@ -4311,7 +4327,7 @@ class WindowView extends View {
       this.decorate(MoveResizeViewDecorator, model, viewOptions, restrictions)
       this.decorate(WindowControlsDecorator, model, viewOptions, restrictions)
       restrictions.hasTitle = this.trySlot(WindowView.Slots.title) !== undefined
-      if (viewOptions.content && (viewOptions.content instanceof ViewElem || viewOptions.content instanceof ViewText))
+      if (viewOptions.content)
          this.content = viewOptions.content
       // position and title is initially taken from view if not set in options
       const pos = this.viewElem.computedPos()
@@ -4326,9 +4342,10 @@ class WindowView extends View {
          model.windowState = WindowVM.SHOWN
       if (typeof viewOptions.title === "string")
          model.title = viewOptions.title
-      else if (!model.title && this.v_title)
+      else if (restrictions.hasTitle && !model.title && this.v_title)
          model.title = this.v_title
-      model.connectView(this,restrictions)
+      if (this.constructor === WindowView)
+         model.connectView(this,restrictions)
       // == initial update ==
       this.v_title = model.title
       this.v_pos = model.pos
@@ -5207,7 +5224,7 @@ class WindowManagerViewConfig extends ViewConfig {
     */
    /** @type {WindowManagerViewConfigInitOptions} */
    static InitOptions = {...ViewConfig.InitOptions,
-      minimizedTemplate: BasicTypeChecker.default((value)=>value instanceof ViewElem,"ViewElem")
+      minimizedTemplate: BasicTypeChecker.simple((value)=>value instanceof ViewElem,"ViewElem")
    }
 }
 

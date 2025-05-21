@@ -64,21 +64,26 @@ class HTTP {
 
 class ServiceContext {
    /**
+    * @typedef DispatcherInterface
+    * @property {(sreq:ServiceRequest)=>HttpServiceInterface} dispatch
+    * @property {(sreq:ServiceRequest)=>Promise<Response>} forward
+    */
+   /**
     * @typedef SessionProviderInterface
-    * @property {(sreq:ServiceRequest, sessionType?:string)=>void} newSession
+    * @property {(service:HttpService, sessionType?:string)=>void} newSession
     */
 
    /**
+    * @param {DispatcherInterface} dispatcher
     * @param {SessionProviderInterface} sessionProvider
     */
-   constructor(sessionProvider) {
+   constructor(dispatcher, sessionProvider) {
+      this.dispatcher = dispatcher
       this.sessionProvider = sessionProvider
    }
 }
 
 class ServiceRequest {
-   /** @type {undefined|HttpSession} */
-   session
 
    /**
     * @param {string} url
@@ -88,36 +93,55 @@ class ServiceRequest {
 
    /**
     * @param {{address:string, family:"IPv4"|"IPv6", port:number}} clientIP
+    * @param {ServiceContext} context
     * @param {Request} request
-    * @param {ServiceContext} svc
+    * @param {HttpSession} [session]
+    * @param {Request} [bodyRequest]
     */
-   constructor(clientIP, request, svc) {
-      const hostport = request.headers.get("host")?.split(":")
+   constructor(clientIP, context, request, session, bodyRequest) {
+      const host = request.headers.get("host")?.split(":")
       const url = ServiceRequest.parseURL(request.url)
+      this.bodyRequest = bodyRequest ?? request
       this.clientIP = clientIP
-      this.hostname = hostport?.[0]
-      this.port = hostport?.[1]
-      this.headers = request.headers
+      this.context = context
+      this.hostname = host?.[0]
+      this.hostport = host?.[1]
       this.method = request.method
       this.pathname = decodeURIComponent(url.pathname)
+      this.reqHeaders = request.headers
       this.request = request
-      this.response = new HttpResponse()
+      this.session = session
       this.url = url
-      this.svc = svc
    }
-   get isInvalidURL() { return this.url.href.startsWith("invalid:") }
+   get bodyUsed() { return this.bodyRequest.bodyUsed }
+   get invalidURL() { return this.url.href.startsWith("invalid:") }
+   /** @param {string} name @return {null|string} */
+   reqHeader(name) { return this.reqHeaders.get(name) }
+   /** @param {Request} req */
+   reqInitOptions(req) { return { headers:req.headers, method:req.method, } }
+   //////////////////
+   // Construction //
+   //////////////////
+   /** @param {Request} [bodyRequest] @return {ServiceRequest} */
+   newBody(bodyRequest) { return new ServiceRequest(this.clientIP,this.context,this.request,this.session,bodyRequest) }
+   /** @param {string} pathname @return {ServiceRequest} */
+   newPath(pathname) { const url = this.url; url.pathname = pathname; return this.newRequest(new Request(url,this.reqInitOptions(this.request))) }
+   /** @param {Request} request @return {ServiceRequest} */
+   newRequest(request) { return new ServiceRequest(this.clientIP,this.context,request,this.session,this.bodyRequest) }
+   /** @param {HttpSession} session @return {ServiceRequest} */
+   newSession(session) { return new ServiceRequest(this.clientIP,this.context,this.request,session,this.bodyRequest) }
    /////////
    // I/O //
    /////////
    /** @return {Promise<object>} */
-   json() { return this.request.json() }
+   json() { return this.bodyRequest.json() }
    /** @return {Promise<string>} */
-   text() { return this.request.text() }
+   text() { return this.bodyRequest.text() }
    /**
     * @param {BunFile} file
     * @returns {Promise<number>} Number of written bytes
     */
-   receiveFile(file) { return Bun.write(file, this.request) }
+   receiveFile(file) { return Bun.write(file, this.bodyRequest) }
 }
 
 class HttpResponse {
@@ -187,21 +211,6 @@ class HttpResponse {
       this.#cookies.clear()
       return new Response(body, { status, headers:this.#headers })
    }
-   /**
-    * @param {ServiceRequest|Request} sreq
-    * @param {number} status
-    * @param {null|string|ReadableStream|Blob} body
-    * @returns {Response}
-    */
-   static sendError(sreq, status, body) {
-      const response = new HttpResponse()
-      const req = sreq instanceof ServiceRequest ? sreq.request : sreq
-      response.setHeader("Access-Control-Allow-Methods", req.headers.get("Access-Control-Request-Method") ?? req.method)
-      response.setHeader("Access-Control-Allow-Origin", req.headers.get("origin") ?? "")
-      response.setHeader("Access-Control-Allow-Headers", req.headers.get("access-control-request-headers") ?? "")
-      response.setHeader("Access-Control-Allow-Credentials", "true")
-      return response.sendStatus(status, body)
-   }
    /////////
    // I/O //
    /////////
@@ -213,6 +222,17 @@ class HttpResponse {
     */
    sendFile(file, contentType) {
       this.setContentType(contentType ?? file.type)
+      return this.sendOK(file)
+   }
+   /**
+    * @param {string} filename
+    * @param {BunFile} file
+    * @param {string} [contentType]
+    * @return {Response}
+    */
+   sendFileForDownload(filename, file, contentType) {
+      this.setContentType(contentType ?? file.type)
+      this.setHeader("content-disposition","attachment; filename*=UTF-8''"+encodeURIComponent(filename))
       return this.sendOK(file)
    }
 }
@@ -234,12 +254,12 @@ class HttpCookie {
    // domain=null
 
    /**
-    * @param {Request} request
+    * @param {Headers} headers
     * @param {string} name
     * @returns {null|string} Value of cookie.
     */
-   static fromRequest(request, name) {
-      const reqCookie = request.headers.get("cookie")
+   static fromHeaders(headers, name) {
+      const reqCookie = headers.get("cookie")
       if (reqCookie) {
          const nameEq = name+"="
          const start = reqCookie.startsWith(nameEq) ? 0 : reqCookie.indexOf("; "+nameEq)+2
@@ -330,14 +350,19 @@ class HttpSessions {
 
    /**
     * @param {string} id
+    * @param {number} maxage
     * @return {HttpCookie}
     */
-   static newSessionCookie(id) { return new HttpCookie("HTTP_SESSION_ID",id) }
+   static newSessionCookie(id, maxage) {
+      const sessionCookie = new HttpCookie("HTTP_SESSION_ID",id)
+      sessionCookie.setMaxAge(maxage)
+      return sessionCookie
+   }
    /**
-    * @param {Request} request
+    * @param {Headers} headers
     * @return {null|string}
     */
-   static sessionIDFromRequest(request) { return HttpCookie.fromRequest(request,"HTTP_SESSION_ID") }
+   static sessionIDFromRequest(headers) { return HttpCookie.fromHeaders(headers,"HTTP_SESSION_ID") }
    /** @return {string} */
    static generateSessionID() { return crypto.randomUUID().replaceAll("-","").toUpperCase() }
 
@@ -349,40 +374,42 @@ class HttpSessions {
    // Session Management //
    ////////////////////////
    /**
-    * @param {ServiceRequest} sreq
+    * @param {Headers} headers
+    * @return {undefined|HttpSession}
     */
-   assignSessionFromRequest(sreq) {
-      const id = HttpSessions.sessionIDFromRequest(sreq.request)
+   sessionFromHeaders(headers) {
+      const id = HttpSessions.sessionIDFromRequest(headers)
       if (id) {
          const session = this.sessions.get(id)
          if (session) {
-            sreq.session = session
-            if (session.isExpired) this.expireSession(sreq)
+            if (session.isExpired)
+               this.#expireSession(session)
+            else
+               return session
          }
       }
    }
    /**
-    * @param {ServiceRequest} sreq
+    * @param {HttpService} service
     * @param {string} [sessionType]
     */
-   newSession(sreq, sessionType) {
+   newSession(service, sessionType) {
       const sessionID = HttpSessions.generateSessionID()
-      const sessionCookie = HttpSessions.newSessionCookie(sessionID)
+      const sessionCookie = HttpSessions.newSessionCookie(sessionID, this.maxage)
       const session = new HttpSession(sessionID, this.maxage, sessionType)
       this.sessions.set(sessionID, session)
       session.addFreeListener(this.onCleanupSession)
-      sessionCookie.setMaxAge(this.maxage)
-      sreq.response.setCookie(sessionCookie)
-      sreq.session = session
+      service.setSession(session,sessionCookie)
    }
    /**
-    * @param {ServiceRequest} sreq
+    * @param {HttpService} service
     */
-   expireSession(sreq) {
-      const session = sreq.session
+   expireSession(service) {
+      const session = service.session
       if (session) {
+         const sessionCookie = HttpSessions.newSessionCookie("", 0)
          this.#expireSession(session)
-         sreq.session = undefined
+         service.clearSession(sessionCookie)
       }
    }
    freeExpiredSessions() {
@@ -483,18 +510,17 @@ class HttpSession {
    setAttribute(name, value) { this.#attributes[name] = value }
 }
 
-class HttpServiceInterface
-{
+class HttpServiceInterface {
    /** @param {ServiceRequest} sreq */
    constructor(sreq) {
+      this.context = sreq.context
       this.request = sreq
       this.response = new HttpResponse()
    }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async serve(sreq) { return HttpResponse.sendError(sreq,HTTP.NOT_IMPLEMENTED,"HttpServiceInterface not implemented") }
+   async serve() { return ErrorHttpService.sendError(this.request,HTTP.NOT_IMPLEMENTED,"HttpServiceInterface not implemented") }
 }
 
 class ErrorHttpService {
@@ -503,6 +529,7 @@ class ErrorHttpService {
     * @param {boolean} [enableCORS]
     */
    constructor(sreq, enableCORS=true) {
+      this.context = sreq.context
       this.request = sreq
       this.response = new HttpResponse()
       /** @type {number} */
@@ -523,19 +550,18 @@ class ErrorHttpService {
    enableCrossOriginResourceSharing()
    {
       const response = this.response, sreq = this.request
-      response.setHeader("Access-Control-Allow-Methods", sreq.headers.get("Access-Control-Request-Method") ?? sreq.method)
-      response.setHeader("Access-Control-Allow-Origin", sreq.headers.get("origin") ?? "")
-      response.setHeader("Access-Control-Allow-Headers", sreq.headers.get("access-control-request-headers") ?? "")
+      response.setHeader("Access-Control-Allow-Methods", sreq.reqHeader("Access-Control-Request-Method") ?? sreq.method)
+      response.setHeader("Access-Control-Allow-Origin", sreq.reqHeader("origin") ?? "")
+      response.setHeader("Access-Control-Allow-Headers", sreq.reqHeader("access-control-request-headers") ?? "")
       response.setHeader("Access-Control-Allow-Credentials", "true")
    }
    ////////////////////////////////////
    // Implement HttpServiceInterface //
    ////////////////////////////////////
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async serve(sreq) {
+   async serve() {
       return this.response.sendStatus(this.status,this.error)
    }
    ////////////////////////////
@@ -592,20 +618,22 @@ class HttpService {
     */
    constructor(sreq) {
       this.#request = sreq
-      this.#response = sreq.response
+      this.#response = new HttpResponse()
    }
    /**
     * @param {string} name
     * @returns {null|string}
     */
-   cookie(name) { return HttpCookie.fromRequest(this.origrequest,name) }
+   cookie(name) { return HttpCookie.fromHeaders(this.reqHeaders,name) }
+   get context() { return this.#request.context }
    get directory() { return this.pathname.substring(0,this.pathname.lastIndexOf("/")+1) }
-   get headers() { return this.#request.headers }
    get method() { return this.#request.method }
    get pathname() { return this.#request.pathname }
+   /** @param {string} name @return {null|string} */
+   reqHeader(name) { return this.#request.reqHeaders.get(name) }
+   get reqHeaders() { return this.#request.reqHeaders }
    get request() { return this.#request }
    get response() { return this.#response }
-   get origrequest() { return this.#request.request }
    get session() { return this.#request.session }
    get url() { return this.#request.url }
    //////////////
@@ -617,21 +645,30 @@ class HttpService {
    setHeader(name, value) { value ? this.#response.setHeader(name, value) : this.#response.deleteHeader(name) }
    /** @param {string} name @param {string} value */
    appendHeader(name, value) { this.#response.appendHeader(name, value) }
+   /** @param {HttpCookie} sessionCookie */
+   clearSession(sessionCookie) {
+      this.#request.session = undefined
+      this.response.setCookie(sessionCookie)
+   }
+   /** @param {HttpSession} session @param {HttpCookie} sessionCookie */
+   setSession(session, sessionCookie) {
+      this.#request.session = session
+      this.response.setCookie(sessionCookie)
+   }
    ////////////////////////////////////
    // Implement HttpServiceInterface //
    ////////////////////////////////////
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async serve(sreq) {
-      const method = sreq.method
-      const pathname = sreq.pathname
+   async serve() {
+      const method = this.method
+      const pathname = this.pathname
       if (method !== "OPTIONS") {
-         const site = this.headers.get("Sec-Fetch-Site")
+         const site = this.reqHeaders.get("Sec-Fetch-Site")
          const crossOrigin = ("none" !== site && "same-origin" !== site)
          if (crossOrigin) {
-            const options = this.accessControlOptions(sreq)
+            const options = this.accessControlOptions()
             const origin = this.allowOrigin(options)
             this.setHeader("Access-Control-Allow-Origin", origin)
             this.allowCredentials(options) && this.setHeader("Access-Control-Allow-Credentials", "true")
@@ -641,23 +678,22 @@ class HttpService {
          }
       }
       switch(method) {
-         case "GET": return this.doGet(sreq)
-         case "HEAD": return this.doHead(sreq)
-         case "OPTIONS": return this.doOptions(sreq)
-         case "POST": return this.doPost(sreq)
-         case "PUT": return this.doPut(sreq)
-         default: return this.doHttpMethod(sreq)
+         case "GET": return this.doGet()
+         case "HEAD": return this.doHead()
+         case "OPTIONS": return this.doOptions()
+         case "POST": return this.doPost()
+         case "PUT": return this.doPut()
+         default: return this.doHttpMethod()
       }
    }
    //////////////////
    // Cors Support //
    //////////////////
    /**
-    * @typedef {{request:ServiceRequest,acrMethod:null|string,origin:null|string,acrHeaders:null|string}} AllowOptions Type of parameter used in all allow<Name> methods.
-    * @param {ServiceRequest} sreq
+    * @typedef {{acrMethod:null|string,origin:null|string,acrHeaders:null|string}} AllowOptions Type of parameter used in all allow<Name> methods.
     * @returns {AllowOptions} {@link AllowOptions}
     */
-   accessControlOptions(sreq) { return { request:sreq, acrMethod:sreq.headers.get("access-control-request-method"), origin:sreq.headers.get("origin"), acrHeaders:sreq.headers.get("access-control-request-headers") } }
+   accessControlOptions() { return { acrMethod:this.reqHeader("access-control-request-method"), origin:this.reqHeader("origin"), acrHeaders:this.reqHeader("access-control-request-headers") } }
    /** @param {AllowOptions} options @returns {string} */
    allowMethods(options) { return "DELETE,GET,HEAD,OPTIONS,POST,PUT" /*"":no methods*/}
    /** @param {AllowOptions} options @returns {null|string} */
@@ -670,11 +706,10 @@ class HttpService {
    // Request Methods //
    /////////////////////
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doOptions(sreq) {
-      const options = this.accessControlOptions(sreq)
+   async doOptions() {
+      const options = this.accessControlOptions()
       if (options.acrMethod) {
          this.setHeader("Access-Control-Allow-Methods", this.allowMethods(options))
          this.setHeader("Access-Control-Allow-Origin", this.allowOrigin(options))
@@ -687,30 +722,25 @@ class HttpService {
       return this.response.sendNoContent()
    }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doGet(sreq) { return ErrorHttpService.sendMethodNotAllowed(sreq) }
+   async doGet() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doHead(sreq) { return ErrorHttpService.sendMethodNotAllowed(sreq) }
+   async doHead() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doPost(sreq) { return ErrorHttpService.sendMethodNotAllowed(sreq) }
+   async doPost() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doPut(sreq) { return ErrorHttpService.sendMethodNotAllowed(sreq) }
+   async doPut() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doHttpMethod(sreq) { return ErrorHttpService.sendMethodNotAllowed(sreq) }
+   async doHttpMethod() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
 }
 
 
@@ -811,7 +841,7 @@ class HttpServer {
    #port
    #serviceDispatcher
    #sessions
-   #svc
+   #context
    #expiredSessionTimeout
 
    /**
@@ -825,9 +855,12 @@ class HttpServer {
       this.#port = port
       this.#serviceDispatcher = serviceDispatcher
       this.#sessions = new HttpSessions(this.cleanupSession.bind(this))
-      this.#svc = new ServiceContext({
-         newSession: (sreq,sessionType) => {
-            this.#sessions.newSession(sreq,sessionType)
+      this.#context = new ServiceContext({
+         dispatch: (sreq) => { return this.#serviceDispatcher.dispatch(sreq) },
+         forward: async (sreq) => { return this.#serviceDispatcher.dispatch(sreq).serve().catch(e => this.sendInternalServerError(sreq,e)) }
+      }, {
+         newSession: (service,sessionType) => {
+            this.#sessions.newSession(service,sessionType)
          }
       })
       this.freeExpiredSessions()
@@ -862,9 +895,9 @@ class HttpServer {
       console.log("> method:", sreq.method)
       console.log("> pathname:", sreq.pathname)
       console.log("> url:", sreq.url.href)
-      console.log("> headers:", sreq.headers)
+      console.log("> headers:", sreq.reqHeaders)
       console.log("> exception:", e)
-      return HttpResponse.sendError(sreq,HTTP.INTERNAL_SERVER_ERROR,"Service failed.")
+      return ErrorHttpService.sendError(sreq,HTTP.INTERNAL_SERVER_ERROR,"Service failed.")
    }
 
    /**
@@ -874,19 +907,19 @@ class HttpServer {
     */
    async serve(req, server) {
       const clientIP = server.requestIP(req)
-      const sreq = new ServiceRequest(clientIP,req,this.#svc)
-      if (sreq.isInvalidURL) {
+      const session = this.#sessions.sessionFromHeaders(req.headers)
+      const sreq = new ServiceRequest(clientIP,this.#context,req,session)
+      if (sreq.invalidURL) {
          return ErrorHttpService.sendInvalidURL(sreq)
       }
-      this.#sessions.assignSessionFromRequest(sreq)
       // console.log("headers",req.headers)
       // console.log("url", req.url)
       // console.log("req", req)
       // console.log("server", server)
       try {
          const service = this.#serviceDispatcher.dispatch(sreq)
-         console.log(`client ${clientIP.address}:${clientIP.port},  origin ${req.headers.get("origin")}\n  ${req.method}${"       ".substring(0,7-req.method.length)}  ${sreq.url.pathname}`)
-         return service.serve(sreq).catch(e => this.sendInternalServerError(sreq,e))
+         console.log(`client ${clientIP.address}:${clientIP.port},  origin ${req.headers.get("origin")},\n  ${req.method}${"       ".substring(0,7-req.method.length)}  ${sreq.url.pathname}`)
+         return service.serve().catch(e => this.sendInternalServerError(sreq,e))
       }
       catch(e) {
          return this.sendInternalServerError(sreq,e)
@@ -896,11 +929,10 @@ class HttpServer {
 
 class StaticFileWebService extends HttpService {
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doGet(sreq) {
-      const pathname = sreq.pathname
+   async doGet() {
+      const pathname = this.pathname
       const filename = "."+pathname
       /** @type {BunFile} */
       const file = Bun.file(filename)
@@ -913,13 +945,30 @@ class StaticFileWebService extends HttpService {
    }
 }
 
-class UploadWebService extends HttpService {
+class ForwardUploadWebService extends HttpService {
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doPut(sreq) {
-      const pathname = sreq.pathname
+   async doPut() {
+      const pathname = this.pathname
+
+      if (pathname.startsWith("/forwarduploads")) {
+         console.log("/forwarduploads forwarded to /uploads")
+         const sreq = this.request.newPath(pathname.replace("/forwarduploads","/uploads"))
+         return this.context.dispatcher.forward(sreq)
+      }
+
+      return super.doPut()
+   }
+}
+
+class UploadWebService extends HttpService {
+   /**
+    * @returns {Promise<Response>}
+    */
+   async doPut() {
+         // TODO: 0. add dispatch path prefix to service so that service could discover its additional parameters after path prefix
+      const pathname = this.pathname
       const name = pathname.substring(9).replaceAll(/[^-_.;:?a-zA-Z0-9üöäÖÄÜß ]/g,"")
       const file = Bun.file(name)
 
@@ -940,11 +989,11 @@ class UploadWebService extends HttpService {
 
 class LoginWebService extends HttpService {
    /**
-    * @param {ServiceRequest} sreq
     * @returns {Promise<Response>}
     */
-   async doPost(sreq) {
-      const pathname = sreq.pathname
+   async doPost() {
+      const pathname = this.pathname
+      const sreq = this.request
       if (pathname !== "/login")
          return ErrorHttpService.sendNotFound(sreq)
 
@@ -952,7 +1001,7 @@ class LoginWebService extends HttpService {
       if (credentials instanceof Response)
          return credentials
       if (credentials.name === "test" && credentials.password === "test") {
-         sreq.svc.sessionProvider.newSession(sreq, LoginSessionType)
+         this.context.sessionProvider.newSession(this, LoginSessionType)
          console.log("new sessionid",sreq.session?.ID)
          return this.response.sendOK("Login succeeded.")
       }
@@ -960,7 +1009,7 @@ class LoginWebService extends HttpService {
    }
 }
 
-const authorizedServices = new HttpServicesDispatchPath(StaticFileWebService, ["/uploads",UploadWebService])
+const authorizedServices = new HttpServicesDispatchPath(StaticFileWebService, ["/forwarduploads",ForwardUploadWebService], ["/uploads",UploadWebService])
 const unauthorizedServices = new HttpServicesDispatchPath(StaticFileWebService)
 const sessionServices = new HttpServicesDispatchSessionType(unauthorizedServices, [LoginSessionType,authorizedServices])
 const services = new HttpServicesDispatchPath(sessionServices, ["/login", LoginWebService])

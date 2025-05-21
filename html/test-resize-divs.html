@@ -290,8 +290,8 @@
       let redecorationCount = 0
       function test3() {
          const content = window2.unframeContent()
-         if (content?.htmlElem !== div2)
-            throw Error("content is not div2")
+         if (content?.htmlElem !== win2content)
+            throw Error("content is not win2content")
          setTimeout( () => {
             window2.init({ content, title:"Hello 2-"+(++redecorationCount), left:20, width:540 })
          }, 800)
@@ -378,7 +378,7 @@
                mode:"cors",
                headers:{ "content-type":"application/json" },
                body:JSON.stringify({name:"test",password:"test"})
-         }).then( resp => fetch(`http://${window.location.hostname}:9090/uploads/${file.name}`, {
+         }).then( resp => fetch(`http://${window.location.hostname}:9090/forwarduploads/${file.name}`, {
                method:"PUT",
                credentials:"include",
                mode:"cors",

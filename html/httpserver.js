@@ -104,6 +104,7 @@ class ServiceRequest {
       this.bodyRequest = bodyRequest ?? request
       this.clientIP = clientIP
       this.context = context
+      this.dispatchedPath = ""
       this.hostname = host?.[0]
       this.hostport = host?.[1]
       this.method = request.method
@@ -119,6 +120,11 @@ class ServiceRequest {
    reqHeader(name) { return this.reqHeaders.get(name) }
    /** @param {Request} req */
    reqInitOptions(req) { return { headers:req.headers, method:req.method, } }
+   ////////////
+   // Update //
+   ////////////
+   /** @param {string} dispatchedPath */
+   setDispatchedPath(dispatchedPath) { this.dispatchedPath = dispatchedPath }
    //////////////////
    // Construction //
    //////////////////
@@ -141,7 +147,7 @@ class ServiceRequest {
     * @param {BunFile} file
     * @returns {Promise<number>} Number of written bytes
     */
-   receiveFile(file) { return Bun.write(file, this.bodyRequest) }
+   receiveFile(file) { return Bun.write(file,"").then(_ => Bun.write(file, this.bodyRequest)) } // Bun.write(file,"") needed to support receiving empty files (Bun-Bug)
 }
 
 class HttpResponse {
@@ -511,7 +517,9 @@ class HttpSession {
 }
 
 class HttpServiceInterface {
-   /** @param {ServiceRequest} sreq */
+   /**
+    * @param {ServiceRequest} sreq
+    */
    constructor(sreq) {
       this.context = sreq.context
       this.request = sreq
@@ -520,7 +528,7 @@ class HttpServiceInterface {
    /**
     * @returns {Promise<Response>}
     */
-   async serve() { return ErrorHttpService.sendError(this.request,HTTP.NOT_IMPLEMENTED,"HttpServiceInterface not implemented") }
+   async serve() { return ErrorHttpService.Error(this.request,HTTP.NOT_IMPLEMENTED,"HttpServiceInterface not implemented").serve() }
 }
 
 class ErrorHttpService {
@@ -547,23 +555,24 @@ class ErrorHttpService {
       this.error = error
       return this
    }
-   enableCrossOriginResourceSharing()
-   {
+   enableCrossOriginResourceSharing() {
       const response = this.response, sreq = this.request
       response.setHeader("Access-Control-Allow-Methods", sreq.reqHeader("Access-Control-Request-Method") ?? sreq.method)
       response.setHeader("Access-Control-Allow-Origin", sreq.reqHeader("origin") ?? "")
       response.setHeader("Access-Control-Allow-Headers", sreq.reqHeader("access-control-request-headers") ?? "")
       response.setHeader("Access-Control-Allow-Credentials", "true")
    }
+   /**
+    * @returns {Response}
+    */
+   send() { return this.response.sendStatus(this.status,this.error) }
    ////////////////////////////////////
    // Implement HttpServiceInterface //
    ////////////////////////////////////
    /**
     * @returns {Promise<Response>}
     */
-   async serve() {
-      return this.response.sendStatus(this.status,this.error)
-   }
+   async serve() { return this.response.sendStatus(this.status,this.error) }
    ////////////////////////////
    // Common Error Responses //
    ////////////////////////////
@@ -571,40 +580,29 @@ class ErrorHttpService {
     * @param {ServiceRequest} sreq
     * @param {number} status
     * @param {string} error
-    * @return {Response}
+    * @return {ErrorHttpService}
     */
-   static sendError(sreq, status, error) {
-      const service = new ErrorHttpService(sreq)
-      return service.response.sendStatus(status, error)
-   }
+   static Error(sreq, status, error) { return new ErrorHttpService(sreq).setStatus(status,error) }
    /**
     * @param {ServiceRequest} sreq
-    * @return {Response}
+    * @return {ErrorHttpService}
     */
-   static sendNotFound(sreq) {
-      return this.sendError(sreq,HTTP.NOT_FOUND,`Path ${sreq.pathname} could not be resolved to a resource or service.`)
-   }
+   static NotFound(sreq) { return this.Error(sreq,HTTP.NOT_FOUND,`Path ${sreq.pathname} could not be resolved to a resource or service.`) }
    /**
     * @param {ServiceRequest} sreq
-    * @return {Response}
+    * @return {ErrorHttpService}
     */
-   static sendJSONSyntaxError(sreq) {
-      return this.sendError(sreq,HTTP.UNPROCESSABLE_CONTENT,`Received JSON at path ${sreq.pathname} could not be parsed.`)
-   }
+   static JSONSyntaxError(sreq) { return this.Error(sreq,HTTP.UNPROCESSABLE_CONTENT,`Received JSON at path ${sreq.pathname} could not be parsed.`) }
    /**
     * @param {ServiceRequest} sreq
-    * @returns {Response}
+    * @return {ErrorHttpService}
     */
-   static sendMethodNotAllowed(sreq) {
-      return this.sendError(sreq,HTTP.METHOD_NOT_ALLOWED,`Method ${sreq.method} not supported for path ${sreq.pathname}.`)
-   }
+   static MethodNotAllowed(sreq) { return this.Error(sreq,HTTP.METHOD_NOT_ALLOWED,`Method ${sreq.method} not supported for path ${sreq.pathname}.`) }
    /**
     * @param {ServiceRequest} sreq
-    * @returns {Response}
+    * @return {ErrorHttpService}
     */
-   static sendInvalidURL(sreq) {
-      return this.sendError(sreq,HTTP.BAD_REQUEST,`URL is invalid.`)
-   }
+   static InvalidURL(sreq) { return this.Error(sreq,HTTP.BAD_REQUEST,`URL is invalid.`) }
 }
 
 class HttpService {
@@ -626,6 +624,7 @@ class HttpService {
     */
    cookie(name) { return HttpCookie.fromHeaders(this.reqHeaders,name) }
    get context() { return this.#request.context }
+   get dispatchedPath() { return this.#request.dispatchedPath }
    get directory() { return this.pathname.substring(0,this.pathname.lastIndexOf("/")+1) }
    get method() { return this.#request.method }
    get pathname() { return this.#request.pathname }
@@ -724,23 +723,23 @@ class HttpService {
    /**
     * @returns {Promise<Response>}
     */
-   async doGet() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
+   async doGet() { return ErrorHttpService.MethodNotAllowed(this.request).serve() }
    /**
     * @returns {Promise<Response>}
     */
-   async doHead() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
+   async doHead() { return ErrorHttpService.MethodNotAllowed(this.request).serve() }
    /**
     * @returns {Promise<Response>}
     */
-   async doPost() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
+   async doPost() { return ErrorHttpService.MethodNotAllowed(this.request).serve() }
    /**
     * @returns {Promise<Response>}
     */
-   async doPut() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
+   async doPut() { return ErrorHttpService.MethodNotAllowed(this.request).serve() }
    /**
     * @returns {Promise<Response>}
     */
-   async doHttpMethod() { return ErrorHttpService.sendMethodNotAllowed(this.request) }
+   async doHttpMethod() { return ErrorHttpService.MethodNotAllowed(this.request).serve() }
 }
 
 
@@ -760,22 +759,28 @@ class HttpServices
 
 class HttpServicesDispatchPath extends HttpServices {
 
-   /** @type {Map<string,{service:null|(typeof HttpServiceInterface)|HttpServices}>} */
-   pathMap
-   /** @type {typeof HttpServiceInterface|HttpServices} */
-   rootService
+   /** @type {Map<string,(typeof HttpServiceInterface)|HttpServices>} */
+   dirMap
+   /** @type {Map<string,(typeof HttpServiceInterface)|HttpServices>} */
+   fileMap
 
    /**
-    * @param {typeof HttpServiceInterface|HttpServices} rootService
     * @param  {...[string,typeof HttpServiceInterface|HttpServices]} path2Service
     */
-   constructor(rootService, ...path2Service) {
+   constructor(...path2Service) {
       super()
-      this.pathMap = new Map()
-      this.rootService = rootService
+      this.dirMap = new Map()
+      this.fileMap = new Map()
       for (const [ path, service ] of path2Service) {
-         if (this.pathMap.get(path)?.service) throw Error(`HttpServiceDispatcher error: defined more than one service for path ${path}`)
-         this.pathMap.set(path, {service})
+         if (!path.startsWith("/")) throw Error(`Path »${path.substring(0,10)}${path.length>10?"...":""}« needs to start with '/'.`)
+         if (path.indexOf("//") !== -1) throw Error(`Path »${path.substring(0,10)}${path.length>10?"...":""}« contains '//'.`)
+         const isDir = path.endsWith("/");
+         const pathname = isDir ? path.substring(0,path.length-1) : path;
+         if (  this.fileMap.get(pathname) !== undefined
+            || this.dirMap.get(pathname) !== undefined)
+            throw Error(`Path »${path.substring(0,10)}${path.length>10?"...":""}« is not unique.`)
+            ;
+         isDir ? this.dirMap.set(pathname,service) : this.fileMap.set(pathname,service)
       }
    }
    ////////////////////////////
@@ -786,16 +791,23 @@ class HttpServicesDispatchPath extends HttpServices {
     * @return {HttpServiceInterface}
     */
    dispatch(sreq) {
-      let foundService = this.rootService
-      for (let path=sreq.pathname; path.length; path=path.substring(0,path.lastIndexOf("/"))) {
-         const entry = this.pathMap.get(path)
-         if (entry?.service) {
-            foundService = entry.service
-            break
+      const pathname = sreq.pathname
+      let subpath = pathname.substring(sreq.dispatchedPath.length)
+      let foundService = this.fileMap.get(subpath)
+
+      if (foundService === undefined) {
+         while (subpath.length) {
+            subpath = subpath.substring(0,subpath.lastIndexOf("/"))
+            foundService = this.dirMap.get(subpath)
+            if (foundService) break
+            if (this.fileMap.has(subpath))
+               return ErrorHttpService.NotFound(sreq)
          }
       }
+      console.log("dispatch:",Boolean(foundService),sreq.dispatchedPath+subpath)
       if (!foundService)
-         return new ErrorHttpService(sreq)
+         return ErrorHttpService.NotFound(sreq)
+      sreq.setDispatchedPath(sreq.dispatchedPath+subpath)
       if (foundService instanceof HttpServices)
          return foundService.dispatch(sreq)
       return new foundService(sreq)
@@ -897,7 +909,7 @@ class HttpServer {
       console.log("> url:", sreq.url.href)
       console.log("> headers:", sreq.reqHeaders)
       console.log("> exception:", e)
-      return ErrorHttpService.sendError(sreq,HTTP.INTERNAL_SERVER_ERROR,"Service failed.")
+      return ErrorHttpService.Error(sreq,HTTP.INTERNAL_SERVER_ERROR,"Service failed.").send()
    }
 
    /**
@@ -910,15 +922,15 @@ class HttpServer {
       const session = this.#sessions.sessionFromHeaders(req.headers)
       const sreq = new ServiceRequest(clientIP,this.#context,req,session)
       if (sreq.invalidURL) {
-         return ErrorHttpService.sendInvalidURL(sreq)
+         return ErrorHttpService.InvalidURL(sreq).serve()
       }
       // console.log("headers",req.headers)
       // console.log("url", req.url)
       // console.log("req", req)
       // console.log("server", server)
       try {
-         const service = this.#serviceDispatcher.dispatch(sreq)
          console.log(`client ${clientIP.address}:${clientIP.port},  origin ${req.headers.get("origin")},\n  ${req.method}${"       ".substring(0,7-req.method.length)}  ${sreq.url.pathname}`)
+         const service = this.#serviceDispatcher.dispatch(sreq)
          return service.serve().catch(e => this.sendInternalServerError(sreq,e))
       }
       catch(e) {
@@ -953,7 +965,6 @@ class ForwardUploadWebService extends HttpService {
       const pathname = this.pathname
 
       if (pathname.startsWith("/forwarduploads")) {
-         console.log("/forwarduploads forwarded to /uploads")
          const sreq = this.request.newPath(pathname.replace("/forwarduploads","/uploads"))
          return this.context.dispatcher.forward(sreq)
       }
@@ -967,13 +978,13 @@ class UploadWebService extends HttpService {
     * @returns {Promise<Response>}
     */
    async doPut() {
-         // TODO: 0. add dispatch path prefix to service so that service could discover its additional parameters after path prefix
       const pathname = this.pathname
-      const name = pathname.substring(9).replaceAll(/[^-_.;:?a-zA-Z0-9üöäÖÄÜß ]/g,"")
+      const nameoffset = this.dispatchedPath.length+1
+      const name = pathname.substring(nameoffset).replaceAll(/[^-_.;:?a-zA-Z0-9üöäÖÄÜß ]/g,"")
       const file = Bun.file(name)
 
       if (!name) {
-         return this.response.sendStatus(HTTP.BAD_REQUEST, pathname.length <= 9 ? `Empty file name` : `Invalid file name`)
+         return this.response.sendStatus(HTTP.BAD_REQUEST, pathname.length <= nameoffset ? `Empty file name` : `Invalid file name`)
       }
       if (await file.exists()) {
          return this.response.sendStatus(HTTP.CONFLICT, `File exists »${name}«`)
@@ -982,7 +993,7 @@ class UploadWebService extends HttpService {
       console.log("upload »"+name+"«")
       return this.request.receiveFile(file)
       .then( (/*writtenBytes*/) => this.response.sendOK(`Saved file »${name}«`))
-      .catch( (/*e*/) => file.exists().then(exists => exists && file.delete()).catch((/*e*/) => false))
+      .catch( (e) => { console.log("receiveFile failed",e); return file.exists().then(exists => exists && file.delete()).catch((/*e*/) => false) })
       .then( response => response || this.response.sendStatus(HTTP.CONFLICT, `Writing file failed »${name}«`))
    }
 }
@@ -994,24 +1005,33 @@ class LoginWebService extends HttpService {
    async doPost() {
       const pathname = this.pathname
       const sreq = this.request
-      if (pathname !== "/login")
-         return ErrorHttpService.sendNotFound(sreq)
 
-      const credentials = await sreq.json().catch((/*e*/) => ErrorHttpService.sendJSONSyntaxError(sreq))
+      const credentials = await sreq.json().catch((/*e*/) => ErrorHttpService.JSONSyntaxError(sreq).send())
       if (credentials instanceof Response)
          return credentials
       if (credentials.name === "test" && credentials.password === "test") {
          this.context.sessionProvider.newSession(this, LoginSessionType)
-         console.log("new sessionid",sreq.session?.ID)
          return this.response.sendOK("Login succeeded.")
       }
       return this.response.sendStatus(HTTP.UNAUTHORIZED,"Login failure.")
    }
 }
 
-const authorizedServices = new HttpServicesDispatchPath(StaticFileWebService, ["/forwarduploads",ForwardUploadWebService], ["/uploads",UploadWebService])
-const unauthorizedServices = new HttpServicesDispatchPath(StaticFileWebService)
+class EchoWebService extends HttpService {
+   /**
+    * @returns {Promise<Response>}
+    */
+   async doGet() {
+      const pathname = this.pathname
+      const reply = pathname.substring(this.dispatchedPath.length+(this.dispatchedPath?1:0))
+      return this.response.sendOK(`${this.dispatchedPath} echos »${reply}«`)
+   }
+}
+
+const echoServices = new HttpServicesDispatchPath(["/service1/",EchoWebService], ["/service2/",EchoWebService])
+const authorizedServices = new HttpServicesDispatchPath(["/",StaticFileWebService], ["/echo/",echoServices], ["/forwarduploads/",ForwardUploadWebService], ["/uploads/",UploadWebService])
+const unauthorizedServices = new HttpServicesDispatchPath(["/",StaticFileWebService], ["/echo/",echoServices])
 const sessionServices = new HttpServicesDispatchSessionType(unauthorizedServices, [LoginSessionType,authorizedServices])
-const services = new HttpServicesDispatchPath(sessionServices, ["/login", LoginWebService])
+const services = new HttpServicesDispatchPath(["/",sessionServices], ["/login", LoginWebService])
 const server = new HttpServer(services, "localhost" /*HttpServer.INADDR_ANY*/, 9090).run()
 console.log("Started HttpServer listening on "+server.hostname+":"+server.port)

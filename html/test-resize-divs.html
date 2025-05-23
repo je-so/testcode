@@ -168,7 +168,9 @@
 
    <code><pre style="margin-block:8px">
       # start upload server (localhost:9090)
-      > bun server.js</pre></code>
+      > bun server.js
+      # try echo service
+      > (await fetch("http://localhost:9090/echo/service1/123")).text()</pre></code>
    <form id="radios">
       <input type="radio" value="-1-" name="selection-1">
       <input type="radio" value="-2-" name="selection-1">

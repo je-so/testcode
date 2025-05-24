@@ -65,7 +65,7 @@ class HTTP {
 class ServiceContext {
    /**
     * @typedef DispatcherInterface
-    * @property {(sreq:ServiceRequest)=>HttpServiceInterface} dispatch
+    * @property {(sreq:ServiceRequest)=>undefined|HttpServiceInterface} dispatch
     * @property {(sreq:ServiceRequest)=>Promise<Response>} forward
     */
    /**
@@ -752,7 +752,7 @@ class HttpServices
     */
    /**
     * @param {ServiceRequest} sreq
-    * @return {HttpServiceInterface}
+    * @return {undefined|HttpServiceInterface}
     */
    dispatch(sreq) { throw Error("dispatch(sreq) not implemented.") }
 }
@@ -788,7 +788,7 @@ class HttpServicesDispatchPath extends HttpServices {
    ////////////////////////////
    /**
     * @param {ServiceRequest} sreq
-    * @return {HttpServiceInterface}
+    * @return {undefined|HttpServiceInterface}
     */
    dispatch(sreq) {
       const pathname = sreq.pathname
@@ -806,7 +806,7 @@ class HttpServicesDispatchPath extends HttpServices {
       }
       console.log("dispatch:",Boolean(foundService),sreq.dispatchedPath+subpath)
       if (!foundService)
-         return ErrorHttpService.NotFound(sreq)
+         return foundService
       sreq.setDispatchedPath(sreq.dispatchedPath+subpath)
       if (foundService instanceof HttpServices)
          return foundService.dispatch(sreq)
@@ -816,18 +816,14 @@ class HttpServicesDispatchPath extends HttpServices {
 
 class HttpServicesDispatchSessionType extends HttpServices {
 
-   /** @type {HttpServices} */
-   dispatchNoSession
    /** @type {Map<string,HttpServices>} */
    dispatchSessionType
 
    /**
-    * @param {HttpServices} dispatchNoSession
     * @param  {...[string,HttpServices]} sessiontypeDispatcher
     */
-   constructor(dispatchNoSession, ...sessiontypeDispatcher) {
+   constructor(...sessiontypeDispatcher) {
       super()
-      this.dispatchNoSession = dispatchNoSession
       this.dispatchSessionType = new Map(sessiontypeDispatcher)
    }
 
@@ -836,12 +832,39 @@ class HttpServicesDispatchSessionType extends HttpServices {
    ////////////////////////////
    /**
     * @param {ServiceRequest} sreq
-    * @return {HttpServiceInterface}
+    * @return {undefined|HttpServiceInterface}
     */
    dispatch(sreq) {
       const session = sreq.session
       const dispatcher = session && !session.isExpired && this.dispatchSessionType.get(session.type)
-      return (dispatcher || this.dispatchNoSession).dispatch(sreq)
+      return dispatcher ? dispatcher.dispatch(sreq) : undefined
+   }
+}
+
+class HttpServicesDispatchSequence extends HttpServices {
+   /** @type {HttpServices[]} */
+   sequence
+
+   /**
+    * @param {...HttpServices} sequence
+    */
+   constructor(...sequence) {
+      super()
+      this.sequence = sequence
+   }
+
+   ////////////////////////////
+   // Overwrite HttpServices //
+   ////////////////////////////
+   /**
+    * @param {ServiceRequest} sreq
+    * @return {undefined|HttpServiceInterface}
+    */
+   dispatch(sreq) {
+      for (const services of this.sequence) {
+         const service = services.dispatch(sreq)
+         if (service) return service
+      }
    }
 }
 
@@ -869,7 +892,7 @@ class HttpServer {
       this.#sessions = new HttpSessions(this.cleanupSession.bind(this))
       this.#context = new ServiceContext({
          dispatch: (sreq) => { return this.#serviceDispatcher.dispatch(sreq) },
-         forward: async (sreq) => { return this.#serviceDispatcher.dispatch(sreq).serve().catch(e => this.sendInternalServerError(sreq,e)) }
+         forward: async (sreq) => { return (this.#serviceDispatcher.dispatch(sreq) ?? ErrorHttpService.NotFound(sreq)).serve().catch(e => this.sendInternalServerError(sreq,e)) }
       }, {
          newSession: (service,sessionType) => {
             this.#sessions.newSession(service,sessionType)
@@ -931,7 +954,7 @@ class HttpServer {
       try {
          console.log(`client ${clientIP.address}:${clientIP.port},  origin ${req.headers.get("origin")},\n  ${req.method}${"       ".substring(0,7-req.method.length)}  ${sreq.url.pathname}`)
          const service = this.#serviceDispatcher.dispatch(sreq)
-         return service.serve().catch(e => this.sendInternalServerError(sreq,e))
+         return (service ?? ErrorHttpService.NotFound(sreq)).serve().catch(e => this.sendInternalServerError(sreq,e))
       }
       catch(e) {
          return this.sendInternalServerError(sreq,e)
@@ -1029,9 +1052,10 @@ class EchoWebService extends HttpService {
 }
 
 const echoServices = new HttpServicesDispatchPath(["/service1/",EchoWebService], ["/service2/",EchoWebService])
-const authorizedServices = new HttpServicesDispatchPath(["/",StaticFileWebService], ["/echo/",echoServices], ["/forwarduploads/",ForwardUploadWebService], ["/uploads/",UploadWebService])
-const unauthorizedServices = new HttpServicesDispatchPath(["/",StaticFileWebService], ["/echo/",echoServices])
-const sessionServices = new HttpServicesDispatchSessionType(unauthorizedServices, [LoginSessionType,authorizedServices])
-const services = new HttpServicesDispatchPath(["/",sessionServices], ["/login", LoginWebService])
+const commonServices = new HttpServicesDispatchPath(["/",StaticFileWebService], ["/echo/",echoServices])
+const authorizedServices = new HttpServicesDispatchPath(["/forwarduploads/",ForwardUploadWebService], ["/uploads/",UploadWebService])
+const sessionServices = new HttpServicesDispatchSessionType([LoginSessionType,authorizedServices])
+const authorizationSwitch = new HttpServicesDispatchSequence(sessionServices,commonServices)
+const services = new HttpServicesDispatchPath(["/",authorizationSwitch], ["/login", LoginWebService])
 const server = new HttpServer(services, "localhost" /*HttpServer.INADDR_ANY*/, 9090).run()
 console.log("Started HttpServer listening on "+server.hostname+":"+server.port)

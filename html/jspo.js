@@ -4,6 +4,10 @@
 // First version allows to create an ES module from a JavaScript file
 // *.js -> *.mjs
 
+// !! execute as unprivileged user to prevent any accidental damage to the file system !!
+// run with
+// > bun run jspo.js
+
 import * as fs from "node:fs"
 
 const jspo = (() => {
@@ -41,22 +45,24 @@ const jspo = (() => {
     * @typedef {JSPO_CommandBuildRule_Definition|JSPO_FileBuildRule_Definition} JSPO_BuildRule_Definition
     */
 
-   /**
-    * @param {string} msg Message thrown as an Error.
-    */
-   const error = (msg) => { throw Error(msg) }
+   /** @param {string} msg Message thrown as an Error. @param {Error} [cause] */
+   const error = (msg,cause) => { throw (cause ? Error(msg,{cause}) : Error(msg) ) }
 
    class JSPO {
-      #files = new Files()
+      /** @type {Files} */
+      #files
+      /** @type {BuildPhases} */
       #predefinedPhases
+      /** @type {BuildPhases} */
       #buildPhases
       // TODO:
       // #projects
 
       constructor() {
-         const predefinedPhases = new BuildPhases({defaultPhase:"",phases:[{name:""}]})
-         this.#predefinedPhases = predefinedPhases
-         this.#buildPhases = predefinedPhases
+         const predefined = new BuildPhases({defaultPhase:"",phases:[{name:""}]})
+         this.#files = new Files()
+         this.#predefinedPhases = predefined
+         this.#buildPhases = predefined
       }
 
       /** Allows to manipulate system files. */
@@ -151,6 +157,222 @@ const jspo = (() => {
 
    }
 
+   /**
+    * Base class of every build node which depends on other nodes of same (sub-)type.
+    */
+   class DependentNode {
+      /** @type {string} */
+      path
+      /** @type {DependentNode[]} */
+      dependentOn
+
+      /** @param {string} path */
+      constructor(path) {
+         typeof path === "string" || error(`Expect argument path of type string instead of ${typeof path}.`)
+         this.path = path
+         this.dependentOn = []
+      }
+
+      /** @return {DependentNode[]} */
+      get typedDependentOn() { return this.dependentOn }
+
+      /** @param {DependentNode[]} dependentOn @param {typeof DependentNode} nodeType */
+      setDependency(dependentOn, nodeType) {
+         /** @param {any} node @param {number} i */
+         const checkType = (node,i) => { if (!(node instanceof nodeType)) error(`Expect argument dependentOn[${i}] of type ${nodeType.name} instead of ${node?.constructor?.name ?? typeof node}.`) }
+         Array.isArray(dependentOn) || error(`Expect argument dependentOn of type Array instead of ${typeof dependentOn}.`)
+         dependentOn.forEach(checkType)
+         this.dependentOn = [...new Set(dependentOn)]
+      }
+   }
+
+   /**
+    * Build step which contains a reference to a node and a flag (needUpdate) if node has to be processed.
+    * Steps which could be executed in parallel has the same level number (starting from 0 counting upwards).
+    */
+   class ProcessingStep {
+      /** @type {DependentNode} */
+      node
+      /** @type {ProcessingStep[]} */
+      reverseDependentOn
+      /** @type {number} */
+      unprocessedDependentOn
+      /** @type {number} */
+      level
+      /** @type {boolean} true, if node has to be processed cause of not beeing up-to-date. */
+      needUpdate
+
+      /** @param {DependentNode} node */
+      constructor(node) {
+         this.node = node
+         this.reverseDependentOn = []
+         this.unprocessedDependentOn = node.dependentOn.length
+         this.level = 0
+         this.needUpdate = true
+      }
+   }
+
+   /**
+    * Allows to describe a ProcessingStep with correct subtype of DependentNode.
+    * @template {DependentNode} T
+    * @typedef TProcessingStep
+    * @property {T} node
+    * @property {TProcessingStep<T>[]} reverseDependentOn
+    * @property {number} unprocessedDependentOn
+    * @property {number} level
+    * @property {boolean} needUpdate
+    */
+
+   /**
+    * Base class of all set of build nodes which depend on each other (dependency graph).
+    */
+   class DependencyGraph {
+
+      ////////////////////////////
+      // Overwritten in Subtype //
+      ////////////////////////////
+
+      /** @return {Promise<void>} */
+      async validate() { error(`validate not overwritten in subtype.`) }
+
+      /** @param {number} level @return {Promise<ProcessingStep[]>} */
+      async getProcessingSteps(level=0) { return error(`getProcessSteps not overwritten in subtype.`) }
+
+      /////////////////////////////////////////////////
+      // Default Implementations (use by delegation) //
+      /////////////////////////////////////////////////
+
+      /**
+       * @template T
+       * @param {string} path
+       * @param {Map<string,T>} nodes
+       * @param {(path:string)=>T} newNode
+       * @return {T}
+       */
+      static ensureNode(path, nodes, newNode) {
+         const node = nodes.get(path)
+         if (node) return node
+         this.validated = false
+         const node2 = newNode(path)
+         return nodes.set(path, node2), node2
+      }
+
+      /**
+       * @template {DependentNode} T
+       * @param {T} node
+       * @return {Map<string,T>}
+       */
+      static getDependentNodes(node) {
+         /** @type {Map<string,DependentNode>} */
+         const nodes = new Map([[node.path,node]])
+         /** @type {DependentNode[]} */
+         const unprocessed = [node]
+         for (;;) {
+            const nextNode = unprocessed.shift()
+            if (nextNode === undefined) break
+            const deps = nextNode.dependentOn
+            unprocessed.push(...deps)
+            deps.forEach(node => nodes.set(node.path,node))
+         }
+         /** @type {Map<string,any>} */
+         const anyNodes = nodes
+         return anyNodes
+      }
+
+
+      ////////////////
+      // Validation //
+      ////////////////
+
+      /** @param {Map<string,DependentNode>} nodes */
+      static validate(nodes) {
+         this.validateAllNodesContained(nodes)
+         this.validateNoCycles(nodes)
+      }
+
+      /** @param {Map<string,DependentNode>} nodes */
+      static validateAllNodesContained(nodes) {
+         for (const node of nodes.values()) {
+            node.dependentOn.forEach( (node, i) => {
+               if (nodes.get(node.path) !== node) {
+                  error(`Node »node.path«.dependentOn[${i}] references uncontained node ${node.path}.`)
+               }
+            })
+         }
+      }
+
+      /** @param {Map<string,DependentNode>} nodes */
+      static validateNoCycles(nodes) { this.getProcessingSteps(nodes, 0, (node)=>new ProcessingStep(node)) }
+
+      ///////////////////////////////////
+      // Layout Nodes in Process Order //
+      ///////////////////////////////////
+
+      /**
+       * @template {DependentNode} T
+       * @param {Map<string,T>} nodes
+       * @param {number} level
+       * @param {(node:DependentNode)=>TProcessingStep<T>} newProcessingStep
+       * @return {TProcessingStep<T>[]}
+       */
+      static getProcessingSteps(nodes, level, newProcessingStep) {
+         return this.orderSteps(this.wrapNodes(nodes, newProcessingStep),level)
+      }
+
+      /**
+       * @template {DependentNode} T
+       * @param {Map<string,T>} nodes
+       * @param {(node:DependentNode)=>TProcessingStep<T>} newProcessingStep
+       * @return {TProcessingStep<T>[]}
+       */
+      static wrapNodes(nodes, newProcessingStep) {
+         const steps = new Map()
+         /** @param {DependentNode} node */
+         const getStep = (node) => {
+            const step = steps.get(node)
+            if (step) return step
+            const newStep = newProcessingStep(node)
+            return steps.set(node, newStep), newStep
+         }
+         for (const node of nodes.values()) {
+            const step = getStep(node)
+            for (const source of node.dependentOn) {
+               const srcStep = getStep(source)
+               srcStep.reverseDependentOn.push(step)
+            }
+         }
+         return [...steps.values()]
+      }
+
+      /**
+       * @template {DependentNode} T
+       * @param {TProcessingStep<T>[]} steps
+       * @param {number} level
+       * @return {TProcessingStep<T>[]}
+       */
+      static orderSteps(steps, level) {
+         const orderedSteps = []
+         let nextSteps = steps.filter( step => step.unprocessedDependentOn === 0)
+         while (orderedSteps.length < steps.length) {
+            if (nextSteps.length === 0) {
+               const step = steps.find(step => step.unprocessedDependentOn>0)
+               error(`${step?.node.constructor?.name ?? "Node"} »${step?.node.path ?? "???"}« is part of a dependency cycle.`)
+            }
+            nextSteps.forEach( step => {
+               step.level = level
+               orderedSteps.push(step)
+            })
+            const nextNextSteps = []
+            for (const step of nextSteps)
+               for (const follow of step.reverseDependentOn)
+                  if (-- follow.unprocessedDependentOn <= 0)
+                     nextNextSteps.push(follow)
+            level ++, nextSteps = nextNextSteps
+         }
+         return orderedSteps
+      }
+   }
+
    class BuildRule {
       /** @type {JSPO_BuildAction} */
       action
@@ -167,106 +389,116 @@ const jspo = (() => {
       async call() { return this.action(this.arg) }
    }
 
-   class BuildNode {
-      /** @type {string} */
-      path
-      /** @type {BuildNode[]} */
-      dependsOn = []
+   class BuildNode extends DependentNode {
       /** @type {undefined|BuildRule} */
       buildRule
       /** @param {string} path */
       constructor(path) {
-         (typeof path === "string") || error(`Expect argument path of type string instead of »${typeof path}«.`)
-         this.path = path
+         super(path)
+      }
+      /** @return {BuildNode[]} */
+      get typedDependentOn() {
+         /** @type {any} */
+         const typed = this.dependentOn
+         return typed
       }
       /** @return {boolean}  */
       get isVirtual() { return error("get isVirtual not implemented in subtype.") }
-      /**
-       * @param {number} mtime mtime of other node
-       * @return {Promise<boolean>} True, if this node is modified and more recent than the given mtime.
-       */
-      async isNewer(mtime) { return error("isNewer not implemented in subtype.") }
-      /** @return {Promise<boolean>}  */
-      async existNode() { return error("existNode not implemented in subtype.") }
-      /** @return {Promise<number>}  */
+      /** @return {string}  */
+      get type() { return error("type not implemented in subtype.") }
+      /** @return {Promise<undefined|number>}  */
       async mtime() { return error("mtime not implemented in subtype.") }
+      /** @param {Set<BuildNode>} updateNodes @return {Promise<boolean>} */
+      async needsUpdate(updateNodes) { return error("needsUpdate not implemented in subtype.") }
       /** @param {BuildRule} buildRule */
-      setBuildRule(buildRule) {
-         this.buildRule && error(`Already defined build rule for build node with name »${this.path}«.`)
-         this.buildRule = buildRule
-      }
-      /** @param {BuildStateNodes} state @return {Promise<boolean>}  */
-      async needsRebuild(state) {
-         const mtime = await this.mtime()
-         const existNode = await this.existNode()
-         if (!existNode) return true
-         for (const source of this.dependsOn) {
-            if (state.needsRebuild.has(source) || (!this.isVirtual && await source.isNewer(mtime)))
-               return true
-         }
-         return false
-      }
-
-      /**
-       * @typedef BuildStateNode
-       * @property {BuildNode} node
-       * @property {boolean} rebuild
-       *
-       * @typedef BuildStateNodes
-       * @property {Set<BuildNode>} containedInSteps
-       * @property {Set<BuildNode>} inValidation
-       * @property {Set<BuildNode>} needsRebuild
-       * @property {BuildStateNode[]} steps
-       */
-
-      static newBuildStateNodes() { return { containedInSteps:new Set(), inValidation:new Set(), needsRebuild:new Set(), steps:[] } }
-
-      /** @param {BuildStateNodes} state @return {Promise<BuildStateNodes>} */
-      async buildSteps(state=BuildNode.newBuildStateNodes()) {
-         if (!state.containedInSteps.has(this)) {
-            state.inValidation.has(this) && error(`${this.constructor.name} »${this.path}« is part of a cyclic dependency.`)
-            state.inValidation.add(this)
-            for (const source of this.dependsOn) {
-               source.buildSteps(state)
-            }
-            const rebuild = await this.needsRebuild(state)
-            state.steps.push( { node:this, rebuild } )
-            if (rebuild) state.needsRebuild.add(this)
-            state.inValidation.delete(this)
-            state.containedInSteps.add(this)
-         }
-         return state
-      }
+      setBuildRule(buildRule) { this.buildRule = buildRule }
+      /** @param {BuildNode[]} dependentOn  */
+      setDependency(dependentOn) { super.setDependency(dependentOn, BuildNode) }
    }
 
    class FileNode extends BuildNode {
       get isVirtual() { return false }
-      /** @param {number} mtime @return {Promise<boolean>} */
-      async isNewer(mtime) { return mtime < await this.mtime() }
-      async existNode() { return jspo.files.exists(this.path) }
+      get type() { return "file" }
       async mtime() { return jspo.files.mtime(this.path) }
+      /** @param {Set<BuildNode>} updateNodes @return {Promise<boolean>} */
+      async needsUpdate(updateNodes) {
+         const existNode = await jspo.files.exists(this.path)
+         if (!existNode) return true
+         const mtime = await this.mtime()
+         for (const source of this.typedDependentOn)
+            if (updateNodes.has(source) || mtime < Number(await source.mtime()))
+               return true
+         return false
+      }
    }
 
    class CommandNode extends BuildNode {
       get isVirtual() { return true }
-      /** @param {number} mtime @return {Promise<boolean>} */
-      async isNewer(mtime) { return false }
-      /** Returns true (=> prevents rebuild due to non existance) if there are dependencies. */
-      async existNode() { return this.dependsOn.length != 0 }
-      async mtime() { return -1 }
+      get type() { return "command" }
+      async mtime() { return undefined }
+      /** @param {Set<BuildNode>} updateNodes @return {Promise<boolean>} */
+      async needsUpdate(updateNodes) {
+         const dependentOn = this.typedDependentOn
+         if (dependentOn.length === 0) return true
+         for (const source of dependentOn)
+            if (updateNodes.has(source))
+               return true
+         return false
+      }
    }
 
-   class BuildNodes {
-      #validated = false
+   class BuildNodes extends DependencyGraph {
       /** @type {Map<string,BuildNode>} Stores all CommandNodes/FileNodes indexed by name/path which must be build. */
       buildNodes = new Map()
+      /** @type {boolean} */
+      validated
+
+      ///////////////////////////////
+      // Overwrite DependencyGraph //
+      ///////////////////////////////
+      constructor() {
+         super()
+         this.validated = false
+      }
+
+      async validate() {
+         if (this.validated) return
+         DependencyGraph.validate(this.buildNodes)
+         for (const node of this.buildNodes.values())
+            if (!node.buildRule && (node.isVirtual || !(await Bun.file(node.path).exists())))
+               error(`Undefined build rule for ${node.type} »${node.path}«.`)
+         this.validated = true
+      }
+
+      /** @param {BuildNode} node @return {TProcessingStep<BuildNode>} */
+      static newProcessingStep(node) {
+         /** @type {any} */
+         const step = new ProcessingStep(node)
+         return step
+      }
+
+      /** @param {number} level @return {Promise<TProcessingStep<BuildNode>[]>} */
+      async getProcessingSteps(level=0) {
+         this.validate()
+         const updateNodes = new Set()
+         const steps = DependencyGraph.getProcessingSteps(this.buildNodes,level,BuildNodes.newProcessingStep)
+         for (const step of steps) {
+            if (step.needUpdate) {
+               step.needUpdate = await step.node.needsUpdate(updateNodes)
+               if (step.needUpdate) updateNodes.add(step.node)
+            }
+         }
+         return steps
+      }
+
+      ///////////
+
       /** @param {JSPO_BuildRule_Definition} build */
       addBuild(build) {
+         this.validated = false
          /** @param {string} path @param {boolean} isCommand */
          const getNode = (path, isCommand) => {
-            const node = this.buildNodes.get(path) ?? (isCommand ? new CommandNode(path) : new FileNode(path))
-            this.buildNodes.has(path) || this.buildNodes.set(path, node)
-            return node
+            return DependencyGraph.ensureNode(path, this.buildNodes, () => isCommand ? new CommandNode(path) : new FileNode(path))
          }
          /** @param {string[]} dependsOn @param {string} argName */
          const checkType = (dependsOn, argName) => {
@@ -283,52 +515,35 @@ const jspo = (() => {
          checkType(dependsOnCommands,"dependsOnCommands")
          checkType(dependsOnFiles,"dependsOnFiles")
          const buildNode = getNode(path, isCommand)
-         !buildNode.buildRule || error(`Expect argument build.${isCommand?"command":"file"} = »${path}« to be unique.`)
+         buildNode.buildRule && error(`Expect argument build.${isCommand?"command":"file"} = »${path}« to be unique.`)
          buildNode.setBuildRule(new BuildRule(action, { path, dependsOnCommands, dependsOnFiles }))
-         for (const isDependCommand of [true, false]) {
-            for (const path of (isDependCommand ? dependsOnCommands : dependsOnFiles)) {
-               const source = getNode(path, isDependCommand)
-               if (!buildNode.dependsOn.includes(source))
-                  buildNode.dependsOn.push(source)
-            }
-         }
-         this.#validated = false
+         const commandNodes = dependsOnCommands.map(path => getNode(path, true))
+         const fileNodes = dependsOnFiles.map(path => getNode(path, false))
+         buildNode.setDependency(commandNodes.concat(fileNodes))
       }
+
+      ///////////
+
       /** @return {Promise<void>} */
       async build() {
-         const steps = await this.buildSteps()
+         const steps = await this.getProcessingSteps()
          for (const step of steps) {
             const node = step.node
-            if (step.rebuild && node.buildRule) {
+            if (step.needUpdate && node.buildRule) {
                await node.buildRule.call()
                if (!node.isVirtual)
                   await jspo.files.touch(node.path)
             }
          }
       }
-      /** @return {Promise<BuildStateNode[]>} */
-      async buildSteps(state=BuildNode.newBuildStateNodes()) {
-         this.validate()
-         for (const node of this.buildNodes.values())
-            await node.buildSteps(state)
-         return state.steps
-      }
-      async validate() {
-         if (this.#validated) return
-         this.#validated = true
-         for (const node of this.buildNodes.values())
-            if (!node.buildRule && (node.isVirtual || !(await Bun.file(node.path).exists())))
-               error(`Undefined build rule for ${node.isVirtual?"command":"file"} »${node.path}«.`)
-      }
+
+      /** @return {Promise<TProcessingStep<BuildNode>[]>} */
+      async buildSteps() { return this.getProcessingSteps() }
    }
 
-   class BuildPhase {
-      /** @type {string} */
-      name
+   class BuildPhase extends DependentNode {
       /** @type {BuildNodes} */
       buildNodes
-      /** @type {BuildPhase[]} */
-      dependsOnPhases
       /** @type {undefined|BuildPhase} */
       prePhase
       /** @type {undefined|BuildPhase} */
@@ -338,113 +553,96 @@ const jspo = (() => {
        * @param {string} name
        */
       constructor(name) {
-         this.name = name
+         super(name)
          this.buildNodes = new BuildNodes()
          this.dependsOnPhases = []
       }
 
+      /** @type {string} */
+      get name() { return this.path }
+
+      /** @return {BuildPhase[]} */
+      get typedDependentOn() {
+         /** @type {any} */
+         const typed = this.dependentOn
+         return typed
+      }
+
       /**
-       * @param {BuildPhase[]} dependsOnPhases
+       * @param {BuildPhase[]} dependentOn
+       */
+      setDependency(dependentOn) { super.setDependency(dependentOn, BuildPhase) }
+
+      /**
        * @param {undefined|BuildPhase} prePhase
        * @param {undefined|BuildPhase} postPhase
+       * @return {BuildPhase}
        */
-      setDependencies(dependsOnPhases, prePhase, postPhase) {
-         this.dependsOnPhases = [...dependsOnPhases]
+      setPrePost(prePhase, postPhase) {
          this.prePhase = prePhase
          this.postPhase = postPhase
+         return this
       }
 
       /** @param {JSPO_BuildRule_Definition} build */
       addBuild(build) { this.buildNodes.addBuild(build) }
 
-      /**
-       * @typedef BuildStatePhase
-       * @property {string} calledFrom
-       * @property {BuildPhase} phase
-       * @property {boolean} skip
-       *
-       * @typedef BuildStatePhases
-       * @property {string} calledFrom
-       * @property {Set<BuildPhase>} containedInSteps
-       * @property {Set<BuildPhase>} inValidation
-       * @property {BuildStatePhase[]} phases
-       */
+      /** @param {number} level @return {Promise<TProcessingStep<BuildPhase>[]>} */
+      async getProcessingSteps(level=0) {
+         /** @type {Map<string,BuildPhase>} */
+         const phases = DependencyGraph.getDependentNodes(this)
+         /** @type {TProcessingStep<BuildPhase>[]} */
+         const steps = DependencyGraph.getProcessingSteps(phases, level, BuildPhases.newProcessingStep)
+         return steps
+      }
 
-      /** @return {BuildStatePhases} */
-      static newBuildStatePhases() { return { calledFrom:"", containedInSteps:new Set(), inValidation:new Set(), phases:[] } }
-
-      /** @return {Promise<BuildStateNode[]>} */
-      async buildSteps(state=BuildPhase.newBuildStatePhases()) {
+      /** @return {Promise<TProcessingStep<BuildNode>[]>} */
+      async buildSteps() {
          const buildSteps = []
-         this.buildPhases(state)
-         for (const step of state.phases) {
-            if (step.skip) continue
-            buildSteps.push(...(await step.phase.buildStepsOnlyThis()))
+         const level = () => (buildSteps.length ? buildSteps[buildSteps.length-1].level+1 : 0)
+         for (const step of await this.getProcessingSteps()) {
+            if (!step.needUpdate) continue
+            const prePhase = step.node.prePhase, phase = step.node, postPhase = step.node.postPhase
+            prePhase && buildSteps.push(...await prePhase.buildNodes.getProcessingSteps(level()))
+            buildSteps.push(...await phase.buildNodes.getProcessingSteps(level()))
+            postPhase && buildSteps.push(...await postPhase.buildNodes.getProcessingSteps(level()))
          }
          return buildSteps
       }
 
-      /** @return {Promise<BuildStateNode[]>} */
-      async buildStepsOnlyThis() { return this.buildNodes.buildSteps() }
-
       /** @return {Promise<void>} */
-      async build(state=BuildPhase.newBuildStatePhases()) {
-         this.buildPhases(state)
-         for (const step of state.phases) {
+      async build() {
+         for (const step of await this.getProcessingSteps()) {
             this.logStep(step)
-            if (step.skip) continue
-            await step.phase.buildOnlyThis()
+            if (!step.needUpdate) continue
+            const prePhase = step.node.prePhase, phase = step.node, postPhase = step.node.postPhase
+            prePhase && await prePhase.buildNodes.build()
+            await phase.buildNodes.build()
+            postPhase && await postPhase.buildNodes.build()
          }
       }
 
-      /** @return {Promise<void>} */
-      async buildOnlyThis() { return this.buildNodes.build() }
-
-      /** @param {BuildStatePhases} state @return {BuildStatePhases} */
-      buildPhases(state=BuildPhase.newBuildStatePhases()) {
-         if (!state.containedInSteps.has(this)) {
-            state.inValidation.has(this) && error(`Phase »${this.name}« is part of a cyclic dependency.`)
-            state.inValidation.add(this)
-            const subState = { ...state, calledFrom:state.calledFrom + "/" + this.name }
-            for (const phase of this.dependsOnPhases)
-               phase.buildPhases(subState)
-            state.inValidation.delete(this)
-            this.buildPhasesPreSelfPost(state)
-            state.containedInSteps.add(this)
-         }
-         else
-            state.phases.push({ calledFrom:state.calledFrom, phase:this, skip:true })
-         return state
-      }
-
-      /** @param {BuildStatePhases} state @return {BuildStatePhases} */
-      buildPhasesPreSelfPost(state=BuildPhase.newBuildStatePhases()) {
-         state.inValidation.has(this) && error(`Phase »${this.name}« is part of a cyclic dependency.`)
-         state.inValidation.add(this)
-         const subState = { ...state, calledFrom:state.calledFrom + "/" + this.name }
-         this.prePhase && this.prePhase.buildPhasesPreSelfPost(subState)
-         state.phases.push({ calledFrom:state.calledFrom, phase:this, skip:false })
-         this.postPhase && this.postPhase.buildPhasesPreSelfPost(subState)
-         state.inValidation.delete(this)
-         return state
-      }
-
-      /** @param {BuildStatePhase} step */
-      logStep(step) { console.log(`\nPhase ::${step.phase.name}:: ${step.skip?"skip":"build"} (${step.calledFrom?"parent ":"root"}${step.calledFrom})`) }
+      /** @param {TProcessingStep<BuildPhase>} step */
+      logStep(step) { console.log(`\nPhase ::${step.node.name}:: ${step.needUpdate?"build":"skip"}`) }
    }
 
-   class BuildPhases {
+   class BuildPhases extends DependencyGraph {
       /** @type {BuildPhase} */
       defaultPhase
-      /** @type {{}|{[name:string]:BuildPhase}} */
+      /** @type {Map<string,BuildPhase>} */
       phases
 
+      ///////////////////////////////
+      // Overwrite DependencyGraph //
+      ///////////////////////////////
       /** @param {JSPO_Phases_Definition} phasesDefinition */
       constructor(phasesDefinition) {
-         const phases = {}
-         /** @param {string} name @param {number} i */
+         super()
+         /** @type {Map<string,BuildPhase>} */
+         const phases = new Map()
+         /** @param {string} name @param {number} i @param {string} attrName @return {BuildPhase} */
          const getPhase = (name, i, attrName) => {
-            const phase = phases[String(name)]
+            const phase = phases.get(name)
             return phase ?? error(`Expect argument phasesDefinition.phases[${i}].${attrName} = »${String(name)}« to reference an existing phase.`)
          }
          if (phasesDefinition === null || typeof phasesDefinition !== "object")
@@ -457,13 +655,11 @@ const jspo = (() => {
             const name = phaseDefinition.name
             if (typeof name !== "string")
                error(`Expect argument phasesDefinition.phases[${i}].name of type string instead of »${typeof name}«.`)
-            if (phases[name])
+            if (phases.has(name))
                error(`Expect argument phasesDefinition.phases[${i}].name = »${name}« to be unique.`)
             const phase = new BuildPhase(name)
-            phases[phase.name] = phase
+            phases.set(phase.name, phase)
          })
-         if (phases[phasesDefinition.defaultPhase] === undefined)
-            error(`Expect argument phasesDefinition.defaultPhase = »${phasesDefinition.defaultPhase}« to reference an existing phase with same name.`)
          phasesDefinition.phases.forEach( (phaseDefinition, i) => {
             if (phaseDefinition.dependsOnPhases && !Array.isArray(phaseDefinition.dependsOnPhases))
                error(`Expect argument phasesDefinition.phases[${i}].dependsOnPhases of type Array instead of »${typeof phaseDefinition.dependsOnPhases}«.`)
@@ -472,16 +668,45 @@ const jspo = (() => {
             )
             const prePhase = phaseDefinition.prePhase === undefined ? undefined : getPhase(phaseDefinition.prePhase,i,"prePhase")
             const postPhase = phaseDefinition.postPhase === undefined ? undefined : getPhase(phaseDefinition.postPhase,i,"postPhase")
-            phases[phaseDefinition.name].setDependencies(dependsOnPhases,prePhase,postPhase)
+            prePhase?.name === phaseDefinition.name && error(`Expect argument phasesDefinition.phases[${i}].prePhase = »${String(prePhase.name)}« to reference not itself.`)
+            postPhase?.name === phaseDefinition.name && error(`Expect argument phasesDefinition.phases[${i}].postPhase = »${String(postPhase.name)}« to reference not itself.`)
+            getPhase(phaseDefinition.name,i,"name").setPrePost(prePhase,postPhase).setDependency(dependsOnPhases)
          })
-         const buildState = BuildPhase.newBuildStatePhases()
-         Object.values(phases).forEach( phase => phase.buildPhases(buildState))
-         this.defaultPhase = phases[phasesDefinition.defaultPhase]
+         this.defaultPhase = phases.get(phasesDefinition.defaultPhase) ?? error(`Expect argument phasesDefinition.defaultPhase = »${phasesDefinition.defaultPhase}« to reference an existing phase with same name.`)
          this.phases = phases
+         this.validateSync()
       }
 
+      /** @return {Promise<void>} */
+      async validate() { return this.validateSync() }
+
+      /** @return {void} */
+      validateSync() {
+         /** @param {undefined|BuildPhase} phase @param {BuildPhase} usedFrom */
+         const checkNoDependency = (phase, usedFrom) => {
+            if (phase && (phase.prePhase || phase.postPhase || phase.dependsOnPhases.length>0)) error(`Phase »${phase.name}« is not allowed to depend on other phases cause it is used from phase »${usedFrom.name}« as ${usedFrom.prePhase===phase?"prePhase":"postPhase"}.`)
+         }
+         DependencyGraph.validate(this.phases)
+         for (const phase of this.phases.values()) {
+            checkNoDependency(phase.prePhase, phase)
+            checkNoDependency(phase.postPhase, phase)
+         }
+      }
+
+      /** @param {BuildPhase} node @return {TProcessingStep<BuildPhase>} */
+      static newProcessingStep(node) {
+         /** @type {any} */
+         const step = new ProcessingStep(node)
+         return step
+      }
+
+      /** @param {number} level @return {Promise<TProcessingStep<BuildPhase>[]>} */
+      async getProcessingSteps(level=0) { return DependencyGraph.getProcessingSteps(this.phases, level, BuildPhases.newProcessingStep) }
+
+      ///////////////
+
       /** @param {string} name @return {BuildPhase} */
-      phase(name) { return this.phases[name] ?? error(`Phase »${String(name)}« does no exist.`) }
+      phase(name) { return this.phases.get(name) ?? error(`Phase »${String(name)}« does no exist.`) }
    }
 
    return new JSPO()
@@ -491,7 +716,7 @@ jspo.definePhases({
    defaultPhase: "build-javascript-modules",
    phases: [
       { name: "pre-clean" },
-      { name: "post-clean", },
+      { name: "post-clean" },
       { name: "xxx", prePhase: "pre-clean", postPhase: "post-clean" },
       { name: "clean", dependsOnPhases: ["xxx"], prePhase: "pre-clean", postPhase: "post-clean" },
       { name: "build-javascript-modules", dependsOnPhases: ["clean","xxx"] },
@@ -526,5 +751,3 @@ await jspo.defaultPhase.buildSteps()
    .then( steps => console.log(steps))
    .then( () => jspo.defaultPhase.build())
    .catch( e => console.log("error",e))
-
-

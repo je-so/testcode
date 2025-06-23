@@ -292,7 +292,6 @@ const jspo = (() => {
       static ensureNode(path, nodes, newNode) {
          const node = nodes.get(path)
          if (node) return node
-         this.validated = false
          const node2 = newNode(path)
          return nodes.set(path, node2), node2
       }
@@ -392,6 +391,32 @@ const jspo = (() => {
          return [...steps.values()]
       }
 
+      /** @param {TProcessingStep<DependentNode>[]} steps */
+      static cycleError(steps) {
+         /** @param {TProcessingStep<DependentNode>} step @return {undefined|TProcessingStep<DependentNode>[]} */
+         const findCycle = (step) => {
+            step.unprocessedDependentOn = -1 // -1: in-processing, 0: processed, 1..: wait-for-processing
+            for (const follow of step.reverseDependentOn) {
+               if (follow.unprocessedDependentOn === -1)
+                  return [follow]
+               if (follow.unprocessedDependentOn > 0) {
+                  const cycle = findCycle(follow)
+                  if (cycle) return [...cycle,follow]
+               }
+            }
+            step.unprocessedDependentOn = 0
+         }
+         for (const step of steps) {
+            if (step.unprocessedDependentOn > 0) {
+               const cycle = findCycle(step)
+               if (cycle) {
+                  error(`Nodes »${cycle.map(s=>s.node.constructor.name+":"+s.node.canonicalName).join()}« ${cycle.length===1?"is":"are"} part of a dependency cycle.`)
+               }
+            }
+         }
+         error(`Node »???« is part of a dependency cycle.`)
+      }
+
       /**
        * @template {DependentNode} T
        * @param {TProcessingStep<T>[]} steps
@@ -402,10 +427,8 @@ const jspo = (() => {
          const orderedSteps = []
          let nextSteps = steps.filter( step => step.unprocessedDependentOn === 0)
          while (orderedSteps.length < steps.length) {
-            if (nextSteps.length === 0) {
-               const step = steps.find(step => step.unprocessedDependentOn>0)
-               error(`${step?.node.constructor?.name ?? "Node"} »${step?.node.canonicalName ?? "???"}« is part of a dependency cycle.`)
-            }
+            if (nextSteps.length === 0)
+               this.cycleError(steps)
             nextSteps.forEach( step => {
                step.level = level
                orderedSteps.push(step)
@@ -449,10 +472,10 @@ const jspo = (() => {
       buildRule
       /** @type {string} Path of node which referenced this node the first time. */
       firstReferencedFrom
-      /** @param {string} path @param {string} [firstReferencedFrom] */
+      /** @param {string} path @param {string} firstReferencedFrom */
       constructor(path, firstReferencedFrom) {
          super(path)
-         this.firstReferencedFrom = firstReferencedFrom ?? "???"
+         this.firstReferencedFrom = firstReferencedFrom
       }
       /** @return {boolean}  */
       get isVirtual() { return error("get isVirtual not implemented in subtype.") }
@@ -506,15 +529,12 @@ const jspo = (() => {
       /** @type {Map<string,BuildNode>} Stores all CommandNodes/FileNodes indexed by name/path which must be build. */
       buildNodes = new Map()
       /** @type {boolean} */
-      validated
+      validated = false
 
       ///////////////////////////////
       // Overwrite DependencyGraph //
       ///////////////////////////////
-      constructor() {
-         super()
-         this.validated = false
-      }
+      constructor() { super() }
 
       async validate() {
          if (this.validated) return
@@ -545,6 +565,7 @@ const jspo = (() => {
 
       /** @param {JSPO_BuildRule_Definition} build */
       addBuild(build) {
+         this.validated = false
          const isCommand = "command" in build
          const path = isCommand ? build.command : build.file
          typeof path === "string" || error(`Expect argument build.${isCommand?"command":"file"} of type string instead of »${typeof path}«.`)
@@ -569,7 +590,6 @@ const jspo = (() => {
          }
          checkType(dependsOnCommands,"dependsOnCommands",true)
          checkType(dependsOnFiles,"dependsOnFiles",false)
-         this.validated = false
          const firstReferencedFrom = path
          /** @param {string} path @param {boolean} isCommand */
          const getNode = (path, isCommand) => {
@@ -651,6 +671,9 @@ const jspo = (() => {
 
       /** @type {boolean} */
       get isDefined() { return this.definedWithinProject !== undefined }
+
+      /** @return {Promise<void>} */
+      async validate() { return this.buildNodes.validate() }
 
       ///////////
 
@@ -796,6 +819,12 @@ const jspo = (() => {
          }
       }
 
+      async validate() {
+         for (const phase of this.phases.values())
+            try { await phase.validate() }
+            catch (e) { error(`Validation of »${phase.canonicalName}« failed. ${e}`) }
+      }
+
       ///////////
 
       /** @param {string} name @return {BuildPhase} */
@@ -817,11 +846,8 @@ const jspo = (() => {
       /** @param {string} name @return {BuildPhase} */
       phase(name) { return this.projectPhases.phase(name) }
 
-      /** @return {void} */
-      validate() {
-         if (this.validated) return
-         this.validated = true
-      }
+      /** @return {Promise<void>} */
+      async validate() { return this.projectPhases.validate() }
 
    }
 
@@ -830,22 +856,17 @@ const jspo = (() => {
       sharedPhases
       /** @type {Map<string,BuildProject>} */
       projects
-      /** @type {boolean} */
-      validated
 
       constructor() {
          this.sharedPhases = new SharedPhases(this)
          this.projects = new Map()
-         this.validated = false
       }
 
       /** @return {Promise<void>} */
       async validate() {
-         if (this.validated) return
          for (const project of this.projects.values())
-            project.validate()
+            await project.validate()
          await this.sharedPhases.validate()
-         this.validated = true
       }
 
       ///////////
@@ -863,7 +884,6 @@ const jspo = (() => {
          const projectName = projectDefinition.project
          typeof projectName === "string" || error(`Expect argument projectDefinition.project of type string instead of »${typeof projectName}«.`)
          this.projects.get(projectName) && error(`Expect argument projectDefinition.project = »${projectName}« to be unique.`)
-         this.validated = false
          const newProject = new BuildProject(projectName, projectDefinition, this.sharedPhases)
          this.projects.set(projectName, newProject)
       }
@@ -872,8 +892,6 @@ const jspo = (() => {
    class SharedPhases extends DependencyGraph {
       /** @type {Map<string,BuildPhase>}  */
       nodes
-      /** @type {boolean} */
-      validated
       /** @type {BuildProjects} */
       projects
 
@@ -881,19 +899,19 @@ const jspo = (() => {
       constructor(projects) {
          super()
          this.nodes = new Map()
-         this.validated = false
          this.projects = projects
       }
 
       /** @return {Promise<void>} */
       async validate() {
-         if (this.validated) return
          DependencyGraph.validate(this.nodes)
-         // validate all phases are defined
-         for (const node of this.nodes.values()) {
+         this.validateAllPhasesDefined()
+      }
+
+      /** @return {void} */
+      validateAllPhasesDefined() {
+         for (const node of this.nodes.values())
             node.isDefined || error(`Undefined »${this.projects.has(node.projectName)?node.canonicalName:"project:"+node.projectName}« referenced from »${node.createdFrom.canonicalName}«.`)
-         }
-         this.validated = true
       }
 
       /** @param {BuildPhase} node @return {TProcessingStep<BuildPhase>} */
@@ -971,3 +989,22 @@ await jspo.buildSteps()
    // TODO: .then( steps => console.log(steps))
    .then( () => jspo.build())
    .catch( e => console.log("error",e))
+
+// validation cycle
+
+jspo.addProject({
+   project: "project-with-cycles",
+   phases: [ { phase: "build" } ]
+})
+
+jspo.switchProject("project-with-cycles", "build")
+jspo.addBuild({ command:"c1", dependsOnCommands:["c2"], action: async ()=>console.log("build c1") })
+jspo.addBuild({ command:"c2", dependsOnCommands:["c3"], action: async ()=>console.log("build c2") })
+jspo.addBuild({ command:"c3", dependsOnCommands:["c4"], action: async ()=>console.log("build c3") })
+jspo.addBuild({ command:"c4", dependsOnCommands:["c1"], action: async ()=>console.log("build c4") })
+
+console.log("\n=== jspo.validateProjects() ===")
+
+await jspo.validateProjects().catch(e => {
+   console.log("\n"+e.toString())
+})

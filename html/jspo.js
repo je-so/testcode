@@ -6,7 +6,7 @@
 
 // !! execute as unprivileged user to prevent any accidental damage to the file system !!
 // run with
-// > bun run jspo.js
+// > bun run jspo.js :build:c4
 
 import * as fs from "node:fs"
 
@@ -25,13 +25,18 @@ const jspo = (() => {
     * @property {string} [postPhase]
     * @property {JSPO_BuildRule_Definition[]} [builds]
     *
-    * @typedef JSPO_BuildAction_Arg
+    * @typedef JSPO_BuildAction_InitArg
     * @property {string} path
     * @property {string[]} dependsOnCommands
     * @property {string[]} dependsOnFiles
-    * @property {ErrorContext} [ec]
     *
-    * @typedef {(arg:JSPO_BuildAction_Arg)=>Promise<void>} JSPO_BuildAction
+    * @typedef JSPO_BuildAction_CallArg
+    * @property {string} path
+    * @property {string[]} dependsOnCommands
+    * @property {string[]} dependsOnFiles
+    * @property {ErrorContext} ec
+    *
+    * @typedef {(arg:JSPO_BuildAction_CallArg)=>Promise<void>} JSPO_BuildAction
     *
     * @typedef JSPO_CommandBuildRule_Definition
     * @property {string} command
@@ -52,7 +57,7 @@ const jspo = (() => {
     * @property {(number|string)[]} [accesspath]
     * @property {undefined|string} [project]
     * @property {undefined|string} [phase]
-    * @property {undefined|BuildNode} [build]
+    * @property {undefined|string} [build]
     *
     */
 
@@ -66,14 +71,14 @@ const jspo = (() => {
          this.build = arg.build
       }
 
-      /** @param {BuildNode} build */
+      /** @param {string} build */
       newBuild(build) { return new ErrorContext({...this,build}) }
       /** @param {string} phase */
       newPhase(phase) { return new ErrorContext({...this,phase}) }
       /** @param {string} project @param {string} [phase] */
       newProject(project, phase) { return new ErrorContext(phase?{...this,project,phase}:{...this,project}) }
       /** @param {(number|string)[]} subpath */
-      newSubPath(...subpath) { return new ErrorContext({...this,accesspath:this.accesspath.concat(subpath)}) }
+      newAccessPath(...subpath) { return new ErrorContext({...this,accesspath:this.accesspath.concat(subpath)}) }
 
       /** @param {(number|string)[]} subpath @return {string} Returns access path for argument which caused an error. */
       ap(...subpath) {
@@ -86,7 +91,7 @@ const jspo = (() => {
       errcontext() {
          const forProject = this.project === undefined ? "" : ` for project ${JSON.stringify(this.project)}`
                             + (this.phase === undefined ? "" : `, phase ${JSON.stringify(this.phase)}`)
-                            + (this.build === undefined ? "" : `, build ${this.build.type} ${JSON.stringify(this.build.path)}`)
+                            + (this.build === undefined ? "" : `, build ${JSON.stringify(this.build)}`)
          return `${this.fct} failed${forProject}`
       }
       /** @param {string} msg */
@@ -109,6 +114,15 @@ const jspo = (() => {
       }
       msg = msg.replaceAll("\n","\n   ")
       throw (cause ? Error(msg,{cause}) : Error(msg))
+   }
+
+   /** @param {string} name @param {()=>ErrorContext} getEC */
+   const validateName = (name, getEC) => {
+      typeof name === "string" || error(`Expect ${getEC().ap()} of type string instead of »${typeof name}«.`,getEC())
+      name === name.trim() || error(`Expect ${getEC().ap()}=${JSON.stringify(name)} to have no leading or trailing spaces.`,getEC())
+      name === "" && error(`Expect ${getEC().ap()}=${JSON.stringify(name)} not the empty string.`,getEC())
+      const match = name.match(/[":,]/)
+      match && error(`Expect ${getEC().ap()}=${JSON.stringify(name)} to not contain character »${match[0]}«.`,getEC())
    }
 
    /**
@@ -136,12 +150,15 @@ const jspo = (() => {
       #activeProject
       /** @type {undefined|BuildPhase} */
       #activePhase
+      /** @type {CommandLineProcessor} */
+      #commandLine
 
       constructor() {
          this.#files = new Files()
          this.#projects = new BuildProjects()
          this.#activeProject = undefined
          this.#activePhase = undefined
+         this.#commandLine = new CommandLineProcessor(Bun.argv.slice(2)) // argv: [ "path/to/bun", "path/to/jspo.js", "arg1", "arg2", ... ]
       }
 
       /** @return {BuildProject} */
@@ -185,6 +202,20 @@ const jspo = (() => {
 
       async validateProjects() { return this.#projects.validate(new ErrorContext({fct:"validateProjects()"})) }
 
+      /** @param {string} name @param {()=>ErrorContext} getEC */
+      validateName(name, getEC) { validateName(name,getEC) }
+
+      ////////////////////////////
+      // Command-Line interface //
+      ////////////////////////////
+
+      async processCommandLine() { return this.#commandLine.process() }
+
+      /** @return {CommandLineProcessor} */
+      get commandLineProcessor() { return this.#commandLine }
+
+      ///////////
+
       ///////////// TODO: start transformer-plugin ///////////////////
       /**
        * @param {string} content
@@ -200,6 +231,87 @@ const jspo = (() => {
       }
       ///////////// TODO: end transformer-plugin ///////////////////
 
+   }
+
+   class CommandLineProcessor {
+
+      /** @param {string[]} args command-line arguments */
+      constructor(args) {
+         this.args = args
+      }
+
+      async process() {
+         console.log("\nJavaScript Projects Organizer v0.2.0\n")
+         let i = 0
+         for (const arg of this.args) {
+            if (arg === "-l" || arg === "--list") this.listProjects(), this.listTargets()
+            else if (arg === "-lp" || arg === "--list-project") this.listProjects()
+            else if (arg === "-lt" || arg === "--list-target") this.listTargets()
+            else {
+               const matchedTargets = []
+               const target = arg, splitTarget = target.split(":")
+               console.log("-- Match target --")
+               console.log(target,"\n")
+               for (const project of jspo.projectNames) {
+                  if (project !== splitTarget[0] && splitTarget[0]) continue
+                  for (const phase of jspo.project(project).phaseNames) {
+                     if (phase !== splitTarget[1] && splitTarget[1]) continue
+                     if (splitTarget[2] && !jspo.project(project).phase(phase).hasBuild(splitTarget[2])) continue
+                     matchedTargets.push({project,phase,build:splitTarget[2]})
+                  }
+               }
+               if (matchedTargets.length === 0)
+                  console.log("Found no target\n")
+               else {
+                  console.log("Found target(s)")
+                  console.group()
+                  for (const { project, phase, build } of matchedTargets)
+                     console.log("project:",JSON.stringify(project),"phase:",JSON.stringify(phase),build?"build: "+JSON.stringify(build):"")
+                  console.groupEnd()
+                  console.log()
+                  for (const {project,phase,build} of matchedTargets) {
+                     await jspo.project(project).phase(phase).build(build ? [build] : undefined)
+                  }
+               }
+            }
+            ++i
+         }
+      }
+
+      listProjects() {
+         const projectNames = jspo.projectNames
+         console.log("-- List of projects --")
+         if (projectNames.length === 0)
+            console.log("no projects defined")
+         else {
+            for (const projectName of projectNames) {
+               const project = jspo.project(projectName)
+               console.log("Project:")
+               console.log(" name:",JSON.stringify(projectName))
+               console.log(" phases:",JSON.stringify(project.phaseNames))
+            }
+            console.log()
+         }
+      }
+
+      listTargets() {
+         const targetNames = [] // TODO: jspo.targetNames
+         console.log("-- List of targets --")
+         if (targetNames.length === 0)
+            console.log("no targets defined")
+         else {
+            // TODO: add support for defining targets
+         }
+         console.log()
+      }
+
+      printUsage() {
+         console.log("\nusage: bun run jspo.js [option]... target")
+         console.log("options:")
+         console.group("> '-l' or '--list'")
+         console.log("Lists all defined projects and their phases.\n")
+         console.groupEnd()
+      }
    }
 
    class Files {
@@ -356,8 +468,8 @@ const jspo = (() => {
       /** @param {ErrorContext} ec @return {Promise<void>} */
       async validate(ec) { error(`validate() not overwritten in subtype (internal error).`,ec) }
 
-      /** @param {number} level @param {ErrorContext} ec @return {Promise<ProcessingStep[]>} */
-      async getProcessingSteps(level, ec) { return error(`getProcessSteps() not overwritten in subtype (internal error).`,ec) }
+      /** @param {number} level @param {ErrorContext} ec @param {null|Map<string,DependentNode>} [subset] @return {Promise<ProcessingStep[]>} */
+      async getProcessingSteps(level, ec, subset) { return error(`getProcessSteps() not overwritten in subtype (internal error).`,ec) }
 
       /////////////////////////////////////////////////
       // Default Implementations (use by delegation) //
@@ -379,52 +491,63 @@ const jspo = (() => {
 
       /**
        * @template {DependentNode} T
-       * @param {T} node
+       * @param {T[]} nodes
        * @return {Map<string,T>}
        */
-      static getClosure(node) {
-         /** @type {Map<string,DependentNode>} */
-         const nodes = new Map([[node.path,node]])
+      static getClosure(nodes) {
+         /** @type {Set<DependentNode>} */
+         const nodeSet = new Set()
          /** @type {DependentNode[]} */
-         const unprocessed = [node]
-         for (;;) {
-            const nextNode = unprocessed.shift()
-            if (nextNode === undefined) break
-            const deps = nextNode.dependentOn
-            unprocessed.push(...deps)
-            deps.forEach(node => nodes.set(node.path,node))
+         const unprocessed = [...nodes]
+         for (let nextNode; nextNode = unprocessed.shift(); ) {
+            if (nodeSet.has(nextNode)) continue
+            nodeSet.add(nextNode)
+            unprocessed.push(...nextNode.dependentOn)
          }
          /** @type {Map<string,any>} */
-         const anyNodes = nodes
-         return anyNodes
+         const closureMap = new Map()
+         nodeSet.forEach(node => closureMap.set(node.path,node))
+         return closureMap
       }
+
+      /**
+       * @template {DependentNode} T
+       * @param {Map<string,T>} nodes
+       * @param {undefined|null|string[]} paths Optional subset of nodes encoded as set of paths.
+       * @param {string} nodeTypeName
+       * @param {(path:string)=>ErrorContext} getEC Allows for calling newBuild, newPhase, or newProject
+       * @return {Map<string,T>}
+       */
+      static getSubset(nodes, paths, nodeTypeName, getEC) {
+         if (! paths?.length) return nodes
+         const subset = new Set()
+         paths.forEach( (path, i) => {
+            const node = nodes.get(path)
+            node || error(`Found no ${nodeTypeName} for ${getEC(path).ap(i)}=${JSON.stringify(path)}.`,getEC(path))
+            subset.add(node)
+         })
+         return this.getClosure([...subset])
+      }
+
 
       ////////////////
       // Validation //
       ////////////////
 
-      /** @param {Map<string,DependentNode>} nodes @param {ErrorContext} ec @return {void} */
-      static validate(nodes, ec) {
-         this.validateAllNodesContained(nodes, nodes, ec)
-         this.validateNoCycles(nodes, ec)
+      /** @param {Map<string,DependentNode>} nodes @param {string} nodeTypeName @param {ErrorContext} ec @return {void} */
+      static validate(nodes, nodeTypeName, ec) {
+         this.validateAllNodesContained(nodes, nodeTypeName, ec)
+         this.validateNoCycles(nodes, nodeTypeName, ec)
       }
 
-      /** @param {Map<string,DependentNode>} nodes @param {Map<string,DependentNode>} subset @param {ErrorContext} ec */
-      static validateSubset(nodes, subset, ec) {
-         for (const node of subset.values())
-            nodes.get(node.path) === node || error(`Node »${node.path}« in subset is not part of whole set (internal error).`,ec)
-         this.validateAllNodesContained(nodes,subset,ec)
-         this.validateNoCycles(nodes,ec)
+      /** @param {Map<string,DependentNode>} nodes @param {string} nodeTypeName @param {ErrorContext} ec */
+      static validateAllNodesContained(nodes, nodeTypeName, ec) {
+         for (const node of nodes.values())
+            node.dependentOn.forEach((node2, i) => nodes.get(node2.path) === node2 || error(`${nodeTypeName}=${JSON.stringify(node.path)}.dependentOn[${i}] references uncontained node ${JSON.stringify(node2.path)} (internal error).`,ec))
       }
 
-      /** @param {Map<string,DependentNode>} nodes @param {Map<string,DependentNode>} subset @param {ErrorContext} ec */
-      static validateAllNodesContained(nodes, subset, ec) {
-         for (const node of subset.values())
-            node.dependentOn.forEach((node2, i) => nodes.get(node2.path) === node2 || error(`Node »${node.path}«.dependentOn[${i}] references uncontained node ${node2.path} (internal error).`,ec))
-      }
-
-      /** @param {Map<string,DependentNode>} nodes @param {ErrorContext} ec */
-      static validateNoCycles(nodes, ec) { this.getProcessingSteps(nodes, 0, ProcessingStep.create, ec) }
+      /** @param {Map<string,DependentNode>} nodes @param {string} nodeTypeName @param {ErrorContext} ec */
+      static validateNoCycles(nodes, nodeTypeName, ec) { this.getProcessingSteps(nodes, nodeTypeName, 0, ProcessingStep.create, ec) }
 
       ///////////////////////////////////
       // Layout Nodes in Process Order //
@@ -433,18 +556,19 @@ const jspo = (() => {
       /**
        * @template {DependentNode} T
        * @param {Map<string,T>} nodes
+       * @param {string} nodeTypeName "BuildNode", or "command or file node", ...
        * @param {number} level
        * @param {(node:DependentNode)=>TProcessingStep<T>} newProcessingStep
        * @param {ErrorContext} ec
        * @return {TProcessingStep<T>[]}
        */
-      static getProcessingSteps(nodes, level, newProcessingStep, ec) {
-         return this.orderSteps(this.wrapNodes(nodes, newProcessingStep),level,ec)
+      static getProcessingSteps(nodes, nodeTypeName, level, newProcessingStep, ec) {
+         return this.orderSteps(this.wrapNodes(nodes, newProcessingStep),nodeTypeName,level,ec)
       }
 
       /**
        * @template {DependentNode} T
-       * @param {Map<string,T>} nodes
+       * @param {Map<string,T>} nodes Must be a closure (nodes must contain all node.dependentOn for every node in nodes)
        * @param {(node:DependentNode)=>TProcessingStep<T>} newProcessingStep
        * @return {TProcessingStep<T>[]}
        */
@@ -467,8 +591,8 @@ const jspo = (() => {
          return [...steps.values()]
       }
 
-      /** @param {TProcessingStep<DependentNode>[]} steps @param {ErrorContext} ec */
-      static cycleError(steps, ec) {
+      /** @param {TProcessingStep<DependentNode>[]} steps @param {string} nodeTypeName @param {ErrorContext} ec */
+      static cycleError(steps, nodeTypeName, ec) {
          /** @param {TProcessingStep<DependentNode>} step @return {undefined|TProcessingStep<DependentNode>[]} */
          const findCycle = (step) => {
             step.unprocessedDependentOn = -1 // -1: in-processing, 0: processed, 1..: wait-for-processing
@@ -485,26 +609,27 @@ const jspo = (() => {
          for (const step of steps) {
             if (step.unprocessedDependentOn > 0) {
                const cycle = findCycle(step)
-               cycle && error(`Node${cycle.length===1?"":"s"} »${cycle.map(s=>`${s.node.constructor.name}:"${s.node.canonicalName}"`).join(", ")}« ${cycle.length===1?"is":"are"} part of a dependency cycle.`,ec)
+               cycle && error(`Dependency cycle detected consisting of ${nodeTypeName}${cycle.length===1?"":"(s)"} ${cycle.map(s=>`"${s.node.canonicalName}"`).join(", ")}.`,ec)
             }
          }
-         error(`Dependency cycle detected.`,ec)
+         error(`Dependency cycle detected (internal error).`,ec)
       }
 
       /**
        * @template {DependentNode} T
        * @param {TProcessingStep<T>[]} steps
+       * @param {string} nodeTypeName
        * @param {number} level
        * @param {ErrorContext} ec
        * @return {TProcessingStep<T>[]}
        */
-      static orderSteps(steps, level, ec) {
+      static orderSteps(steps, nodeTypeName, level, ec) {
          if (typeof level !== "number") level = 0
          const orderedSteps = []
          let nextSteps = steps.filter( step => step.unprocessedDependentOn === 0)
          while (orderedSteps.length < steps.length) {
             if (nextSteps.length === 0)
-               this.cycleError(steps,ec)
+               this.cycleError(steps, nodeTypeName, ec)
             nextSteps.forEach( step => {
                step.level = level
                orderedSteps.push(step)
@@ -526,11 +651,11 @@ const jspo = (() => {
    class BuildRule {
       /** @type {JSPO_BuildAction} */
       action
-      /** @type {JSPO_BuildAction_Arg} */
+      /** @type {JSPO_BuildAction_InitArg} */
       arg
       /**
        * @param {JSPO_BuildAction} action
-       * @param {JSPO_BuildAction_Arg} arg
+       * @param {JSPO_BuildAction_InitArg} arg
        */
       constructor(action, arg) {
          this.action = action
@@ -545,15 +670,18 @@ const jspo = (() => {
     * A build step wraps a BuildNode and is of type TProcessingStep<BuildNode>.
     */
    class BuildNode extends DependentNode {
+      /** @type {"command or file node"} */
+      static TYPENAME="command or file node"
       /** @type {undefined|BuildRule} */
       buildRule
       /** @type {string} Path of node which referenced this node the first time. */
       firstReferencedFrom
-      /** @param {string} path @param {string} firstReferencedFrom */
+      /** @param {string} path @param {string} [firstReferencedFrom] */
       constructor(path, firstReferencedFrom) {
          super(path)
-         this.firstReferencedFrom = firstReferencedFrom
+         this.firstReferencedFrom = firstReferencedFrom ?? this.canonicalName
       }
+      get canonicalName() { return `${this.type}:${this.path}` }
       /** @return {boolean}  */
       get isDefined() { return this.buildRule !== undefined }
       /** @return {boolean}  */
@@ -607,7 +735,7 @@ const jspo = (() => {
     * Cyclic dependencies are detected and reported as error.
     */
    class BuildNodes extends DependencyGraph {
-      /** @type {Map<string,BuildNode>} Stores all CommandNodes/FileNodes indexed by name/path which must be build. */
+      /** @type {Map<string,BuildNode>} Stores all CommandNodes/FileNodes indexed by file-path or command-name which could interdepend on each other. */
       buildNodes = new Map()
       /** @type {boolean} */
       validated = false
@@ -623,24 +751,28 @@ const jspo = (() => {
          this.phase = phase
       }
 
+      /** @param {ErrorContext} ec @return {void} */
+      validateSync(ec) {
+         DependencyGraph.validate(this.buildNodes,BuildNode.TYPENAME,ec)
+      }
+
       /** @param {ErrorContext} ec */
       async validate(ec) {
          if (this.validated) return
          ec = ec?.newPhase(this.phase.name) ?? new ErrorContext({fct:"validate()",project:this.phase.projectName,phase:this.phase.name})
-         DependencyGraph.validate(this.buildNodes,ec)
          for (const node of this.buildNodes.values())
             if (!node.buildRule && (node.isVirtual || !(await jspo.files.exists(node.path))))
-               error(`Undefined build rule for ${node.type} ${JSON.stringify(node.canonicalName)}.`,ec.newBuild(node))
+               error(`Undefined build rule for ${JSON.stringify(node.canonicalName)} referenced from ${JSON.stringify(node.firstReferencedFrom)}.`,ec.newBuild(node.canonicalName))
          this.validated = true
       }
 
-      /** @param {number} level @param {ErrorContext} ec @return {Promise<TProcessingStep<BuildNode>[]>} */
-      async getProcessingSteps(level, ec) {
-         this.validate(ec)
+      /** @param {number} level @param {ErrorContext} ec @param {null|Map<string,BuildNode>} [subset] @return {Promise<TProcessingStep<BuildNode>[]>} */
+      async getProcessingSteps(level, ec, subset) {
          const updateNodes = new Set()
          /** @type {(node:BuildNode)=>TProcessingStep<BuildNode>} */
          const newProcessingStep = ProcessingStep.create
-         const steps = DependencyGraph.getProcessingSteps(this.buildNodes,level,newProcessingStep,ec)
+         const buildNodes = subset ?? this.buildNodes
+         const steps = DependencyGraph.getProcessingSteps(buildNodes,BuildNode.TYPENAME,level,newProcessingStep,ec)
          for (const step of steps) {
             if (step.needUpdate) {
                step.needUpdate = await step.node.needsUpdate(updateNodes)
@@ -649,6 +781,11 @@ const jspo = (() => {
          }
          return steps
       }
+
+      ///////////
+
+      /** @param {string} path @return {boolean} */
+      hasBuild(path) { return this.buildNodes.has(path) }
 
       ///////////
 
@@ -661,13 +798,13 @@ const jspo = (() => {
          const isFile = "file" in build
          isCommand || isFile || error(`Expect ${getEC().ap("command")} or ${getEC().ap("file")} to be defined.`,getEC())
          const path = isCommand ? build.command : build.file
-         typeof path === "string" || error(`Expect ${getEC().ap(isCommand?"command":"file")} of type string instead of »${typeof path}«.`,getEC())
+         validateName(path, () => getEC().newAccessPath(isCommand?"command":"file"))
          const dependsOnCommands = build.dependsOnCommands ?? []
          const dependsOnFiles = build.dependsOnFiles ?? []
          const action = build.action
          typeof action === "function" || error(`Expect ${getEC().ap("action")} of type function instead of »${typeof action}«.`,getEC())
          /** @param {BuildNode} node */
-         const firstDefinedErrorMsg = (node) => node.isDefined ? `but node ${JSON.stringify(node.path)} is defined as ${node.type} node.` : `but node ${JSON.stringify(node.path)} is referenced as a ${node.type} node from node ${JSON.stringify(node.firstReferencedFrom)}.`
+         const firstDefinedErrorMsg = (node) => node.isDefined ? `but node ${JSON.stringify(node.path)} is defined as ${node.type} node.` : `but node ${JSON.stringify(node.path)} is referenced as a ${node.type} node from ${JSON.stringify(node.firstReferencedFrom)}.`
          {
             const foundNode = this.buildNodes.get(path)
             if (foundNode) {
@@ -683,40 +820,42 @@ const jspo = (() => {
          }
          checkType(dependsOnCommands,"dependsOnCommands",true)
          checkType(dependsOnFiles,"dependsOnFiles",false)
-         const firstReferencedFrom = path
-         /** @param {string} path @param {boolean} isCommand */
-         const getNode = (path, isCommand) => {
-            return DependencyGraph.ensureNode(path, this.buildNodes, () => isCommand ? new CommandNode(path,firstReferencedFrom) : new FileNode(path,firstReferencedFrom))
-         }
-         const buildNode = getNode(path, isCommand)
-         buildNode.setBuildRule(new BuildRule(action, { path, dependsOnCommands, dependsOnFiles }))
-         const commandNodes = dependsOnCommands.map(path => getNode(path, true))
-         const fileNodes = dependsOnFiles.map(path => getNode(path, false))
-         buildNode.setDependency(commandNodes.concat(fileNodes),getEC())
+         /** @param {string} path @param {boolean} isCommand @param {BuildNode} [firstReferencedFrom] */
+         const getNode = (path, isCommand, firstReferencedFrom) => DependencyGraph.ensureNode(path, this.buildNodes, () => isCommand ? new CommandNode(path,firstReferencedFrom?.canonicalName) : new FileNode(path,firstReferencedFrom?.canonicalName))
+         const newNode = getNode(path, isCommand)
+         newNode.setBuildRule(new BuildRule(action, { path, dependsOnCommands, dependsOnFiles }))
+         const commandNodes = dependsOnCommands.map(path => getNode(path, true, newNode))
+         const fileNodes = dependsOnFiles.map(path => getNode(path, false, newNode))
+         newNode.setDependency(commandNodes.concat(fileNodes),getEC())
+         this.validateSync(getEC().newBuild(newNode.canonicalName))
       }
 
       ///////////
 
-      /** @return {Promise<void>} @param {ErrorContext} ec */
-      async build(ec) {
-         const steps = await this.getProcessingSteps(0,ec)
+      /** @param {string[]} paths @param {ErrorContext} ec */
+      getSubset(paths, ec) { return DependencyGraph.getSubset(this.buildNodes,paths,BuildNode.TYPENAME,(path)=>ec.newBuild(path)) }
+
+      /** @param {ErrorContext} ec @param {null|Map<string,BuildNode>} [subset] @return {Promise<void>} */
+      async build(ec, subset) {
+         const steps = await this.getProcessingSteps(0,ec,subset)
          for (const step of steps) {
             const node = step.node
             if (step.needUpdate && node.buildRule) {
-               await node.buildRule.call(ec.newBuild(node))
+               await node.buildRule.call(ec.newBuild(node.canonicalName))
                if (!node.isVirtual)
-                  await jspo.files.touch(node.path,ec.newBuild(node))
+                  await jspo.files.touch(node.path,ec.newBuild(node.canonicalName))
             }
          }
       }
 
       /** @param {ErrorContext} ec @return {Promise<TProcessingStep<BuildNode>[]>} */
-      async buildSteps(ec) { return this.getProcessingSteps(0,ec) }
+      async buildSteps(ec) { return this.getProcessingSteps(0,ec,null) }
    }
 
    /**
-    * A build phase is a set of build steps (implemented as BuildNodes) but which could also
-    * depend on other build phases of the same project or of another project.
+    * A build phase is a set of build steps (implemented as BuildNodes). It could
+    * depend on other phases. Either of the same project or of another project.
+    * A phase is therefore used to make a set of build steps depend on another project.
     * A phase supports also a pre-phase and post-phase which are additionaly processed.
     * If a pre-/port-phases are referenced from different phases they are are executed more
     * than once.
@@ -736,6 +875,8 @@ const jspo = (() => {
       projectName
       /** @type {undefined|BuildProject} owner of this object */
       project
+      /** @type {boolean} */
+      validated
 
       /////////////////////////////
       // Overwrite DependentNode //
@@ -748,6 +889,7 @@ const jspo = (() => {
          this.createdFrom = createdFrom ?? this
          this.name = phaseName
          this.projectName = projectName
+         this.validated = false
       }
 
       /** @param {BuildPhase[]} dependentOn @param {ErrorContext} ec */
@@ -770,12 +912,25 @@ const jspo = (() => {
       /** @type {boolean} */
       get hasDependency() { return this.prePhase !== undefined || this.postPhase !== undefined || this.dependentOn.length>0 }
 
+      /** @param {string} path @return {boolean} */
+      hasBuild(path) { return this.buildNodes.hasBuild(path) }
+
       /** @param {ErrorContext} [ec] @return {Promise<void>} */
       async validate(ec) {
+         if (this.validated && this.buildNodes.validated) return
          ec = ec?.newPhase(this.name) ?? new ErrorContext({fct:"validate()",project:this.projectName,phase:this.name})
          this.validatePrePost(ec)
          this.validateDefined(ec)
-         return this.buildNodes.validate(ec)
+         await this.buildNodes.validate(ec)
+         this.validated = true
+         try {
+            for (const phase of this.typedDependentOn)
+               await phase.validate(ec)
+         }
+         catch(e) {
+            this.validated = false
+            throw e
+         }
       }
 
       /** @param {ErrorContext} ec @return {void} */
@@ -788,11 +943,10 @@ const jspo = (() => {
       /** @param {ErrorContext} ec @return {void} */
       validateDefined(ec) {
          /** @param {undefined|BuildPhase} phase */
-         const checkDefined = (phase) => !phase || phase.isDefined || error(`Undefined phase:${JSON.stringify(phase.canonicalName)} referenced from phase ${JSON.stringify(this.name)}.`,ec)
+         const checkDefined = (phase) => !phase || phase.isDefined || error(`Undefined phase:${JSON.stringify(phase.canonicalName)} referenced from phase ${JSON.stringify(phase.createdFrom.canonicalName)}.`,ec)
          checkDefined(this.prePhase)
          checkDefined(this.postPhase)
-         for (const phase of this.typedDependentOn)
-            checkDefined(phase)
+         checkDefined(this)
       }
 
       ///////////
@@ -827,9 +981,9 @@ const jspo = (() => {
       /** @param {number} level @param {ErrorContext} ec @return {Promise<TProcessingStep<BuildPhase>[]>} */
       async getProcessingSteps(level, ec) {
          /** @type {Map<string,BuildPhase>} */
-         const phases = DependencyGraph.getClosure(this)
+         const phases = DependencyGraph.getClosure([this])
          /** @type {TProcessingStep<BuildPhase>[]} */
-         const steps = DependencyGraph.getProcessingSteps(phases, level, BuildPhase.newProcessingStep, ec.newPhase(this.name))
+         const steps = DependencyGraph.getProcessingSteps(phases, "BuildPhase", level, BuildPhase.newProcessingStep, ec.newPhase(this.name))
          return steps
       }
 
@@ -838,7 +992,7 @@ const jspo = (() => {
          const ec = new ErrorContext({fct:"buildSteps()",project:this.projectName,phase:this.name})
          const buildSteps = []
          const level = () => (buildSteps.length ? buildSteps[buildSteps.length-1].level+1 : 0)
-         for (const step of await this.getProcessingSteps(0,ec)) {
+         for (const step of await this.getProcessingSteps(level(),ec)) {
             if (!step.needUpdate) continue
             const prePhase = step.node.prePhase, phase = step.node, postPhase = step.node.postPhase
             prePhase && buildSteps.push(...await prePhase.buildNodes.getProcessingSteps(level(),ec))
@@ -848,21 +1002,24 @@ const jspo = (() => {
          return buildSteps
       }
 
-      /** @return {Promise<void>} */
-      async build() {
+      /** @param {null|string[]} [paths] Optional subset of BuildNodes encoded as set of paths. @return {Promise<void>} */
+      async build(paths) {
          const ec = new ErrorContext({fct:"build()",project:this.projectName,phase:this.name})
+         const subset = paths?.length ? this.buildNodes.getSubset(paths,new ErrorContext({fct:"build(paths)",accesspath:["paths"],project:this.projectName,phase:this.name})) : undefined
          for (const step of await this.getProcessingSteps(0,ec)) {
-            this.logStep(step)
+            this.logStep(step,paths)
+            console.group()
             if (!step.needUpdate) continue
             const prePhase = step.node.prePhase, phase = step.node, postPhase = step.node.postPhase
             prePhase && await prePhase.buildNodes.build(ec)
-            await phase.buildNodes.build(ec)
+            await phase.buildNodes.build(ec,subset)
             postPhase && await postPhase.buildNodes.build(ec)
+            console.groupEnd()
          }
       }
 
-      /** @param {TProcessingStep<BuildPhase>} step */
-      logStep(step) { console.log(`\nProject-Phase ::${step.node.projectName}::${step.node.name}::`) }
+      /** @param {TProcessingStep<BuildPhase>} step @param {null|undefined|string[]} paths */
+      logStep(step, paths) { console.log(`Build project: ${JSON.stringify(step.node.projectName)} phase:${JSON.stringify(step.node.name)}${paths?.length?" build:"+JSON.stringify(paths.join(",")):""}`) }
    }
 
    /**
@@ -890,13 +1047,13 @@ const jspo = (() => {
          this.project = project
 
          phasesDefinition.phases.forEach( (phaseDefinition, i) => {
-            this.addPhase(phaseDefinition, ec.newSubPath("phases",i))
+            this.addPhase(phaseDefinition, ec.newAccessPath("phases",i))
          })
       }
 
       /** @param {ErrorContext} ec @return {void} */
       validateSync(ec) {
-         DependencyGraph.validateSubset(this.sharedPhases.nodes,this.phases,ec)
+         DependencyGraph.validate(DependencyGraph.getClosure([...this.phases.values()]),"BuildPhase",ec)
          for (const phase of this.phases.values())
             phase.validatePrePost(ec)
       }
@@ -909,6 +1066,9 @@ const jspo = (() => {
 
       ///////////
 
+      /** @type {string[]} */
+      get phaseNames() { return [...this.phases.keys()] }
+
       /** @param {string} name @return {BuildPhase} */
       phase(name) { return this.phases.get(name) ?? error(`Phase name=${JSON.stringify(name)} does not exist.`,new ErrorContext({fct:"phase(name)",project:this.project.name})) }
 
@@ -916,33 +1076,33 @@ const jspo = (() => {
 
       /** @param {JSPO_Phase_Definition} phaseDefinition @param {ErrorContext} [ec] */
       addPhase(phaseDefinition, ec) {
-         ec ??= new ErrorContext({fct:"addPhase(p)",accesspath:["p"],project:this.project.name})
-         typeof phaseDefinition === "object" || error(`Expect ${ec.ap()} of type object instead of »${typeof phaseDefinition}«.`,ec)
+         const getEC0 = () => ec ?? new ErrorContext({fct:"addPhase(p)",accesspath:["p"],project:this.project.name})
+         typeof phaseDefinition === "object" || error(`Expect ${getEC0().ap()} of type object instead of »${typeof phaseDefinition}«.`,getEC0())
          const phaseName = phaseDefinition.phase
-         typeof phaseName === "string" || error(`Expect ${ec.ap("phase")}=${JSON.stringify(phaseName)} of type string instead of »${typeof phaseName}«.`,ec)
-         this.phases.has(phaseName) && error(`Expect ${ec.ap("phase")}=${JSON.stringify(phaseName)} to be unique.`,ec)
-         ec = ec.newPhase(phaseName)
+         validateName(phaseName, () => getEC0().newAccessPath("phase"))
+         this.phases.has(phaseName) && error(`Expect ${getEC0().ap("phase")}=${JSON.stringify(phaseName)} to be unique.`,getEC0())
+         const getEC = () => getEC0().newPhase(phaseName)
          if (phaseDefinition.prePhase !== undefined) {
-            typeof phaseDefinition.prePhase === "string" || error(`Expect ${ec.ap("prePhase")} of type string instead of »${typeof phaseDefinition.prePhase}«.`,ec)
-            phaseDefinition.prePhase !== phaseName || error(`Expect ${ec.ap("prePhase")} = »${String(phaseName)}« to reference not itself.`,ec)
+            typeof phaseDefinition.prePhase === "string" || error(`Expect ${getEC().ap("prePhase")} of type string instead of »${typeof phaseDefinition.prePhase}«.`,getEC())
+            phaseDefinition.prePhase !== phaseName || error(`Expect ${getEC().ap("prePhase")} = »${String(phaseName)}« to reference not itself.`,getEC())
          }
          if (phaseDefinition.postPhase !== undefined) {
-            typeof phaseDefinition.postPhase === "string" || error(`Expect ${ec.ap("postPhase")} of type string instead of »${typeof phaseDefinition.postPhase}«.`,ec)
-            phaseDefinition.postPhase !== phaseName || error(`Expect ${ec.ap("postPhase")} = »${String(phaseName)}« to reference not itself.`,ec)
+            typeof phaseDefinition.postPhase === "string" || error(`Expect ${getEC().ap("postPhase")} of type string instead of »${typeof phaseDefinition.postPhase}«.`,getEC())
+            phaseDefinition.postPhase !== phaseName || error(`Expect ${getEC().ap("postPhase")} = »${String(phaseName)}« to reference not itself.`,getEC())
          }
          if (phaseDefinition.dependsOnPhases) {
-            Array.isArray(phaseDefinition.dependsOnPhases) || error(`Expect ${ec.ap("dependsOnPhases")} of type Array instead of »${typeof phaseDefinition.dependsOnPhases}«.`,ec)
-            phaseDefinition.dependsOnPhases.forEach( (name, i) => typeof name === "string" || error(`Expect ${ec.ap("dependsOnPhases",i)} of type string instead of ${typeof name}.`,ec))
+            Array.isArray(phaseDefinition.dependsOnPhases) || error(`Expect ${getEC().ap("dependsOnPhases")} of type Array instead of »${typeof phaseDefinition.dependsOnPhases}«.`,getEC())
+            phaseDefinition.dependsOnPhases.forEach( (name, i) => typeof name === "string" || error(`Expect ${getEC().ap("dependsOnPhases",i)} of type string instead of ${typeof name}.`,getEC()))
          }
          if (phaseDefinition.dependsOnProjects) {
-            Array.isArray(phaseDefinition.dependsOnProjects) || error(`Expect ${ec.ap("dependsOnProjects")} of type Array instead of »${typeof phaseDefinition.dependsOnProjects}«.`,ec)
-            phaseDefinition.dependsOnProjects.forEach( (o, i) => (typeof o === "object" || error(`Expect ${ec.ap("dependsOnProjects",i)} of type object instead of ${typeof o}.`,ec))
-               && (typeof o.project === "string" || error(`Expect attribute ${ec.ap("dependsOnProjects",i,"project")} of type string instead of ${typeof o.project}.`,ec))
-               && (typeof o.phase === "string" || error(`Expect ${ec.ap("dependsOnProjects",i,"phase")} of type string instead of ${typeof o.phase}.`,ec))
+            Array.isArray(phaseDefinition.dependsOnProjects) || error(`Expect ${getEC().ap("dependsOnProjects")} of type Array instead of »${typeof phaseDefinition.dependsOnProjects}«.`,getEC())
+            phaseDefinition.dependsOnProjects.forEach( (o, i) => (typeof o === "object" || error(`Expect ${getEC().ap("dependsOnProjects",i)} of type object instead of ${typeof o}.`,getEC()))
+               && (typeof o.project === "string" || error(`Expect attribute ${getEC().ap("dependsOnProjects",i,"project")} of type string instead of ${typeof o.project}.`,getEC()))
+               && (typeof o.phase === "string" || error(`Expect ${getEC().ap("dependsOnProjects",i,"phase")} of type string instead of ${typeof o.phase}.`,getEC()))
             )
          }
          if (phaseDefinition.builds) {
-            Array.isArray(phaseDefinition.builds) || error(`Expect ${ec.ap("builds")} of type Array instead of »${typeof phaseDefinition.builds}«.`,ec)
+            Array.isArray(phaseDefinition.builds) || error(`Expect ${getEC().ap("builds")} of type Array instead of »${typeof phaseDefinition.builds}«.`,getEC())
          }
          const newPhase = this.sharedPhases.ensureNode(this.project.name,phaseName).setOwner(this.project)
          const createdFrom = newPhase
@@ -952,10 +1112,10 @@ const jspo = (() => {
          const dependsOnProjects = (phaseDefinition.dependsOnProjects ?? []).map( ({project,phase}) => getPhase(phase,project))
          const prePhase = phaseDefinition.prePhase === undefined ? undefined : getPhase(phaseDefinition.prePhase)
          const postPhase = phaseDefinition.postPhase === undefined ? undefined : getPhase(phaseDefinition.postPhase)
-         phaseDefinition.builds?.forEach( (build, i) => newPhase.addBuild(build,ec.newSubPath("builds",i)))
-         newPhase.setPrePost(prePhase,postPhase).setDependency(dependsOnProjects.concat(dependsOnPhases),ec)
+         phaseDefinition.builds?.forEach( (build, i) => newPhase.addBuild(build,getEC().newAccessPath("builds",i)))
+         newPhase.setPrePost(prePhase,postPhase).setDependency(dependsOnProjects.concat(dependsOnPhases),getEC())
          this.phases.set(phaseName, newPhase)
-         this.validateSync(ec)
+         this.validateSync(getEC())
       }
    }
 
@@ -970,6 +1130,9 @@ const jspo = (() => {
          this.name = name
          this.projectPhases = new ProjectPhases(this, phasesDefinition, sharedPhases, ec.newProject(this.name))
       }
+
+      /** @type {string[]} */
+      get phaseNames() { return this.projectPhases.phaseNames }
 
       /** @param {string} name @return {BuildPhase} */
       phase(name) { return this.projectPhases.phase(name) }
@@ -1014,10 +1177,10 @@ const jspo = (() => {
       /** @param {JSPO_Project_Definition} projectDefinition */
       addProject(projectDefinition) {
          const getEC = () => new ErrorContext({fct:"addProject(p)",accesspath:["p"]})
-         typeof projectDefinition === "object" || error(`Expect p of type string instead of »${typeof projectDefinition}«.`,getEC())
+         typeof projectDefinition === "object" || error(`Expect p of type object instead of »${typeof projectDefinition}«.`,getEC())
          const projectName = projectDefinition?.project
-         typeof projectName === "string" || error(`Expect p.project = »${projectName}« of type string instead of »${typeof projectName}«.`,getEC())
-         this.projects.has(projectName) && error(`Expect p.project = »${projectName}« to be unique.`,getEC())
+         validateName(projectName, () => getEC().newAccessPath("project"))
+         this.projects.has(projectName) && error(`Expect p.project=${JSON.stringify(projectName)} to be unique.`,getEC())
          const newProject = new BuildProject(projectName, projectDefinition, this.sharedPhases, getEC())
          this.projects.set(projectName, newProject)
       }
@@ -1039,14 +1202,16 @@ const jspo = (() => {
       /** @param {ErrorContext} ec @return {Promise<void>} */
       async validate(ec) {
          // !! should be catched by project.validate !!
-         DependencyGraph.validate(this.nodes,ec)
+         DependencyGraph.validate(this.nodes,"BuildPhase",ec)
       }
 
       /** @param {BuildPhase} node @return {TProcessingStep<BuildPhase>} */
       static newProcessingStep(node) { return ProcessingStep.create(node) }
 
-      /** @param {number} level @param {ErrorContext} ec @return {Promise<TProcessingStep<BuildPhase>[]>} */
-      async getProcessingSteps(level, ec) { return DependencyGraph.getProcessingSteps(this.nodes, level, SharedPhases.newProcessingStep, ec) }
+      /** @param {number} level @param {ErrorContext} ec @param {Map<string,BuildPhase>} subset @return {Promise<TProcessingStep<BuildPhase>[]>} */
+      async getProcessingSteps(level, ec, subset) {
+         return DependencyGraph.getProcessingSteps(subset ?? this.nodes, "BuildPhase", level, SharedPhases.newProcessingStep, ec)
+      }
 
       ///////////
 
@@ -1065,19 +1230,11 @@ jspo.addProject({
 
 jspo.project("build-javascript").phase("build").addBuild( { command:"build javascript files", action: async ({path}) => console.log(path) })
 
-/*
-jspo.addProject({
-   project: "cycle",
-   phases: [ { phase: "build" } ]
-})
-*/
-
 jspo.addProject({
    project: "default",
    phases: [
       { phase: "pre-clean" },
       { phase: "post-clean" },
-      // { phase: "dep1", dependsOnProjects:[{project:"cycle",phase:"dep1"}] },
       { phase: "xxx", prePhase: "pre-clean", postPhase: "post-clean", //dependsOnPhases:["xxx"],
         builds: [
                   // files xxx2 and xxx3 must pre exist (no build rule) else build error (use touch xxx2 / xxx3)
@@ -1092,6 +1249,7 @@ jspo.addProject({
 })
 
 // jspo.addProject({project:"cycle",phases:[{phase:"dep1", dependsOnProjects:[{project:"default",phase:"dep1"}]}]})
+// jspo.project("default").addPhase({phase:"dep1", dependsOnProjects:[{project:"cycle",phase:"dep1"}]})
 // await jspo.project("default").validate()
 
 jspo.switchProject("default", "build-javascript-modules")
@@ -1152,3 +1310,25 @@ await jspo.validateProjects().catch(e => {
 })
 
 // jspo.project("project-with-cycles-2").phase("build").build()
+
+await jspo.project("project-with-cycles-2").phase("build").build(["c4"])
+
+
+jspo.addProject({
+   project: "p1",
+   phases: [ { phase: "build", dependsOnProjects:[{project:"p2",phase:"build"}]} ]
+})
+
+jspo.addProject({
+   project: "p2",
+   phases: [ { phase: "build", dependsOnProjects:[{project:"p3",phase:"build"}]} ]
+})
+
+jspo.project("p1").phase("build").addBuild({command:"c1",dependsOnCommands:["c2"],action:async()=>{console.log("project p1 command c1")}})
+jspo.project("p1").phase("build").addBuild({command:"c2",dependsOnCommands:["c3"],action:async()=>{console.log("project p1 command c2")}})
+// no validation allows to build "invalid" projects (cycles are always prevented)
+await jspo.project("p1").phase("build").build()
+
+jspo.commandLineProcessor.printUsage()
+
+await jspo.processCommandLine()

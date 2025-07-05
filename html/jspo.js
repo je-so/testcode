@@ -18,15 +18,15 @@ import * as fs from "node:fs"
 const jspo = (() => {
 
    /**
-    * @typedef JSPO_ProjectConfig
+    * @typedef JSPO_Common_ProjectConfig
     * @property {string} config Name of configuration.
     * @property {true} [default] Must be set to true for the default configuration. Which is used if no configuration is set or given at the command line.
     *
-    * @typedef {JSPO_ProjectConfig&JSPO_User_ProjectConfig} JSPO_ProjectConfig_Definition
+    * @typedef {JSPO_Common_ProjectConfig & JSPO_ProjectConfig} JSPO_ProjectConfig_Definition
     *
     * @typedef JSPO_BuildRef_Definition
     * @property {string} project
-    * @property {string} [config] Missing config uses default configuration (see JSPO_ProjectConfig property default set to true).
+    * @property {string} [config] Missing config uses default configuration (see setDefaultConfig).
     * @property {string} phase
     * @property {string} [build]
     *
@@ -37,7 +37,7 @@ const jspo = (() => {
     *
     * @typedef JSPO_Project_Definition
     * @property {string} project
-    * @property {string} [config] Missing config uses default configuration (see JSPO_ProjectConfig property default set to true).
+    * @property {string|JSPO_ProjectConfig_Definition} [config] Missing config uses default configuration (see setDefaultConfig).
     * @property {string} [comment]
     * @property {JSPO_Phase_Definition[]} phases
     *
@@ -51,18 +51,18 @@ const jspo = (() => {
     *
     * @typedef JSPO_PhaseRef_Definition
     * @property {string} [project] Missing project uses project this phase is part of.
-    * @property {string} [config] Missing config uses default configuration (see JSPO_ProjectConfig property default set to true).
+    * @property {string} [config] Missing config uses default configuration (see setDefaultConfig).
     * @property {string} phase
     *
     * @typedef JSPO_BuildAction_InitArg
     * @property {string} project
-    * @property {string} config
+    * @property {BuildConfig} config
     * @property {string} path
     * @property {string[]} dependsOnBuilds
     *
     * @typedef JSPO_BuildAction_CallArg
     * @property {string} project
-    * @property {string} config
+    * @property {BuildConfig} config
     * @property {string} path
     * @property {string[]} dependsOnBuilds
     * @property {ErrorContext} ec
@@ -122,11 +122,11 @@ const jspo = (() => {
          return path
       }
       errcontext() {
-         const forProject = this.project === undefined ? "" : ` for project ${JSON.stringify(this.project)}`
-                            + (this.config === undefined ? "" : `, config ${JSON.stringify(this.config)}`)
-                            + (this.phase === undefined ? "" : `, phase ${JSON.stringify(this.phase)}`)
-                            + (this.build === undefined ? "" : `, build ${JSON.stringify(this.build)}`)
-         return `${this.fct} failed${forProject}`
+         const forProject = (this.project === undefined ? "" : ` project ${JSON.stringify(this.project)}`)
+                            + (this.config === undefined ? "" : ` config ${JSON.stringify(this.config)}`)
+                            + (this.phase === undefined ? "" : ` phase ${JSON.stringify(this.phase)}`)
+                            + (this.build === undefined ? "" : ` build ${JSON.stringify(this.build)}`)
+         return `${this.fct} failed${forProject?" for":""}${forProject}`
       }
       /** @param {string} msg */
       log(msg) {
@@ -183,97 +183,100 @@ const jspo = (() => {
       #commandLine
       /** @type {Files} */
       #files
-      /** @type {BuildConfigs} */
-      #configs
       /** @type {BuildTargets} */
       #targets
+      /** @type {BuildProjects} */
+      #projects
 
       constructor() {
          this.#commandLine = new CommandLineProcessor(Bun.argv.slice(2)) // argv: [ "path/to/bun", "path/to/jspo.js", "arg1", "arg2", ... ]
          this.#files = new Files()
-         this.#configs = new BuildConfigs()
          this.#targets = new BuildTargets()
+         this.#projects = new BuildProjects()
       }
 
-      /** @return {string[]} */
-      get configNames() { return this.#configs.configNames }
-      /** @return {JSPO_ProjectConfig_Definition} */
-      get defaultConfig() { return this.#configs.defaultConfig }
+      /** @return {CommandLineProcessor} */
+      get commandLineProcessor() { return this.#commandLine }
       /** @type {Files} Allows to manipulate system files. */
       get files() { return this.#files }
+      /** @return {string[]} */
+      get configNames() { return this.#projects.sharedConfigs.configNames }
+      /** @return {BuildConfig} */
+      get defaultConfig() { return this.#projects.defaultConfig }
       /** @type {string[]} */
       get targetNames() { return this.#targets.targetNames }
-      /** @param {{project:string,config?:string,phase:string}} arg @return {Promise<TProcessingStep<BuildNode>[]>} */
-      async buildSteps(arg) { return this.phase(arg).buildSteps() }
-      /** @param {{project:string,config?:string,phase:string,builds?:string[]}} arg @return {Promise<void>} */
-      async build(arg) { return this.phase(arg).build(arg.builds) }
-      /** @param {string} [config] @param {()=>ErrorContext} [getEC] @return {BuildConfig} */
-      buildConfig(config, getEC) { return this.#configs.buildConfig(config,getEC ?? (()=>new ErrorContext({fct:"buildConfig(config)",accesspath:["config"]}))) }
-      /** @param {string} config @return {JSPO_ProjectConfig_Definition} */
-      config(config) { return this.#configs.config(config) }
-      /** @param {{project:string,config?:string,phase:string}} arg @return {BuildPhase} */
-      phase(arg) { return this.project(arg).phase(arg.phase) }
-      /** @param {{project:string,config?:string}} arg @return {Map<string,BuildPhase>} */
-      phases(arg) { return this.project(arg).projectPhases.phases }
-      /** @param {string|{project:string,config?:string}} arg @return {BuildProject} */
-      project(arg) { return typeof arg === "string" ? this.#configs.project(arg) : this.#configs.project(arg.project,arg.config) }
-      /** @param {string} [config] @return {BuildProjects} */
-      projects(config) { return this.buildConfig(config,()=>new ErrorContext({fct:"projects(config)",accesspath:["config"]})).projects }
+      /** @param {undefined|string} config @return {BuildConfig} */
+      config(config) { return this.#projects.sharedConfigs.config(config,()=>new ErrorContext({fct:"config(p)",accesspath:["p"]})) }
+      /** @param {string} project @param {undefined|string} config @param {string} phase @return {BuildPhase} */
+      phase(project, config, phase) { return this.project(project,config).phase(phase) }
+      /** @param {string} project @param {string} [config] @return {BuildPhase[]} */
+      phases(project, config) { return [...this.project(project,config).phases.phases.values()] }
+      /** @param {string} project @param {string} [config] @return {BuildProject} */
+      project(project, config) { return this.#projects.project(project,config) }
+      /** @param {undefined|string} config @return {BuildProject[]} */
+      projects(config) { return this.#projects.projectsByConfig(config,()=>new ErrorContext({fct:"projects(config)",accesspath:["config"]})) }
       /** @param {string} [config] @return {string[]} */
-      projectNames(config) { return this.buildConfig(config,()=>new ErrorContext({fct:"projectNames(config)",accesspath:["config"]})).projectNames }
+      projectNames(config) { return this.#projects.projectsByConfig(config,()=>new ErrorContext({fct:"projectNames(config)",accesspath:["config"]})).map(p => p.name) }
       /** @param {string} name @return {JSPO_Target_Definition} */
       target(name) { return this.#targets.target(name) }
-      /** @return {Promise<void>} */
-      async validateProjects() { return this.#configs.validate(new ErrorContext({fct:"validateProjects()"})) }
 
-      /** @param {(config:JSPO_ProjectConfig_Definition)=>void} callback */
+      /** @param {(config:BuildConfig)=>void} callback */
       forEachConfig(callback) {
-         for (const name of this.#configs.configNames)
+         for (const name of this.#projects.sharedConfigs.configNames)
             callback(this.config(name))
       }
 
       /** @param {JSPO_BuildRef_Definition} ref @return {JSPO_BuildRef_Definition[]} */
       matchBuildRef(ref) {
          const matchedTargets = []
-         const config = jspo.buildConfig(ref.config || undefined).name, build = ref.build || undefined
+         const config = jspo.config(ref.config || undefined).name, build = ref.build || undefined
          for (const project of jspo.projectNames(config)) {
             if (project !== ref.project && ref.project) continue
-            for (const phase of jspo.project({project,config}).phaseNames) {
+            for (const phase of jspo.project(project,config).phaseNames) {
                if (phase !== ref.phase && ref.phase) continue
-               if (build && !jspo.phase({project,config,phase}).hasBuild(build)) continue
+               if (build && !jspo.phase(project,config,phase).hasBuild(build)) continue
                matchedTargets.push({project,config,phase,build})
             }
          }
          return matchedTargets
       }
 
-      /** @param {string} name @param {()=>ErrorContext} getEC */
-      validateName(name, getEC) { validateName(name,getEC) }
+      ///////////
 
+      /** @param {string} project @param {undefined|string} config @param {string} phase @param {JSPO_BuildRule_Definition} build */
+      addBuild(project, config, phase, build) { this.phase(project,config,phase).addBuild(build) }
 
-      /** @param {{project:string,config?:string,phase:string,build:JSPO_BuildRule_Definition}} arg */
-      addBuild(arg) { this.phase(arg).addBuild(arg.build) }
-
-      /** @param {{project:string,config?:string,phase:JSPO_Phase_Definition}} arg */
-      addPhase(arg) { this.project(arg).addPhase(arg.phase) }
+      /** @param {string} project @param {undefined|string} config @param {JSPO_Phase_Definition} phase */
+      addPhase(project, config, phase) { this.project(project,config).addPhase(phase) }
 
       /** @param {JSPO_Project_Definition} project */
-      addProject(project) { this.#configs.addProject(project) }
+      addProject(project) { this.#projects.addProject(project) }
 
       /** @param {...JSPO_Target_Definition} targets */
       addTargets(...targets) { this.#targets.addTargets(targets) }
 
       /** @param {...JSPO_ProjectConfig_Definition} configs */
-      addConfigs(...configs) { this.#configs.addConfigs(configs) }
+      addConfigs(...configs) { this.#projects.sharedConfigs.addConfigs(...configs) }
+
+      /** @param {JSPO_ProjectConfig_Definition} config */
+      setDefaultConfig(config) { this.#projects.sharedConfigs.setDefaultConfig(config) }
+
+      ///////////
+
+      /** @return {Promise<void>} */
+      async validateProjects() { return this.#projects.validate(new ErrorContext({fct:"validateProjects()"})) }
+
+      /** @param {string} project @param {undefined|string} config @param {string} phase @param {string[]} [builds] @return {Promise<void>} */
+      async build(project, config, phase, builds) { return this.phase(project,config,phase).build(builds) }
+
+      /** @param {string} project @param {undefined|string} config @param {string} phase @return {Promise<TProcessingStep<BuildNode>[]>} */
+      async buildSteps(project, config, phase) { return this.phase(project,config,phase).buildSteps() }
 
       ////////////////////////////
       // Command-Line interface //
       ////////////////////////////
 
       async processCommandLine() { return this.#commandLine.process() }
-
-      /** @return {CommandLineProcessor} */
-      get commandLineProcessor() { return this.#commandLine }
 
       ///////////
 
@@ -331,7 +334,7 @@ const jspo = (() => {
                   console.groupEnd()
                   console.log()
                   for (const {project,config,phase,build} of matchedTargets) {
-                     await jspo.phase({project,config,phase}).build(build ? [build] : undefined)
+                     await jspo.phase(project,config,phase).build(build ? [build] : undefined)
                   }
                }
             }
@@ -350,7 +353,7 @@ const jspo = (() => {
          else {
             for (const config of configNames)
                for (const projectName of jspo.projectNames(config)) {
-                  const project = jspo.project({project:projectName,config})
+                  const project = jspo.project(projectName,config)
                   console.log("Project:")
                   console.log(" name:",JSON.stringify(projectName),"config:",JSON.stringify(config))
                   if (project.comment) console.log(" comment:",project.comment)
@@ -873,8 +876,8 @@ const jspo = (() => {
 
       ///////////
 
-      /** @return {string} */
-      get config() { return this.phase.config.name }
+      /** @return {BuildConfig} */
+      get config() { return this.phase.config }
       /** @return {string} */
       get project() { return this.phase.projectName }
 
@@ -1023,7 +1026,7 @@ const jspo = (() => {
          return JSON.stringify(project)+","+JSON.stringify(config.name)+","+JSON.stringify(phase)
       }
 
-      get canonicalName() { return `project:${this.projectName},phase:${this.name}`}
+      get canonicalName() { return `project:${this.projectName} config:${this.config.name} phase:${this.name}`}
 
       /** @type {boolean} */
       get isDefined() { return this.project !== undefined }
@@ -1037,12 +1040,12 @@ const jspo = (() => {
       /** @param {ErrorContext} [ec] @return {Promise<void>} */
       async validate(ec) {
          if (this.validated && this.buildNodes.validated) return
-         ec = ec?.newPhase(this.name) ?? new ErrorContext({fct:"validate()",project:this.projectName,phase:this.name})
-         this.validatePrePost(ec)
-         this.validateDefined(ec)
-         await this.buildNodes.validate(ec)
          this.validated = true
          try {
+            ec = ec?.newPhase(this.name) ?? new ErrorContext({fct:"validate()",project:this.projectName,phase:this.name})
+            this.validatePrePost(ec)
+            this.validateDefined(ec)
+            await this.buildNodes.validate(ec)
             for (const phase of this.typedDependentOn)
                await phase.validate(ec)
          }
@@ -1107,21 +1110,22 @@ const jspo = (() => {
       async build(paths) {
          const ec = new ErrorContext({fct:"build()",project:this.projectName,phase:this.name})
          const subset = paths?.length ? this.buildNodes.getSubset(paths,new ErrorContext({fct:"build(paths)",accesspath:["paths"],project:this.projectName,phase:this.name})) : undefined
+         this.logPhase(this,paths,true)
          for (const step of await this.getProcessingSteps(0,ec)) {
             if (!step.needUpdate) continue
-            this.logStep(step,paths)
-            console.group()
             const prePhase = step.node.prePhase, phase = step.node, postPhase = step.node.postPhase
+            this.logPhase(phase,phase===this?paths:undefined,false)
+            console.group()
             prePhase && await prePhase.buildNodes.build(ec)
-            await phase.buildNodes.build(ec,subset)
+            await phase.buildNodes.build(ec,phase===this?subset:undefined)
             postPhase && await postPhase.buildNodes.build(ec)
             console.groupEnd()
-            console.log()
          }
+         console.log()
       }
 
-      /** @param {TProcessingStep<BuildPhase>} step @param {null|undefined|string[]} paths */
-      logStep(step, paths) { console.log(`Build project:${JSON.stringify(step.node.projectName)} config:${JSON.stringify(step.node.config.name)} phase:${JSON.stringify(step.node.name)}${paths?.length?" build:"+JSON.stringify(paths.join(",")):""}`) }
+      /** @param {BuildPhase} node @param {null|undefined|string[]} paths */
+      logPhase(node, paths, toplevel) { console.log(`Build project:${JSON.stringify(node.projectName)} config:${JSON.stringify(node.config.name)} phase:${JSON.stringify(node.name)}${paths?.length?" build:"+JSON.stringify(paths.join(",")):""}${toplevel?"\n=====":""}`) }
    }
 
    /**
@@ -1137,16 +1141,14 @@ const jspo = (() => {
       ///////////////////////////////
       // Overwrite DependencyGraph //
       ///////////////////////////////
-      /** @param {BuildProject} project @param {JSPO_Project_Definition} phasesDefinition @param {ErrorContext} ec */
-      constructor(project, phasesDefinition, ec) {
-         typeof phasesDefinition === "object" || expectTypeError(phasesDefinition,"object",ec)
-         Array.isArray(phasesDefinition.phases) || error(`Expect ${ec.ap("phases")} of type Array instead of »${typeof phasesDefinition.phases}«.`,ec)
-         phasesDefinition.phases.length > 0 || error(`Expect ${ec.ap("phases")} not empty.`,ec)
+      /** @param {BuildProject} project @param {JSPO_Project_Definition} phasesDefinition @param {()=>ErrorContext} getEC */
+      constructor(project, phasesDefinition, getEC) {
+         typeof phasesDefinition === "object" || expectTypeError(phasesDefinition,"object",getEC())
+         Array.isArray(phasesDefinition?.phases) || expectTypeError(phasesDefinition?.phases,"Array",getEC().newAccessPath("phases"))
          this.phases = new Map()
          this.project = project
-
-         phasesDefinition.phases.forEach( (phaseDefinition, i) => {
-            this.addPhase(phaseDefinition, ec.newAccessPath("phases",i))
+         phasesDefinition.phases.forEach( (phaseDef, i) => {
+            this.addPhase(phaseDef, getEC().newAccessPath("phases",i))
          })
       }
 
@@ -1166,13 +1168,13 @@ const jspo = (() => {
       ///////////
 
       /** @return {BuildConfig} */
-      get config() { return this.project.projects.config }
+      get config() { return this.project.config }
 
-      /** @return {BuildConfigs} */
-      get configs() { return this.project.projects.config.configs }
+      /** @return {SharedConfigs} */
+      get sharedConfigs() { return this.project.projects.sharedConfigs }
 
       /** @return {SharedPhases} */
-      get sharedPhases() { return this.project.projects.config.configs.sharedPhases }
+      get sharedPhases() { return this.project.projects.sharedPhases }
 
       /** @type {string[]} */
       get phaseNames() { return [...this.phases.keys()] }
@@ -1195,7 +1197,7 @@ const jspo = (() => {
             validateName(phaseRef.phase, () => getEC().newAccessPath("phase"))
             phaseRef.project === undefined || validateName(phaseRef.project, () => getEC().newAccessPath("project"))
             phaseRef.config === undefined || validateName(phaseRef.config, () => getEC().newAccessPath("config"))
-            const buildConfig = this.configs.buildConfig(phaseRef.config, () => getEC().newAccessPath("config"))
+            const buildConfig = this.sharedConfigs.config(phaseRef.config, () => getEC().newAccessPath("config"))
             result.phase = phaseRef.phase
             result.config = buildConfig
             result.project = phaseRef.project ?? this.project.name
@@ -1232,117 +1234,153 @@ const jspo = (() => {
    }
 
    class BuildProject {
-      /** @type {BuildProjects} Onwer of this object. */
+      /** @type {BuildProjects} Owner of this object. */
       projects
       /** @type {string} */
       name
-      /** @type {ProjectPhases} */
-      projectPhases
       /** @type {string} */
       comment
+      /** @type {BuildConfig} */
+      config
+      /** @type {ProjectPhases} */
+      phases
 
-      /** @param {BuildProjects} projects @param {string} name @param {JSPO_Project_Definition} phasesDefinition @param {ErrorContext} ec */
-      constructor(projects, name, phasesDefinition, ec) {
+      /** @param {BuildProjects} projects @param {JSPO_Project_Definition} definition @param {()=>ErrorContext} getEC */
+      constructor(projects, definition, getEC) {
+         typeof definition === "object" || expectTypeError(definition,"object",getEC())
+         const name = definition?.project
+         validateName(name, () => getEC().newAccessPath("project"))
+         const ct = typeof definition.config
+         ct === "undefined" || ct === "string" || ct === "object" || expectTypeError(ct,"string|object|undefined",getEC().newAccessPath("config"))
+         const getEC2 = () => getEC().newProject(this.name)
          this.projects = projects
          this.name = name
-         this.projectPhases = new ProjectPhases(this, phasesDefinition, ec.newProject(this.name))
-         this.comment = phasesDefinition.comment != null ? String(phasesDefinition.comment).trim() : ""
+         this.comment = String(definition.comment??"").trim()
+         this.config = typeof definition.config === "object" ? new BuildConfig(projects.sharedConfigs,definition.config,()=>getEC().newAccessPath("config")) : projects.matchConfig(definition.config,()=>getEC2().newAccessPath("config"))
+         typeof definition.config === "object" && projects.matchConfig(this.config.name,()=>getEC2().newAccessPath("config","config"))
+         this.phases = new ProjectPhases(this, definition, () => getEC2().newConfig(this.config.name))
       }
 
       /** @type {string[]} */
-      get phaseNames() { return this.projectPhases.phaseNames }
+      get phaseNames() { return this.phases.phaseNames }
 
       /** @param {string} name @param {()=>ErrorContext} [getEC] @return {BuildPhase} */
-      phase(name, getEC) { return this.projectPhases.phase(name,() => getEC?.().newProject(this.name) ?? new ErrorContext({fct:"phase(name)",accesspath:["name"],project:this.name})) }
+      phase(name, getEC) { return this.phases.phase(name,() => getEC?.().newProject(this.name) ?? new ErrorContext({fct:"phase(name)",accesspath:["name"],project:this.name})) }
 
       /** @param {JSPO_Phase_Definition} phaseDefinition */
-      addPhase(phaseDefinition) { this.projectPhases.addPhase(phaseDefinition) }
+      addPhase(phaseDefinition) { this.phases.addPhase(phaseDefinition) }
 
       /** @param {ErrorContext} [ec] @return {Promise<void>} */
-      async validate(ec) { return this.projectPhases.validate(ec?.newProject(this.name) ?? new ErrorContext({fct:"validate",project:this.name})) }
+      async validate(ec) { return this.phases.validate(ec?.newProject(this.name) ?? new ErrorContext({fct:"validate",project:this.name})) }
 
    }
 
    class BuildProjects {
-      /** @type {BuildConfig} Owner of this object which defines the configuration for all projects. */
-      config
-      /** @type {Map<string,BuildProject>} */
+      /** @type {BuildProject[]} */
       projects
+      /** @type {Map<string,BuildProject>} */
+      nameconfigIndex
+      /** @type {Map<string,BuildProject[]>} */
+      name2projects
+      /** @type {Map<string,BuildProject[]>} */
+      config2projects
+      /** @type {SharedConfigs} */
+      sharedConfigs
+      /** @type {SharedPhases} */
+      sharedPhases
 
-      /** @param {BuildConfig} config */
-      constructor(config) {
-         this.config = config
-         this.projects = new Map()
+      constructor() {
+         this.projects = []
+         this.nameconfigIndex = new Map()
+         this.name2projects = new Map()
+         this.config2projects = new Map()
+         this.sharedConfigs = new SharedConfigs()
+         this.sharedPhases = new SharedPhases()
       }
 
       /** @param {ErrorContext} ec @return {Promise<void>} */
       async validate(ec) {
          ec ??= new ErrorContext({fct:"validate()"})
-         for (const project of this.projects.values())
+         for (const project of this.projects)
             await project.validate(ec)
+         await this.sharedPhases.validate(ec)
       }
 
       ///////////
 
-      /** @param {string} name @param {()=>ErrorContext} getEC @return {BuildProject} */
-      project(name, getEC) { return this.projects.get(name) ?? error(`Project ${getEC().ap()}=${JSON.stringify(name)} is not defined.`,getEC()) }
+      /** @return {BuildConfig} */
+      get defaultConfig() { return this.sharedConfigs.defaultConfig }
 
-      /** @param {string} name @return {boolean} */
-      has(name) { return this.projects.has(name) }
+      /** @param {string} project @param {string} [config] @return {boolean} */
+      has(project,config) {
+         config ??= this.sharedConfigs.hasDefault ? this.sharedConfigs.defaultConfig.name : undefined
+         return config !== undefined && this.nameconfigIndex.has(this.canonicalName(project,config))
+      }
+      /** @param {string} config @return {boolean} */
+      hasProjectsWithConfig(config) { return this.config2projects.has(config??this.defaultConfig.name) }
+      /** @param {string} project @return {boolean} */
+      hasProjectsWithName(project) { return this.name2projects.has(project) }
+
+      /** @param {string} project @param {string} [config] @param {()=>ErrorContext} [getEC] @return {BuildProject} */
+      project(project, config, getEC) {
+         getEC ??= () => new ErrorContext({fct:"project(project,config)"})
+         config = this.matchConfig(config,()=>getEC().newAccessPath("config")).name
+         return this.nameconfigIndex.get(this.canonicalName(project,config)) ?? error(`Unknown project ${getEC().ap("project")}=${JSON.stringify(project)} ${getEC().ap("config")}=${JSON.stringify(config)} combination.`,getEC())
+      }
+
+      /** @param {string} [config] @param {()=>ErrorContext} [getEC] @return {BuildProject[]} */
+      projectsByConfig(config, getEC) {
+         getEC ??= () => new ErrorContext({fct:"projectsByConfig(config)",accesspath:["config"]})
+         config = this.matchConfig(config,getEC).name
+         return [...(this.config2projects.get(config)??[])]
+      }
+
+      /** @param {string} project @param {string} config */
+      canonicalName(project,config) { return JSON.stringify(project)+","+JSON.stringify(config) }
+
+      /** @param {undefined|string} config @param {()=>ErrorContext} getEC @return {BuildConfig} */
+      matchConfig(config, getEC) { return this.sharedConfigs.config(config,getEC) }
 
       ///////////
 
       /** @param {JSPO_Project_Definition} definition @param {()=>ErrorContext} [getEC] */
       addProject(definition, getEC) {
-         getEC ??= () => new ErrorContext({fct:"addProject(p)",accesspath:["p"],config:this.config.name})
-         typeof definition === "object" || expectTypeError(definition,"object",getEC())
-         this.config.name === definition.config || definition.config === undefined && this.config.isDefault || error(`Expect ${getEC().ap("config")}=${JSON.stringify(definition.config)} to have value ${JSON.stringify(this.config.name)}${this.config.isDefault?" or undefined":""}.`,getEC())
-         const name = definition?.project
-         validateName(name, () => getEC().newAccessPath("project"))
-         this.projects.has(name) && error(`Expect unique name ${getEC().ap("project")}=${JSON.stringify(name)}.`,getEC())
-         const newProject = new BuildProject(this, name, definition, getEC())
-         this.projects.set(name, newProject)
+         getEC ??= () => new ErrorContext({fct:"addProject(p)",accesspath:["p"]})
+         const newProject = new BuildProject(this, definition, getEC)
+         const name = newProject.name, config = newProject.config.name
+         this.has(name,config) && error(`Expect unique combination ${getEC().ap("project")}=${JSON.stringify(definition.project)} ${getEC().ap("config")}=${JSON.stringify(definition.config)}`,getEC().newProject(name).newConfig(config))
+         this.projects.push(newProject)
+         this.nameconfigIndex.set(this.canonicalName(name,config),newProject)
+         this.name2projects.get(name)?.push(newProject) ?? this.name2projects.set(name, [newProject])
+         this.config2projects.get(config)?.push(newProject) ?? this.config2projects.set(config, [newProject])
       }
-
    }
 
    class BuildConfig {
-      /** @type {BuildConfigs} */
-      configs
+      /** @type {SharedConfigs} Owner of this object */
+      sharedConfigs
+      /** @type {string} */
+      name
       /** @type {JSPO_ProjectConfig_Definition} */
-      definition
-      /** @type {BuildProjects} */
-      projects
+      values
 
-      /** @param {BuildConfigs} configs @param {JSPO_ProjectConfig_Definition} definition */
-      constructor(configs, definition) {
-         this.configs = configs
-         this.definition = definition
-         this.projects = new BuildProjects(this)
+      /** @param {SharedConfigs} sharedConfigs @param {JSPO_ProjectConfig_Definition} definition @param {()=>ErrorContext} getEC */
+      constructor(sharedConfigs, definition, getEC) {
+         typeof definition === "object" || expectTypeError(definition,"object",getEC())
+         const name = definition?.config
+         validateName(name, () => getEC().newAccessPath("config"))
+         this.sharedConfigs = sharedConfigs
+         this.name = name
+         this.values = definition
       }
-
-      /** @param {ErrorContext} ec @return {Promise<void>} */
-      async validate(ec) { return this.projects.validate(ec) }
 
       ///////////
 
       /** @return {boolean} */
-      get isDefault() { return this.definition.default === true }
-
-      /** @return {string} */
-      get name() { return this.definition.config }
-
-      /** @return {string[]} */
-      get projectNames() { return [...this.projects.projects.keys()] }
-
-      /** @param {string} name @param {()=>ErrorContext} getEC @return {BuildProject} */
-      project(name, getEC) { return this.projects.project(name,getEC) }
-
+      get isDefault() { return this.sharedConfigs.defaultConfig.name === this.name }
    }
 
-   class BuildConfigs {
-      /** @type {SharedPhases} */
-      sharedPhases
+   class SharedConfigs {
       /** @type {Map<string,BuildConfig>} */
       configs = new Map()
       /** @type {undefined|BuildConfig} */
@@ -1352,72 +1390,43 @@ const jspo = (() => {
          this.sharedPhases = new SharedPhases()
       }
 
-      /** @param {ErrorContext} ec @return {Promise<void>} */
-      async validate(ec) {
-         ec ??= new ErrorContext({fct:"validate()"})
-         for (const config of this.configs.values())
-            await config.validate(ec)
-         await this.sharedPhases.validate(ec)
-      }
-
       ///////////
 
       /** @return {string[]} */
       get configNames() { return [...this.configs.keys()] }
-      /** @return {JSPO_ProjectConfig_Definition} */
-      get defaultConfig() { return this.default?.definition ?? error(`Default configuration is undefined.`,new ErrorContext({fct:"defaultConfig()"})) }
+      /** @return {BuildConfig} */
+      get defaultConfig() { return this.default ?? error(`Unknown default configuration (call setDefaultConfig before).`,new ErrorContext({fct:"defaultConfig()"})) }
+      /** @return {boolean} */
+      get hasDefault() { return this.default !== undefined }
 
-      /** @param {undefined|string} name @param {()=>ErrorContext} getEC @return {BuildConfig} */
-      buildConfig(name, getEC) {
-         return name === undefined
-                  ? this.default ?? error(`Unknown default configuration ${getEC().ap()}=undefined.`,getEC())
+      /** @param {null|undefined|string} name @param {()=>ErrorContext} getEC @return {BuildConfig} */
+      config(name, getEC) {
+         return name == null
+                  ? this.default ?? error(`Unknown default configuration (call setDefaultConfig before).`,getEC())
                   : this.configs.get(name) ?? error(`Unknown configuration ${getEC().ap()}=${JSON.stringify(name)}.`,getEC())
       }
 
-      /** @param {string} name @return {JSPO_ProjectConfig_Definition} */
-      config(name) { return this.configs.get(name)?.definition ?? error(`Configuration name=${JSON.stringify(name)} is undefined.`,new ErrorContext({fct:"config(name)"})) }
       /** @param {string} name @return {boolean} */
       has(name)  { return this.configs.has(name) }
 
-      /** @param {string} name @param {string} [config] @return {BuildProject} */
-      project(name, config) {
-         const getEC = () => new ErrorContext({fct:"project(name,config)"})
-         const buildConfig = this.buildConfig(config,() => getEC().newAccessPath("config"))
-         return buildConfig.project(name,() => getEC().newAccessPath("name"))
-      }
-
       ///////////
 
-      /** @param {JSPO_ProjectConfig_Definition} definition @param {()=>ErrorContext} [getEC] */
-      addConfig(definition, getEC) {
-         getEC ??= () => new ErrorContext({fct:"addConfig(p)",accesspath:["p"]})
-         const name = definition.config
-         validateName(name, () => getEC().newAccessPath("config"))
-         const newConfig = new BuildConfig(this, definition)
-         if (definition.default === true) {
-            this.default && error(`Can not set configuration ${getEC().ap("config")}=${JSON.stringify(name)} as default cause configuration ${JSON.stringify(this.default.name)} is already registered as default.`,getEC().newAccessPath("default"))
-            this.default = newConfig
-         }
-         this.configs.set(name,newConfig)
-      }
-
-      /** @param {JSPO_ProjectConfig_Definition[]} configs */
-      addConfigs(configs) {
+      /** @param {...JSPO_ProjectConfig_Definition} configs */
+      addConfigs(...configs) {
          const getEC = () => new ErrorContext({fct:"addConfigs(p)",accesspath:["p"]})
          Array.isArray(configs) || expectTypeError(configs,"Array",getEC())
-         configs.forEach( (config, i) => {
-            this.addConfig(config,() => getEC().newAccessPath(i))
+         configs.forEach( (definition, i) => {
+            const newConfig = new BuildConfig(this, definition, () => getEC().newAccessPath(i))
+            this.configs.set(newConfig.name,newConfig)
          })
       }
 
-      /** @param {JSPO_Project_Definition} definition */
-      addProject(definition) {
-         const getEC = () => new ErrorContext({fct:"addProject(p)",accesspath:["p"]})
-         typeof definition === "object" || expectTypeError(definition,"object",getEC())
-         const configName = definition.config
-         configName === undefined || validateName(configName, () => getEC().newAccessPath("config"))
-         const buildConfig = this.buildConfig(configName, () => getEC().newAccessPath("config"))
-         buildConfig.projects.addProject(definition,() => getEC().newConfig(buildConfig.name))
+      /** @param {JSPO_ProjectConfig_Definition} definition */
+      setDefaultConfig(definition) {
+         const getEC = () => new ErrorContext({fct:"setDefaultConfig(p)",accesspath:["p"]})
+         this.default && error(`Can not overwrite default configuration with p.config=${JSON.stringify(definition?.config)}.`,getEC().newConfig(this.default.name))
+         this.default = new BuildConfig(this, definition, getEC)
+         this.configs.set(this.default.name,this.default)
       }
    }
 
@@ -1497,15 +1506,44 @@ const jspo = (() => {
 })()
 
 /**
- * @typedef JSPO_User_ProjectConfig
+ * @typedef Debug_ProjectConfig
+ * @property {"debug"} config
  * @property {string} outdir
- * @property {boolean} debug
- * @property {boolean} test
+ * @property {true} debug
+ * @property {false} release
+ * @property {false} test
+ *
+ * @typedef Release_ProjectConfig
+ * @property {"release"} config
+ * @property {string} outdir
+ * @property {false} debug
+ * @property {true} release
+ * @property {false} test
+ *
+ * @typedef Test_ProjectConfig
+ * @property {"test"} config
+ * @property {string} outdir
+ * @property {false} debug
+ * @property {false} release
+ * @property {true} test
+ *
+ * @typedef Default_ProjectConfig
+ * @property {"default"} config
+ * @property {string} outdir
+ * @property {true} default
+ * @property {false} debug
+ * @property {false} release
+ * @property {false} test
+ *
+ * @typedef {Default_ProjectConfig|Debug_ProjectConfig|Release_ProjectConfig|Test_ProjectConfig} JSPO_ProjectConfig
  */
+
+jspo.setDefaultConfig({ config: "default", outdir:"bin", default: true, debug:false, release:false, test:false })
+
 jspo.addConfigs(
-   { config: "default", default:true, outdir: "bin", debug:false, test:false },
-   { config: "release", outdir: "bin/release", debug:false, test:false },
-   { config: "debug", outdir: "bin/debug", debug:true, test:false },
+   { config: "debug", outdir: "bin/debug", debug:true, release:false, test:false },
+   { config: "release", outdir: "bin/release", debug:false, release:true, test:false },
+   { config: "test", outdir: "bin/test", debug:false, release:false, test:true },
 )
 
 jspo.addTargets(
@@ -1533,27 +1571,32 @@ jspo.project("build-javascript").phase("build").addBuild( { command:"build javas
 jspo.addProject({
    project: "default",
    phases: [
-      { phase: "pre-clean" /* TODO: matchconfig: ["debug"] */ },
+      { phase: "pre-clean" },
       { phase: "post-clean" },
       { phase: "clean", prePhase: "pre-clean", postPhase: "post-clean" },
       { phase: "build-javascript-modules", dependsOnPhases: ["clean",{project:"build-javascript",phase:"build"},{config:"debug",phase:"xxx"}] },
    ]
 })
 
-console.log(`=== jspo.forEachConfig ===`)
+console.log("====\nTEST jspo.forEachConfig\n====")
 jspo.forEachConfig( (cfg) => {
-   if (cfg.default) return
-   console.log(`add project:default config:${cfg.config}`)
+   /** @type {undefined|JSPO_ProjectConfig} */
+   const config = ({
+      debug: { ...jspo.config("debug").values, outdir: "bin/project/default/debug/" },
+      release: { ...jspo.config("release").values, outdir: "bin/project/default/release" },
+   })[cfg.name] || undefined
+   if (config === undefined) return
+   console.log(`add project:default config:${cfg.name}`)
    jspo.addProject({
       project: "default",
-      config: cfg.config,
+      config: config,
       phases: [
          { phase: "xxx", prePhase: {phase:"pre-clean"}, postPhase: {project:"default",config:"default",phase:"post-clean"},
          builds: [
                      // files xxx2 and xxx3 must pre exist (no build rule) else build error (use touch xxx2 / xxx3)
                      { file:"xxx1", dependsOnBuilds:["xxx2","xxx3"], action: async ()=>console.log("build xxx1") },
                      { file:"xxx10", dependsOnBuilds:["xxx1","xxx3"], action: async ()=>console.log("build xxx10") },
-                     { command:`xxx`, action:async (arg)=>console.log(`xxx commands for config: ${arg.config} and outdir: ${cfg.outdir}`) },
+                     { command:`xxx`, action:async (arg)=>console.log(`xxx commands for config: ${arg.config} and outdir: ${config.outdir}`) },
                   ]
          },
          { phase: "build-javascript-modules", dependsOnPhases: [{phase:"clean"},{project:"build-javascript",phase:"build"},"xxx"] },
@@ -1568,7 +1611,7 @@ console.log()
 // await jspo.project("default").validate()
 
 // project: "default" && phase: "build-javascript-modules"
-jspo.addBuild({ project:"default", phase:"build-javascript-modules", build:{ file:"test.mjs", dependsOnBuilds:["html-snippets/test.js"], action: async ({ec}) => {
+jspo.addBuild("default", undefined, "build-javascript-modules", { file:"test.mjs", dependsOnBuilds:["html-snippets/test.js"], action: async ({ec}) => {
    console.log("Build test.mjs")
    await jspo.files.overwrite("test.mjs",
       jspo.appendESModuleExport(
@@ -1576,55 +1619,58 @@ jspo.addBuild({ project:"default", phase:"build-javascript-modules", build:{ fil
             [ "TEST", "RUN_TEST", "SUB_TEST", "END_TEST", "RESET_TEST", "NEW_TEST" ]
       ),
    )
-}}})
-jspo.addBuild({project:"default", phase:"build-javascript-modules", build:{ command:"test.mjs postprocessor", dependsOnBuilds:["test.mjs"], action:async ()=>console.log("test.mjs postprocessor") }})
+}})
+jspo.addBuild("default", undefined, "build-javascript-modules", { command:"test.mjs postprocessor", dependsOnBuilds:["test.mjs"], action:async ()=>console.log("test.mjs postprocessor") })
 
-const cleanPhase = jspo.phase({project:"default",phase:"clean"})
+const cleanPhase = jspo.phase("default",undefined,"clean")
 cleanPhase.addBuild({ command:"remove-files", dependsOnBuilds:[], action:async ()=>console.log("remove files") })
 cleanPhase.addBuild({ command:"remove-dirs", dependsOnBuilds:["remove-files"], action:async ()=>console.log("remove directories") })
-jspo.phase({project:"default",phase:"pre-clean"}).addBuild({ command:"pre-clean", action:async ()=>console.log("pre-clean commands") })
-jspo.phase({project:"default",phase:"post-clean"}).addBuild({ command:"post-clean", action:async ()=>console.log("post-clean commands") })
+jspo.phase("default",undefined,"pre-clean").addBuild({ command:"pre-clean", action:async ()=>console.log("pre-clean commands") })
+jspo.phase("default",undefined,"post-clean").addBuild({ command:"post-clean", action:async ()=>console.log("post-clean commands") })
 
 await jspo.validateProjects()
 
-console.log("=== cleanPhase.build() ===")
+console.log("====\nTEST cleanPhase.build()\n====\n")
 
 await cleanPhase.build()
 
-console.log(`\n=== jspo.build({ project:"default", phase:"build-javascript-modules"}) ===`)
+console.log(`====\nTEST jspo.build("default",undefined,"build-javascript-modules")\n====\n`)
 
-await jspo.buildSteps({ project:"default", phase:"build-javascript-modules"})
+await jspo.buildSteps("default", undefined, "build-javascript-modules")
    // .then( steps => console.log(steps))
-   .then( () => jspo.build({ project:"default", phase:"build-javascript-modules"}))
+   .then( () => jspo.build("default", undefined, "build-javascript-modules"))
    .catch( e => console.log("error",e))
 
-console.log("\n=== jspo.validateProjects() ===")
 
-// test validation cycle error (uncomment cycles for test)
+// uncomment cycles for following test
+console.log("====\nTEST jspo.validateProjects()\n====\n")
 
 jspo.addProject({
    project: "project-with-cycles-1",
-   phases: [ { phase: "build", dependsOnPhases:[{project:"project-with-cycles-2",phase:"build"}]} ]
+   phases: [ { phase: "build", dependsOnPhases:true?[]:[{project:"project-with-cycles-2",phase:"build"}]} ]
 })
 
-jspo.projects().addProject({
+jspo.addProject({
    project: "project-with-cycles-2",
-   phases: [ { phase: "build", dependsOnPhases:[/*{project:"project-with-cycles-1",phase:"build"}*/],
+   phases: [ { phase: "build", dependsOnPhases:[{project:"project-with-cycles-1",phase:"build"}],
                builds: [
                   { command:"c1", dependsOnBuilds:["c2"], action: async ()=>console.log("build c1") },
                   { command:"c2", dependsOnBuilds:["c3"], action: async ()=>console.log("build c2") },
                   { command:"c3", dependsOnBuilds:["c4"], action: async ()=>console.log("build c3") },
-                  { command:"c4", dependsOnBuilds:false?["c2"]:[], action: async ()=>console.log("build c4") },
+                  { command:"c4", dependsOnBuilds:true?[]:["c2"], action: async ()=>console.log("build c4") },
                ] } ]
 })
-
-// await jspo.project("project-with-cycles-2").phase("build").build(["c4"])
 
 await jspo.validateProjects().catch(e => {
    console.log("\n"+String(e))
 })
 
-console.log("\n=== jspo.build({phase:'p1',phase:'build'}) invalid project (p3 is undefined and command c3 also )===")
+console.log("====\nTEST jspo.build('project-with-cycles-2',undefined,'build',['c4'])\n     condition: subset of nodes\n====\n")
+
+await jspo.build("project-with-cycles-2",undefined,"build",["c4"])
+
+
+console.log("====\nTEST jspo.build('p1',undefined,'build')\n     condition: project p3 is undefined and command c3 also\n====\n")
 
 jspo.addProject({
    project: "p1",
@@ -1642,7 +1688,7 @@ jspo.project("p1").phase("build").addBuild({command:"c2",dependsOnBuilds:["c3"],
 await jspo.project("p1").phase("build").build()
 
 
-console.log("\n=== jspo CLI ===")
+console.log("====\nTEST jspo CLI\n====")
 
 jspo.commandLineProcessor.printUsage()
 
